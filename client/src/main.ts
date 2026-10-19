@@ -17,6 +17,7 @@ import { SCENES, sceneAfter, sceneBefore } from '../../shared/story.ts';
 import { courtScreen, playScene } from './story-ui.ts';
 import { ownStoreConfig, settleStoreDay, staffPace } from '../../shared/ownstore.ts';
 import { dayConfig } from '../../shared/sim.ts';
+import { MAPS } from '../../shared/maps/index.ts';
 import { desktop, initPlatform, isApp, onAppPause, onBack, quitApp, reportAchievements } from './platform.ts';
 
 let settings = loadSettings();
@@ -42,10 +43,14 @@ function startGame(make: () => GameConnection, onDone?: (reason?: string, result
   audio.unlock();
   freshCanvas();
   UI.show('<div class="card"><h2>載入中…</h2><p class="muted">準備開店</p></div>');
-  const conn = make();
-  current = new Game(conn, settings, isTouch, (reason, result) => { current = null; if (onDone) onDone(reason, result); else menu(reason); });
-  (window as unknown as { __game: Game }).__game = current; // used by automated browser tests
-  tryFullscreenLandscape();
+  tryFullscreenLandscape(); // needs the click that started the game
+  (window as unknown as { __game: Game | null }).__game = null;
+  // build the store on the next frame so the loading card paints and the click returns right away
+  window.setTimeout(() => {
+    const conn = make();
+    current = new Game(conn, settings, isTouch, (reason, result) => { current = null; if (onDone) onDone(reason, result); else menu(reason); });
+    (window as unknown as { __game: Game }).__game = current; // used by automated browser tests
+  }, 30);
 }
 
 function tryFullscreenLandscape() {
@@ -153,6 +158,21 @@ function runShift(id: string, cfg: ReturnType<typeof buildShiftConfig>, seed?: n
   });
 }
 
+/** Free play: choose a map, then run its business days (each map has its own save). */
+function freePlay() {
+  screenDepth = 1;
+  const saves: Record<string, ReturnType<typeof loadSoloSave>> = {};
+  for (const m of MAPS) saves[m.id] = loadSoloSave(m.id);
+  UI.mapPicker(saves, {
+    back: () => menu(),
+    play: (map, fresh) => {
+      if (fresh) clearSoloSave(map);
+      const save = fresh ? null : loadSoloSave(map);
+      startGame(() => new LocalConnection(playerName(), save, undefined, undefined, { map }), () => freePlay());
+    },
+  });
+}
+
 function menu(error?: string) {
   screenDepth = 0;
   const last = loadLastSession();
@@ -160,11 +180,7 @@ function menu(error?: string) {
   UI.mainMenu(settings, {
     setName: n => { settings = { ...settings, name: n }; saveSettings(settings); },
     career: () => career(),
-    solo: fresh => {
-      if (fresh) clearSoloSave();
-      const save = fresh ? null : loadSoloSave();
-      startGame(() => new LocalConnection(playerName(), save));
-    },
+    solo: () => freePlay(),
     create: cont => online(serverUrl(), { kind: 'create', name: playerName(), save: cont ? loadCoopSave() : null }),
     join: code => online(serverUrl(), { kind: 'join', code, name: playerName() }),
     rejoin: () => {

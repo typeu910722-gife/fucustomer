@@ -1,10 +1,10 @@
 // Three.js scene: the store, live stock displays, characters (players, customers, karens) and effects.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { PRODUCT_INFO, PRODUCTS, Product, shelfCapacity, EYE_HEIGHT } from '../../shared/constants.ts';
+import { FOOD_INFO, PRODUCT_INFO, PRODUCTS, Product, shelfCapacity, EYE_HEIGHT } from '../../shared/constants.ts';
 import {
   AABB, COFFEE_MACHINE, MICROWAVE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DECOR, DOOR_X0, DOOR_X1, MOP_RACK, REGISTERS, SHELVES,
-  OUTLET, STORE_D, STORE_W, WALLS,
+  CURRENT_MAP, OUTLET, STORE_D, STORE_W, WALLS, shelfFacing,
 } from '../../shared/map.ts';
 import type { CustomerSnap, Held, PlayerSnap, Snapshot } from '../../shared/protocol.ts';
 import type { Quality } from './storage.ts';
@@ -93,13 +93,49 @@ function boxMesh(b: AABB, h: number, m: THREE.Material, y0 = 0) {
 }
 
 /** Speckled terrazzo-like tiles with grout lines. */
-function floorTexture() {
+/** Item mesh for a product shape (instanced on shelves). */
+function productGeometry(shape: string): THREE.BufferGeometry {
+  switch (shape) {
+    case 'can': return new THREE.CylinderGeometry(0.09, 0.09, 0.3, 10);
+    case 'bottle': return new THREE.CylinderGeometry(0.07, 0.08, 0.36, 8);
+    case 'cup': return new THREE.CylinderGeometry(0.1, 0.08, 0.28, 10);
+    case 'flat': return new THREE.BoxGeometry(0.3, 0.12, 0.4);
+    case 'shirt': return new THREE.BoxGeometry(0.05, 0.6, 0.48);
+    case 'pants': return new THREE.BoxGeometry(0.05, 0.75, 0.36);
+    case 'bag': return new THREE.BoxGeometry(0.36, 0.3, 0.16);
+    default: return new THREE.BoxGeometry(0.4, 0.3, 0.12);
+  }
+}
+
+function floorTexture(style: 'tile' | 'wood' | 'concrete' = 'tile', base: [number, number, number] = [232, 228, 218]) {
   const c = document.createElement('canvas'); c.width = c.height = 512;
   const g = c.getContext('2d')!;
+  const [R, G, B] = base;
+  const rgb = (d: number) => `rgb(${R + d},${G + d},${B + d})`;
+  if (style === 'wood') {
+    // planks
+    for (let j = 0; j < 8; j++) for (let i = 0; i < 3; i++) {
+      const d = ((i * 5 + j * 11) % 7) * 4 - 12;
+      const off = (j % 2) * 85;
+      g.fillStyle = rgb(d); g.fillRect(i * 171 + off - 171, j * 64, 171, 64); g.fillRect(i * 171 + off, j * 64, 171, 64);
+    }
+    g.strokeStyle = 'rgba(40,25,15,0.35)'; g.lineWidth = 2;
+    for (let j = 0; j <= 8; j++) { g.beginPath(); g.moveTo(0, j * 64); g.lineTo(512, j * 64); g.stroke(); }
+    for (let k = 0; k < 900; k++) { g.fillStyle = 'rgba(60,35,20,0.12)'; g.fillRect(Math.random() * 512, Math.random() * 512, 6 + Math.random() * 20, 1); }
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+    return t;
+  }
+  if (style === 'concrete') {
+    g.fillStyle = rgb(0); g.fillRect(0, 0, 512, 512);
+    for (let k = 0; k < 5000; k++) { const v = Math.random(); g.fillStyle = v < 0.5 ? 'rgba(0,0,0,0.06)' : 'rgba(255,255,255,0.12)'; g.fillRect(Math.random() * 512, Math.random() * 512, 2, 2); }
+    g.strokeStyle = 'rgba(80,80,80,0.25)'; g.lineWidth = 2; g.strokeRect(1, 1, 510, 510);
+    const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 4;
+    return t;
+  }
   const n = 4, s = 512 / n;
   for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
-    const v = 228 + ((i * 7 + j * 13) % 5) * 3;
-    g.fillStyle = `rgb(${v},${v - 4},${v - 14})`; g.fillRect(i * s, j * s, s, s);
+    const v = ((i * 7 + j * 13) % 5) * 3 - 4;
+    g.fillStyle = `rgb(${R + v},${G + v - 4},${B + v - 10})`; g.fillRect(i * s, j * s, s, s);
   }
   for (let k = 0; k < 2600; k++) {
     const r = Math.random();
@@ -493,7 +529,8 @@ export class StoreView {
       S.add(d, d.target);
     }
     // floor & ceiling
-    const floorT = floorTexture(); floorT.repeat.set(STORE_W / 2.4, STORE_D / 2.4);
+    const TH = CURRENT_MAP.theme;
+    const floorT = floorTexture(TH.floor, TH.floorColor); floorT.repeat.set(STORE_W / 2.4, STORE_D / 2.4);
     const floor = new THREE.Mesh(new THREE.PlaneGeometry(STORE_W, STORE_D), q === 'low' ? new THREE.MeshLambertMaterial({ map: floorT }) : new THREE.MeshStandardMaterial({ map: floorT, roughness: 0.6 }));
     floor.rotation.x = -Math.PI / 2; floor.position.set(STORE_W / 2, 0, STORE_D / 2); floor.receiveShadow = true; S.add(floor);
     const stockFloor = new THREE.Mesh(new THREE.PlaneGeometry(6.5, 5), mat(0x9a948a, q)); stockFloor.rotation.x = -Math.PI / 2; stockFloor.position.set(3.25, 0.005, 2.5); S.add(stockFloor);
@@ -508,9 +545,9 @@ export class StoreView {
     }
     this.buildStreet();
     // walls (south wall gets windows)
-    const wallM = mat(0xf8f0e3, q);
-    const accent = mat(0xff6b6b, q);
-    const wainscot = mat(0x63b7a6, q);
+    const wallM = mat(TH.wall, q);
+    const accent = mat(TH.accent, q);
+    const wainscot = mat(TH.wainscot, q);
     const baseboard = mat(0x495057, q);
     for (const w of WALLS) {
       const isSouth = w.z0 >= STORE_D - 0.01;
@@ -537,7 +574,7 @@ export class StoreView {
     this.exitGlow = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_X1 - DOOR_X0, 2.6), new THREE.MeshBasicMaterial({ color: 0xff922b, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
     this.exitGlow.position.set(12, 1.3, STORE_D + 0.05); this.exitGlow.userData.dynamic = true; S.add(this.exitGlow);
     // sign
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 0.9), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '奧客退散 FUCustomer', size: 70, color: '#fff' }], 1024, 200, '#ff6b6b')) }));
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 0.9), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: CURRENT_MAP.sign.text, size: 70, color: '#fff' }], 1024, 200, CURRENT_MAP.sign.bg)) }));
     sign.position.set(12, 2.86, STORE_D - 0.02); sign.rotation.y = Math.PI; sign.scale.set(0.8, 0.62, 1); S.add(sign);
     const sign2 = sign.clone(); sign2.position.set(12, 2.9, STORE_D + 0.32); sign2.rotation.y = 0; sign2.scale.set(1, 1, 1); S.add(sign2);
     const exitSign = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.25), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '出口 EXIT', size: 64, color: '#fff' }], 512, 160, '#2b8a3e')) }));
@@ -554,46 +591,55 @@ export class StoreView {
     // shelves
     for (const sh of SHELVES) {
       const b = sh.box;
-      const isFridge = b.kind === 'fridge';
-      const frame = mat(isFridge ? 0xdee2e6 : 0x868e96, q, { metal: 0.3, rough: 0.5 });
-      S.add(boxMesh({ ...b }, 0.12, frame));
-      if (isFridge) {
-        const back = boxMesh({ ...b, x0: b.x1 - 0.12 }, b.h, frame); S.add(back);
-        const top = boxMesh(b, 0.1, frame, b.h - 0.1); S.add(top);
-        const glass = boxMesh({ ...b, x1: b.x0 + 0.04 }, b.h - 0.15, mat(0xa5d8ff, q, { transparent: true, opacity: 0.18, rough: 0.05 }), 0.1); glass.castShadow = false; S.add(glass);
-        const glow = new THREE.Mesh(new THREE.PlaneGeometry(5.6, 0.06), this.glowMat(0xe7f5ff)); glow.rotation.y = -Math.PI / 2; glow.position.set(b.x0 + 0.06, b.h - 0.2, (b.z0 + b.z1) / 2); S.add(glow);
-        // cold white back panel = fridge glow
-        const backGlow = new THREE.Mesh(new THREE.PlaneGeometry(b.z1 - b.z0 - 0.2, b.h - 0.3), this.glowMat(0xd0ebff)); backGlow.rotation.y = -Math.PI / 2; backGlow.position.set(b.x1 - 0.13, b.h / 2 + 0.05, (b.z0 + b.z1) / 2); S.add(backGlow);
-        for (let z = b.z0; z <= b.z1 + 0.01; z += (b.z1 - b.z0) / 4) { const post = boxMesh({ x0: b.x0 - 0.03, x1: b.x0 + 0.05, z0: z - 0.03, z1: z + 0.03, h: 0, kind: '' }, b.h, frame); S.add(post); }
+      const face = shelfFacing(b); // -1: wall unit on the east wall (opens west), +1: on the west wall, 0: free-standing
+      const isWall = face !== 0, isFridge = b.kind === 'fridge', isRack = b.kind === 'rack';
+      const info = CURRENT_MAP.products[sh.product];
+      const frame = mat(isFridge ? 0xdee2e6 : TH.shelf, q, { metal: 0.3, rough: 0.5 });
+      const openX = face < 0 ? b.x0 : b.x1, backX = face < 0 ? b.x1 : b.x0;
+      S.add(boxMesh({ ...b }, isRack ? 0.04 : 0.12, frame));
+      if (isWall) {
+        S.add(boxMesh(face < 0 ? { ...b, x0: b.x1 - 0.12 } : { ...b, x1: b.x0 + 0.12 }, b.h, frame));
+        S.add(boxMesh(b, 0.1, frame, b.h - 0.1));
+        if (isFridge) {
+          const glass = boxMesh(face < 0 ? { ...b, x1: b.x0 + 0.04 } : { ...b, x0: b.x1 - 0.04 }, b.h - 0.15, mat(0xa5d8ff, q, { transparent: true, opacity: 0.18, rough: 0.05 }), 0.1); glass.castShadow = false; S.add(glass);
+          const glow = new THREE.Mesh(new THREE.PlaneGeometry(b.z1 - b.z0 - 0.4, 0.06), this.glowMat(0xe7f5ff)); glow.rotation.y = face < 0 ? -Math.PI / 2 : Math.PI / 2; glow.position.set(openX - face * 0.06, b.h - 0.2, (b.z0 + b.z1) / 2); S.add(glow);
+          const backGlow = new THREE.Mesh(new THREE.PlaneGeometry(b.z1 - b.z0 - 0.2, b.h - 0.3), this.glowMat(0xd0ebff)); backGlow.rotation.y = face < 0 ? -Math.PI / 2 : Math.PI / 2; backGlow.position.set(backX + face * 0.13, b.h / 2 + 0.05, (b.z0 + b.z1) / 2); S.add(backGlow);
+        }
+        for (let z = b.z0; z <= b.z1 + 0.01; z += (b.z1 - b.z0) / 4) S.add(boxMesh({ x0: openX - 0.04, x1: openX + 0.04, z0: z - 0.03, z1: z + 0.03, h: 0, kind: '' }, b.h, frame));
+      } else if (isRack) {
+        // clothes rack: two posts per end and a rail along each long side
+        for (const x of [b.x0 + 0.05, b.x1 - 0.05]) S.add(boxMesh({ x0: x - 0.04, x1: x + 0.04, z0: b.z0, z1: b.z1, h: 0, kind: '' }, b.h, frame));
+        for (const z of [b.z0 + 0.15, b.z1 - 0.15]) S.add(boxMesh({ x0: b.x0, x1: b.x1, z0: z - 0.025, z1: z + 0.025, h: 0, kind: '' }, 0.05, frame, b.h - 0.08));
       } else {
-        const mid = boxMesh({ ...b, z0: (b.z0 + b.z1) / 2 - 0.04, z1: (b.z0 + b.z1) / 2 + 0.04 }, b.h, frame); S.add(mid);
+        S.add(boxMesh({ ...b, z0: (b.z0 + b.z1) / 2 - 0.04, z1: (b.z0 + b.z1) / 2 + 0.04 }, b.h, frame));
       }
-      const tiers = isFridge ? [0.25, 0.75, 1.25, 1.7] : [0.12, 0.6, 1.08, 1.5].filter(t => t < b.h);
-      for (const t of tiers) S.add(boxMesh(b, 0.04, frame, t));
+      const tiers = isRack ? [b.h - 0.08] : isWall ? [0.25, 0.75, 1.25, 1.7].filter(t => t < b.h) : [0.12, 0.6, 1.08, 1.5].filter(t => t < b.h);
+      if (!isRack) for (const t of tiers) S.add(boxMesh(b, 0.04, frame, t));
       // yellow price-tag strips on the shelf edges
       const tagM = mat(0xffe066, q);
-      for (const t of tiers.slice(0, 3)) {
-        if (isFridge) S.add(boxMesh({ ...b, x1: b.x0 + 0.03 }, 0.05, tagM, t + 0.02));
+      if (!isRack) for (const t of tiers.slice(0, 3)) {
+        if (isWall) S.add(boxMesh(face < 0 ? { ...b, x1: b.x0 + 0.03 } : { ...b, x0: b.x1 - 0.03 }, 0.05, tagM, t + 0.02));
         else { S.add(boxMesh({ ...b, z1: b.z0 + 0.03 }, 0.05, tagM, t + 0.02)); S.add(boxMesh({ ...b, z0: b.z1 - 0.03 }, 0.05, tagM, t + 0.02)); }
       }
       // product slots
       const slots: THREE.Vector3[] = [];
-      const pTiers = tiers.slice(0, 3);
-      if (isFridge) {
-        for (const t of pTiers) for (let z = b.z0 + 0.3; z < b.z1 - 0.2; z += 0.75) slots.push(new THREE.Vector3(b.x0 + 0.35, t + 0.16, z));
+      if (isRack) {
+        for (let x = b.x0 + 0.3; x < b.x1 - 0.2; x += 0.24) { slots.push(new THREE.Vector3(x, b.h - 0.45, b.z0 + 0.15)); slots.push(new THREE.Vector3(x, b.h - 0.45, b.z1 - 0.15)); }
+      } else if (isWall) {
+        for (const t of tiers.slice(0, 3)) for (let z = b.z0 + 0.3; z < b.z1 - 0.2; z += 0.75) slots.push(new THREE.Vector3(openX - face * 0.35, t + 0.16, z));
       } else {
-        for (const t of pTiers) for (let x = b.x0 + 0.35; x < b.x1 - 0.2; x += 0.75) { slots.push(new THREE.Vector3(x, t + 0.17, b.z0 + 0.2)); slots.push(new THREE.Vector3(x, t + 0.17, b.z1 - 0.2)); }
+        for (const t of tiers.slice(0, 3)) for (let x = b.x0 + 0.35; x < b.x1 - 0.2; x += 0.75) { slots.push(new THREE.Vector3(x, t + 0.17, b.z0 + 0.2)); slots.push(new THREE.Vector3(x, t + 0.17, b.z1 - 0.2)); }
       }
       // interleave so partially-filled shelves look evenly stocked
       slots.sort((a, c) => ((a.x * 7 + a.z * 13) % 1) - ((c.x * 7 + c.z * 13) % 1));
-      const geo = sh.product === 'drinks' ? new THREE.CylinderGeometry(0.09, 0.09, 0.3, 10) : sh.product === 'snacks' ? new THREE.BoxGeometry(0.4, 0.3, 0.12) : new THREE.BoxGeometry(0.3, 0.12, 0.4);
+      const geo = productGeometry(info.shape);
       const inst = new THREE.InstancedMesh(geo, mat(0xffffff, q, { rough: 0.4 }), slots.length);
       const m4 = new THREE.Matrix4();
-      const palette = { drinks: [0x3fa7f5, 0xe03131, 0x2f9e44, 0xf08c00, 0xf8f9fa], snacks: [0xf5b83f, 0xe8590c, 0xd6336c, 0x7048e8, 0xfcc419], bento: [0x7bd36a, 0xfff3bf, 0xffa8a8, 0x96f2d7] }[sh.product];
+      const palette = info.palette;
       const col = new THREE.Color(), sc = new THREE.Vector3(), qt = new THREE.Quaternion(), ps = new THREE.Vector3();
       slots.forEach((p, i) => {
-        const v = 0.85 + ((i * 37) % 7) / 20;
-        sc.set(v, 0.85 + ((i * 13) % 5) / 12, v); qt.setFromAxisAngle(new THREE.Vector3(0, 1, 0), ((i * 53) % 10) / 40);
+        const v = isRack ? 1 : 0.85 + ((i * 37) % 7) / 20;
+        sc.set(v, isRack ? 1 : 0.85 + ((i * 13) % 5) / 12, v); qt.setFromAxisAngle(new THREE.Vector3(0, 1, 0), isRack ? 0 : ((i * 53) % 10) / 40);
         ps.set(p.x, p.y + (sc.y - 1) * 0.15, p.z); m4.compose(ps, qt, sc); inst.setMatrixAt(i, m4);
         inst.setColorAt(i, col.setHex(palette[(i * 7) % palette.length]));
       });
@@ -601,11 +647,11 @@ export class StoreView {
       S.add(inst);
       this.shelfInst.set(sh.product, { mesh: inst, slots });
       const lbl = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.3), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: PRODUCT_INFO[sh.product].name, size: 64 }], 512, 128, '#' + PRODUCT_INFO[sh.product].color.toString(16).padStart(6, '0'))) }));
-      if (isFridge) { lbl.position.set(b.x0 - 0.01, b.h + 0.25, (b.z0 + b.z1) / 2); lbl.rotation.y = -Math.PI / 2; S.add(lbl); }
+      if (isWall) { lbl.position.set(openX + face * 0.01, b.h + 0.25, (b.z0 + b.z1) / 2); lbl.rotation.y = face < 0 ? -Math.PI / 2 : Math.PI / 2; S.add(lbl); }
       else { lbl.position.set((b.x0 + b.x1) / 2, b.h + 0.25, b.z0 - 0.01); lbl.rotation.y = Math.PI; S.add(lbl); const l2 = lbl.clone(); l2.position.z = b.z1 + 0.01; l2.rotation.y = 0; S.add(l2); }
     }
     // counter
-    S.add(boxMesh(COUNTER, COUNTER.h, mat(0x8d6e63, q)));
+    S.add(boxMesh(COUNTER, COUNTER.h, mat(TH.counter, q)));
     S.add(boxMesh({ ...COUNTER, x0: COUNTER.x0 - 0.05, x1: COUNTER.x1 + 0.05, z0: COUNTER.z0 - 0.05, z1: COUNTER.z1 + 0.05 }, 0.05, mat(0xf1f3f5, q, { rough: 0.3 }), COUNTER.h));
     for (const r of REGISTERS) {
       const g = new THREE.Group();
@@ -618,22 +664,27 @@ export class StoreView {
       const lbl = new Label(1.2, 0.3); lbl.set('reg' + r.idx, () => textCanvas([{ text: `收銀台 ${r.idx + 1}`, size: 54 }], 512, 128)); lbl.sprite.position.set(r.x, 2.2, r.z); S.add(lbl.sprite);
       if (r.idx === 1) { this.register2 = [g, lbl.sprite]; }
     }
-    // coffee machine
-    S.add(boxMesh(COFFEE_MACHINE, 0.9, mat(0x343a40, q)));
-    const cm = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.55, 0.45), mat(0xadb5bd, q, { metal: 0.6, rough: 0.3 })); cm.position.set((COFFEE_MACHINE.x0 + COFFEE_MACHINE.x1) / 2, 1.2, (COFFEE_MACHINE.z0 + COFFEE_MACHINE.z1) / 2); S.add(cm);
-    for (let i = 0; i < 3; i++) { const st = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4 })); st.position.copy(cm.position).add(new THREE.Vector3(0, 0.35, 0)); S.add(st); this.coffeeSteam.push(st); }
-    const cl = new Label(1.2, 0.3); cl.set('coffee', () => textCanvas([{ text: '☕ 咖啡機', size: 56 }], 512, 128)); cl.sprite.position.set(cm.position.x, 2.0, cm.position.z); S.add(cl.sprite);
-    S.add(boxMesh(MICROWAVE, 0.9, mat(0x343a40, q)));
-    const mw = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.42, 0.5), mat(0xf1f3f5, q, { rough: 0.4 })); mw.position.set((MICROWAVE.x0 + MICROWAVE.x1) / 2, 1.12, (MICROWAVE.z0 + MICROWAVE.z1) / 2); S.add(mw);
-    const mwDoor = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.3), new THREE.MeshBasicMaterial({ color: 0x212529 })); mwDoor.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.14); mwDoor.rotation.y = 0; S.add(mwDoor);
-    this.microwaveGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.28), new THREE.MeshBasicMaterial({ color: 0xffa94d, transparent: true, opacity: 0 })); this.microwaveGlow.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.135); S.add(this.microwaveGlow);
-    const ml2 = new Label(1.2, 0.3); ml2.set('mw', () => textCanvas([{ text: '🍱 微波爐', size: 56 }], 512, 128)); ml2.sprite.position.set(mw.position.x, 2.0, mw.position.z); S.add(ml2.sprite);
-    const pickupMark = new THREE.Mesh(new THREE.CircleGeometry(0.5, 20), new THREE.MeshBasicMaterial({ color: 0xffd43b, transparent: true, opacity: 0.35 })); pickupMark.rotation.x = -Math.PI / 2; pickupMark.position.set(COFFEE_PICKUP.x, 0.01, COFFEE_PICKUP.z); S.add(pickupMark);
-    const pl = new Label(1.2, 0.3); pl.set('pick', () => textCanvas([{ text: '取餐區', size: 56 }], 512, 128)); pl.sprite.position.set(COFFEE_PICKUP.x, 2.3, COFFEE_PICKUP.z); S.add(pl.sprite);
+    // food stations (a map may have none)
+    const hasCoffee = !!CURRENT_MAP.coffee, hasMeal = !!CURRENT_MAP.meal;
+    const SA = (o: THREE.Object3D, on: boolean) => { if (on) S.add(o); };
+    SA(boxMesh(COFFEE_MACHINE, 0.9, mat(0x343a40, q)), hasCoffee);
+    const cm = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.55, 0.45), mat(0xadb5bd, q, { metal: 0.6, rough: 0.3 })); cm.position.set((COFFEE_MACHINE.x0 + COFFEE_MACHINE.x1) / 2, 1.2, (COFFEE_MACHINE.z0 + COFFEE_MACHINE.z1) / 2); SA(cm, hasCoffee);
+    for (let i = 0; i < 3; i++) { const st = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4 })); st.position.copy(cm.position).add(new THREE.Vector3(0, 0.35, 0)); SA(st, hasCoffee); this.coffeeSteam.push(st); }
+    const cl = new Label(1.2, 0.3); cl.set('coffee' + FOOD_INFO.coffee.station, () => textCanvas([{ text: `${FOOD_INFO.coffee.icon} ${FOOD_INFO.coffee.station}`, size: 56 }], 512, 128)); cl.sprite.position.set(cm.position.x, 2.0, cm.position.z); SA(cl.sprite, hasCoffee);
+    SA(boxMesh(MICROWAVE, 0.9, mat(0x343a40, q)), hasMeal);
+    const mw = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.42, 0.5), mat(0xf1f3f5, q, { rough: 0.4 })); mw.position.set((MICROWAVE.x0 + MICROWAVE.x1) / 2, 1.12, (MICROWAVE.z0 + MICROWAVE.z1) / 2); SA(mw, hasMeal);
+    const mwDoor = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.3), new THREE.MeshBasicMaterial({ color: 0x212529 })); mwDoor.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.14); mwDoor.rotation.y = 0; SA(mwDoor, hasMeal);
+    this.microwaveGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.28), new THREE.MeshBasicMaterial({ color: 0xffa94d, transparent: true, opacity: 0 })); this.microwaveGlow.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.135); SA(this.microwaveGlow, hasMeal);
+    const ml2 = new Label(1.2, 0.3); ml2.set('mw' + FOOD_INFO.meal.station, () => textCanvas([{ text: `${FOOD_INFO.meal.icon} ${FOOD_INFO.meal.station}`, size: 56 }], 512, 128)); ml2.sprite.position.set(mw.position.x, 2.0, mw.position.z); SA(ml2.sprite, hasMeal);
+    const pickupMark = new THREE.Mesh(new THREE.CircleGeometry(0.5, 20), new THREE.MeshBasicMaterial({ color: 0xffd43b, transparent: true, opacity: 0.35 })); pickupMark.rotation.x = -Math.PI / 2; pickupMark.position.set(COFFEE_PICKUP.x, 0.01, COFFEE_PICKUP.z); SA(pickupMark, hasCoffee || hasMeal);
+    const pl = new Label(1.2, 0.3); pl.set('pick', () => textCanvas([{ text: '取餐區', size: 56 }], 512, 128)); pl.sprite.position.set(COFFEE_PICKUP.x, 2.3, COFFEE_PICKUP.z); SA(pl.sprite, hasCoffee || hasMeal);
     const compMark = new THREE.Mesh(new THREE.CircleGeometry(0.5, 20), new THREE.MeshBasicMaterial({ color: 0xff6b6b, transparent: true, opacity: 0.3 })); compMark.rotation.x = -Math.PI / 2; compMark.position.set(COMPLAINT_SPOT.x, 0.01, COMPLAINT_SPOT.z); S.add(compMark);
     // queue rope
-    for (let i = 0; i < 5; i++) { const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 0.9, 8), mat(0xfab005, q, { metal: 0.7, rough: 0.3 })); post.position.set(18.2 + i * 1.0, 0.45, 13.85); S.add(post); }
-    const rope = new THREE.Mesh(new THREE.BoxGeometry(4, 0.05, 0.05), mat(0xc92a2a, q)); rope.position.set(20.2, 0.8, 13.85); S.add(rope);
+    const R = CURRENT_MAP.rope;
+    if (R) {
+      for (let x = R.x0; x <= R.x1 + 0.01; x += 1) { const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 0.9, 8), mat(0xfab005, q, { metal: 0.7, rough: 0.3 })); post.position.set(x, 0.45, R.z); S.add(post); }
+      const rope = new THREE.Mesh(new THREE.BoxGeometry(R.x1 - R.x0, 0.05, 0.05), mat(0xc92a2a, q)); rope.position.set((R.x0 + R.x1) / 2, 0.8, R.z); S.add(rope);
+    }
     // crates
     for (const c of CRATES) {
       S.add(boxMesh(c.box, 0.12, mat(0x795548, q)));
@@ -650,12 +701,31 @@ export class StoreView {
     for (const d of DECOR) {
       if (d.kind === 'plant') { S.add(boxMesh(d, 0.5, mat(0x8d6e63, q))); const leaves = new THREE.Mesh(new THREE.SphereGeometry(0.7, 10, 8), mat(0x37b24d, q)); leaves.position.set((d.x0 + d.x1) / 2, 1.1, (d.z0 + d.z1) / 2); S.add(leaves); }
       else if (d.kind === 'atm') { S.add(boxMesh(d, 1.9, mat(0x1971c2, q))); }
+      else if (d.kind === 'table') {
+        const cx = (d.x0 + d.x1) / 2, cz = (d.z0 + d.z1) / 2;
+        S.add(boxMesh({ ...d, x0: cx - 0.06, x1: cx + 0.06, z0: cz - 0.06, z1: cz + 0.06 }, d.h, mat(0x495057, q)));
+        S.add(boxMesh(d, 0.05, mat(0xf8f9fa, q), d.h - 0.05));
+        for (const [sx, sz] of [[d.x0 - 0.35, cz], [d.x1 + 0.35, cz]]) { const st = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.45, 10), mat(TH.accent, q)); st.position.set(sx, 0.22, sz); S.add(st); }
+      } else if (d.kind === 'bar') { S.add(boxMesh(d, d.h, mat(TH.counter, q))); }
+      else if (d.kind === 'fitting') {
+        S.add(boxMesh({ ...d, x1: d.x0 + 0.08 }, d.h, mat(TH.wainscot, q)));
+        S.add(boxMesh({ ...d, z1: d.z0 + 0.08 }, d.h, mat(TH.wainscot, q)));
+        S.add(boxMesh({ ...d, z0: d.z1 - 0.08 }, d.h, mat(TH.wainscot, q)));
+        const curtain = boxMesh({ ...d, x0: d.x1 - 0.05 }, d.h - 0.2, mat(TH.accent, q), 0.1); S.add(curtain);
+        const lbl = new Label(1.0, 0.26); lbl.set('fit', () => textCanvas([{ text: '👗 試衣間', size: 56 }], 512, 128)); lbl.sprite.position.set((d.x0 + d.x1) / 2, d.h + 0.4, (d.z0 + d.z1) / 2); S.add(lbl.sprite);
+      } else if (d.kind === 'mannequin') {
+        const cx = (d.x0 + d.x1) / 2, cz = (d.z0 + d.z1) / 2;
+        const body = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.12, 0.8, 10), mat(0xf1f3f5, q)); body.position.set(cx, 1.15, cz); S.add(body);
+        const head = new THREE.Mesh(new THREE.SphereGeometry(0.13, 10, 8), mat(0xf1f3f5, q)); head.position.set(cx, 1.68, cz); S.add(head);
+        const shirt = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 0.45, 10), mat(TH.accent, q)); shirt.position.set(cx, 1.3, cz); S.add(shirt);
+        S.add(boxMesh({ ...d, x0: cx - 0.03, x1: cx + 0.03, z0: cz - 0.03, z1: cz + 0.03 }, 0.75, mat(0x495057, q)));
+      }
       else { S.add(boxMesh(d, d.h, mat(0xfab005, q))); }
     }
     // wall clock
     this.clockLabel.sprite.position.set(18.5, 2.6, 0.05); S.add(this.clockLabel.sprite);
     // posters
-    const poster = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.1), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '顧客至上', size: 72, color: '#ffd43b' }, { text: '但奧客退散', size: 54 }], 512, 256, '#c92a2a')) }));
+    const poster = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.1), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: CURRENT_MAP.poster[0], size: 72, color: '#ffd43b' }, { text: CURRENT_MAP.poster[1], size: 54 }], 512, 256, CURRENT_MAP.sign.bg)) }));
     poster.position.set(12, 2.0, 0.02); S.add(poster);
   }
 

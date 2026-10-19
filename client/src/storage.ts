@@ -29,9 +29,11 @@ export function loadSettings(): Settings {
 }
 export function saveSettings(s: Settings) { write(SETTINGS_KEY, s); }
 
-export function loadSoloSave(): StoreSave | null { return read<StoreSave>(SOLO_KEY); }
-export function saveSoloSave(s: StoreSave) { write(SOLO_KEY, s); }
-export function clearSoloSave() { try { localStorage.removeItem(SOLO_KEY); } catch { /* ignore */ } }
+/** Free-play saves: one per map (the 便利商店 keeps the original key so old saves still load). */
+const soloKey = (map: string) => (map === 'convenience' ? SOLO_KEY : `fucustomer.store.solo.${map}.v1`);
+export function loadSoloSave(map = 'convenience'): StoreSave | null { return read<StoreSave>(soloKey(map)); }
+export function saveSoloSave(s: StoreSave, map = 'convenience') { write(soloKey(map), s); }
+export function clearSoloSave(map = 'convenience') { try { localStorage.removeItem(soloKey(map)); } catch { /* ignore */ } }
 export function loadCoopSave(): StoreSave | null { return read<StoreSave>(COOP_KEY); }
 export function saveCoopSave(s: StoreSave) { write(COOP_KEY, s); }
 

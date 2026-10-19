@@ -2,9 +2,9 @@
 // server-confirmed actions, HUD, overlays and snapshot handling.
 import * as THREE from 'three';
 import {
-  INPUT_RATE, INTERACT_RANGE, KAREN_INFO, PRODUCT_INFO, QUICK_MESSAGES, RUN_SPEED, WALK_SPEED, shelfCapacity, EYE_HEIGHT,
+  FOOD_INFO, INPUT_RATE, INTERACT_RANGE, KAREN_INFO, PRODUCT_INFO, QUICK_MESSAGES, RUN_SPEED, WALK_SPEED, shelfCapacity, EYE_HEIGHT,
 } from '../../shared/constants.ts';
-import { COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, AABB, clampToStore, resolveCollision } from '../../shared/map.ts';
+import { CURRENT_MAP, COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, AABB, clampToStore, resolveCollision } from '../../shared/map.ts';
 import type { ShiftResult } from '../../shared/career.ts';
 import { BOSS_HOW, BOSS_PHASES } from '../../shared/constants.ts';
 import { Tutorial, TutorialView } from './tutorial.ts';
@@ -159,7 +159,7 @@ export class Game {
         break;
       case 'save':
         if ('onSave' in this.conn && (this.conn as { onSave?: unknown }).onSave) { /* own store: saved by its owner */ }
-        else if (this.conn.solo) saveSoloSave(m.save); else saveCoopSave(m.save);
+        else if (this.conn.solo) saveSoloSave(m.save, CURRENT_MAP.id); else saveCoopSave(m.save);
         break;
       case 'error':
         if (m.code === 'not_ready') this.toast(m.message, 'bad');
@@ -360,11 +360,12 @@ export class Game {
     }
     const foodSlot = me.grabbing == null && (!held || ((held.kind === 'coffee' || held.kind === 'meal') && !me.held2));
     const sells = (f: 'coffee' | 'meal') => s.shift.foods.includes(f);
-    if (sells('coffee')) out.push(!foodSlot ? { label: '咖啡機', reason: '雙手已滿（最多兩份餐點）', target: { t: 'coffee' }, box: COFFEE_MACHINE }
-      : { label: '煮咖啡', primary: 'brew', target: { t: 'coffee' }, box: COFFEE_MACHINE });
-    if (sells('meal')) out.push(!foodSlot ? { label: '微波爐', reason: '雙手已滿（最多兩份餐點）', target: { t: 'microwave' }, box: MICROWAVE }
-      : s.backstock.bento <= 0 ? { label: '微波爐', reason: '便當缺貨，按 B 採購', target: { t: 'microwave' }, box: MICROWAVE }
-      : { label: `加熱便當（倉庫 ${s.backstock.bento}）`, primary: 'heat', target: { t: 'microwave' }, box: MICROWAVE });
+    const F = FOOD_INFO;
+    if (sells('coffee')) out.push(!foodSlot ? { label: F.coffee.station, reason: '雙手已滿（最多兩份餐點）', target: { t: 'coffee' }, box: COFFEE_MACHINE }
+      : { label: F.coffee.verb, primary: 'brew', target: { t: 'coffee' }, box: COFFEE_MACHINE });
+    if (sells('meal')) out.push(!foodSlot ? { label: F.meal.station, reason: '雙手已滿（最多兩份餐點）', target: { t: 'microwave' }, box: MICROWAVE }
+      : s.backstock.bento <= 0 ? { label: F.meal.station, reason: `${F.meal.uses}缺貨，按 B 採購`, target: { t: 'microwave' }, box: MICROWAVE }
+      : { label: `${F.meal.verb}（倉庫 ${s.backstock.bento}）`, primary: 'heat', target: { t: 'microwave' }, box: MICROWAVE });
     for (const c of CRATES) {
       const name = PRODUCT_INFO[c.product].name;
       const t: Target = { t: 'crate', product: c.product };
@@ -391,7 +392,7 @@ export class Game {
     for (const sp of s.spills) out.push(held?.kind === 'mop' ? { label: '清理髒污', primary: 'clean', target: { t: 'spill', id: sp.id }, point: { x: sp.x, z: sp.z, r: 0.55, h: 0 } }
       : { label: '髒污', reason: '需要拖把（西側牆邊）', target: { t: 'spill', id: sp.id }, point: { x: sp.x, z: sp.z, r: 0.55, h: 0 } });
     for (const it of s.items) {
-      const name = it.held.kind === 'box' ? `${PRODUCT_INFO[it.held.product].name}貨箱` : it.held.kind === 'mop' ? '拖把' : '咖啡';
+      const name = it.held.kind === 'box' ? `${PRODUCT_INFO[it.held.product].name}貨箱` : it.held.kind === 'mop' ? '拖把' : FOOD_INFO[it.held.kind === 'meal' ? 'meal' : 'coffee'].name;
       out.push(held ? { label: name, reason: '手上有東西', target: { t: 'item', id: it.id }, point: { x: it.x, z: it.z, r: 0.45, h: 0.3 } }
         : { label: `撿起${name}`, primary: 'pickup', target: { t: 'item', id: it.id }, point: { x: it.x, z: it.z, r: 0.45, h: 0.3 } });
     }
@@ -425,16 +426,16 @@ export class Game {
       if (c.kind === 'hog') return { label: `請${name}先結帳`, primary: 'checkBag', target: t, point };
       if (c.kind === 'litterer') return { label: `請${name}不要亂丟`, primary: 'stopLitter', target: t, point };
       if (c.kind === 'charger') {
-        const treat = hands.includes('coffee') ? '請他喝咖啡' : undefined;
+        const treat = hands.includes('coffee') ? `請他喝${FOOD_INFO.coffee.name}` : undefined;
         return c.state === 'charge'
           ? { label: `拔掉${name}的插頭${c.phase ? '（再一次！）' : ''}`, primary: 'unplug', alt: 'treat', altLabel: treat, target: t, point }
           : treat ? { label: name, primary: 'treat', target: t, point } : { label: name, reason: '正走向門口的插座', target: t, point };
       }
     }
     if (c.state === 'waitFood' && c.want) {
-      const name = c.want === 'meal' ? '熱便當' : '咖啡';
+      const name = FOOD_INFO[c.want].name;
       return hands.includes(c.want) ? { label: `交付${name}`, primary: 'deliver', target: t, point }
-        : { label: `等${name}的顧客`, reason: c.want === 'meal' ? '去微波爐加熱便當' : '去咖啡機煮一杯', target: t, point };
+        : { label: `等${name}的顧客`, reason: `去${FOOD_INFO[c.want].station}${FOOD_INFO[c.want].verb}`, target: t, point };
     }
     if (this.canGrab() && c.kind === 'normal') return { label: '一般顧客', reason: '別亂丟一般顧客喔', target: t, point };
     if (c.state === 'atRegister') return { label: '等結帳的顧客', reason: '到櫃台內側對收銀機互動', target: t, point };
@@ -764,7 +765,7 @@ export class Game {
 }
 
 function shortLabel(k: ActKind) {
-  const m: Partial<Record<ActKind, string>> = { checkout: '結帳', brew: '煮咖啡', deliver: '交付', takeBox: '拿貨', stock: '上架', returnBox: '放回', takeMop: '拿拖把', returnMop: '放回', clean: '清理', calm: '安撫', coupon: '折價券', askQueue: '請排隊', stopFilm: '制止', checkBag: '請結帳', pickup: '撿起' };
+  const m: Partial<Record<ActKind, string>> = { checkout: '結帳', brew: FOOD_INFO.coffee.verb, deliver: '交付', takeBox: '拿貨', stock: '上架', returnBox: '放回', takeMop: '拿拖把', returnMop: '放回', clean: '清理', calm: '安撫', coupon: '折價券', askQueue: '請排隊', stopFilm: '制止', checkBag: '請結帳', pickup: '撿起' };
   return m[k] ?? '互動';
 }
 

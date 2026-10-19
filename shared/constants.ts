@@ -24,6 +24,11 @@ export const PRODUCT_INFO: Record<Product, { name: string; price: number; boxCos
   snacks: { name: '零食', price: 6, boxCost: 18, color: 0xf5b83f },
   bento: { name: '便當', price: 14, boxCost: 42, color: 0x7bd36a },
 };
+/** Prepared food: names and prices come from the active map (see map.ts applyMap). */
+export const FOOD_INFO = {
+  coffee: { name: '咖啡', station: '咖啡機', verb: '煮咖啡', icon: '☕', price: 10 },
+  meal: { name: '熱便當', station: '微波爐', verb: '加熱便當', icon: '🍱', price: 18, uses: '便當' },
+};
 export const BOX_SIZE = 6;
 export const COFFEE_PRICE = 10;
 export const MEAL_PRICE = 18;

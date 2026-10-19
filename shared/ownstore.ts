@@ -18,6 +18,8 @@ export const WAGES: Record<WageMode, { label: string; pay: number; mood: number;
 export interface OwnStore {
   name: string; invested: number; save: StoreSave; days: number; negDays: number;
   staff: { name: string; mood: number; quit: boolean }; wage: WageMode; bestDay: number; withdrawn: number;
+  /** Which kind of store (map id). */
+  map: string;
 }
 export interface StoreHistory { opened: number; closed: number; lost: number; lastReason: string }
 
@@ -31,14 +33,14 @@ export function canOpenStore(p: CareerProfile): { ok: boolean; why?: string } {
 }
 
 /** Moves `capital` from savings into the new store's till. */
-export function openStore(p: CareerProfile, name: string, capital: number, base: StoreSave): OwnStore | null {
+export function openStore(p: CareerProfile, name: string, capital: number, base: StoreSave, map = 'convenience'): OwnStore | null {
   if (!canOpenStore(p).ok) return null;
   const cap = Math.min(p.wallet, Math.max(STORE_FUND, Math.floor(capital)));
   p.wallet -= cap;
   const store: OwnStore = {
     name: (name.trim() || '我的便利商店').slice(0, 16), invested: cap,
     save: { ...base, day: 1, money: cap, rating: 3 },
-    days: 0, negDays: 0, staff: { name: '小陳', mood: 70, quit: false }, wage: 'fair', bestDay: 0, withdrawn: 0,
+    days: 0, negDays: 0, staff: { name: '小陳', mood: 70, quit: false }, wage: 'fair', bestDay: 0, withdrawn: 0, map,
   };
   p.store = store;
   p.storeHistory.opened++;
@@ -54,7 +56,7 @@ export function ownStoreConfig(p: CareerProfile, base: ShiftConfig): ShiftConfig
   return {
     ...base, title: st.name, abilities: abilitiesAt(p.level), mods: modsFor(p),
     karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'], maxKarens: 2, maxCustomers: 9,
-    staffWage: st.staff.quit ? 0 : WAGES[st.wage].pay,
+    staffWage: st.staff.quit ? 0 : WAGES[st.wage].pay, map: st.map,
   };
 }
 

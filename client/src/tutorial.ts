@@ -1,5 +1,5 @@
 // Step-by-step first-shift tutorial (shift 1-1): one objective at a time with a guide target.
-import { CRATES, MOP_RACK, REGISTERS, SHELVES } from '../../shared/map.ts';
+import { CRATES, MOP_RACK, REGISTERS, SHELVES, shelfBrowseSpots } from '../../shared/map.ts';
 import { PRODUCT_INFO, PRODUCTS } from '../../shared/constants.ts';
 import type { PlayerSnap, Snapshot } from '../../shared/protocol.ts';
 
@@ -39,7 +39,7 @@ export class Tutorial {
     },
     {
       text: (_s, me) => me.held?.kind === 'box' ? `把貨箱拿到「${PRODUCT_INFO[me.held.product].name}」貨架，按 ${this.key('互動')} 上架` : '上架完成！',
-      target: (_s, me) => { if (me.held?.kind !== 'box') return null; const p = me.held.product; const b = SHELVES.find(x => x.product === p)!.box; return { x: (b.x0 + b.x1) / 2, z: p === 'bento' ? (b.z0 + b.z1) / 2 : b.z1 + 0.5 }; },
+      target: (_s, me) => { if (me.held?.kind !== 'box') return null; const p = me.held.product; const sp = shelfBrowseSpots(p); return sp[Math.floor(sp.length / 2)] ?? null; },
       done: (_s, me) => me.held?.kind !== 'box',
     },
     {

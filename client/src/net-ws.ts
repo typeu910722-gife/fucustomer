@@ -1,5 +1,6 @@
 // WebSocket connection to the dedicated server (with automatic reconnect).
 // Kept in its own module so single-player never downloads it.
+import { applyMap } from '../../shared/map.ts';
 import { PROTOCOL_VERSION } from '../../shared/constants.ts';
 import type { ClientMsg, ServerMsg, StoreSave } from '../../shared/protocol.ts';
 import type { GameConnection, NetStatus } from './net.ts';
@@ -23,6 +24,7 @@ export class WsConnection implements GameConnection {
   private giveUpAt = 0;
 
   constructor(public url: string, private intent: Intent, private platform: string) {
+    applyMap(); // online rooms are always the 便利商店 for now
     this.connect();
     this.hbTimer = window.setInterval(() => this.heartbeat(), 3000);
     window.addEventListener('online', this.onOnline);

@@ -1,14 +1,14 @@
 // Authoritative game simulation. Runs on the dedicated server for multiplayer and inside the
 // browser for solo/career play. All transactions (money, stock, items, karen outcomes) happen here.
 import {
-  BOSS_PHASES, BOX_SIZE, BURST_MAX, CHAOS_MAX, CLOSE_MINUTE, CLOSING_MAX_SECONDS, COFFEE_PRICE, DAILY_RENT, DAY_OPEN_SECONDS, KAREN_INFO,
-  KarenKind, MEAL_PRICE, OPEN_MINUTE, PREP_SECONDS, PRODUCTS, PRODUCT_INFO, Product, RUN_SPEED, SERVER_INTERACT_RANGE,
+  BOSS_PHASES, BOX_SIZE, BURST_MAX, CHAOS_MAX, CLOSE_MINUTE, CLOSING_MAX_SECONDS, FOOD_INFO, DAILY_RENT, DAY_OPEN_SECONDS, KAREN_INFO,
+  KarenKind, OPEN_MINUTE, PREP_SECONDS, PRODUCTS, PRODUCT_INFO, Product, RUN_SPEED, SERVER_INTERACT_RANGE,
   UPGRADES, UPGRADE_IDS, UpgradeId, brewTime, checkoutTime, heatTime, shelfCapacity,
 } from './constants.ts';
 import {
   CHARGE_SPOT, COFFEE_MACHINE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DOOR_X0, DOOR_X1, ENTRANCE, MICROWAVE, MOP_RACK,
-  PLAYER_SPAWNS, QUEUE_SPOTS, REGISTERS, SHELVES, SPAWN_OUTSIDE, STORE_D, clampToStore, distToAABB, findPath,
-  resolveCollision, shelfBrowseSpots,
+  PLAYER_SPAWNS, QUEUE_SPOTS, REGISTERS, SHELVES, SPAWN_OUTSIDE, STORE_D, WANDER_SPOTS, CURRENT_MAP, clampToStore, distToAABB, findPath,
+  resolveCollision, shelfBrowseSpots, applyMap,
 } from './map.ts';
 import type {
   ActKind, CustomerKind, DayStats, GameEvent, Held, Phase, Snapshot, StoreSave, Target,
@@ -85,9 +85,9 @@ export interface World {
 /** Default multiplayer "business day" configuration: every mechanic enabled. */
 export function dayConfig(): ShiftConfig {
   return {
-    mode: 'day', id: 'day', title: '合作營業日', chapter: 0, length: DAY_OPEN_SECONDS, goal: 0,
+    mode: 'day', id: 'day', title: '合作營業日', chapter: 0, length: DAY_OPEN_SECONDS, goal: 0, map: CURRENT_MAP.id,
     karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], firstKaren: 22, karenEvery: 50, maxKarens: 1,
-    spawnEvery: 9, maxCustomers: 6, foods: ['coffee', 'meal'], foodChance: 0.35, events: ['rush', 'outage'], firstEvent: 70,
+    spawnEvery: 9, maxCustomers: 6, foods: ['coffee', 'meal'], foodChance: CURRENT_MAP.foodChance, events: ['rush', 'outage'], firstEvent: 70,
     register2: false, abilities: ['grab', 'spin', 'ultimate'],
     start: { money: 200, rating: 3, backstock: { drinks: 24, snacks: 24, bento: 18 }, shelves: { drinks: 8, snacks: 8, bento: 6 } },
     mods: { ...BASE_MODS }, hints: [], boss: false, bossAt: 0, endless: false,
@@ -128,6 +128,10 @@ function emptyStats(rating: number): DayStats {
 }
 
 export function createWorld(save: StoreSave = defaultSave(), seed = Date.now(), cfg: ShiftConfig = dayConfig()): World {
+  // the world is always built on its own map (career shifts: 便利商店)
+  if ((cfg.map ?? 'convenience') !== CURRENT_MAP.id) applyMap(cfg.map);
+  // only sell the prepared food this map has a station for (a clothes shop has none)
+  cfg.foods = cfg.foods.filter(f => (f === 'coffee' ? CURRENT_MAP.coffee : CURRENT_MAP.meal) != null);
   const s = sanitizeSave(save);
   const shift = cfg.mode === 'shift';
   const upgrades = { ...s.upgrades };
@@ -347,7 +351,7 @@ function goEat(w: World, c: Customer) {
 }
 
 function randomWanderSpot(w: World) {
-  const all = [...shelfBrowseSpots('drinks'), ...shelfBrowseSpots('snacks'), ...shelfBrowseSpots('bento'), { x: 8, z: 10 }, { x: 18, z: 6 }, { x: 5, z: 9 }];
+  const all = [...shelfBrowseSpots('drinks'), ...shelfBrowseSpots('snacks'), ...shelfBrowseSpots('bento'), ...WANDER_SPOTS];
   return pick(w, all);
 }
 
@@ -535,7 +539,7 @@ function updateCustomer(w: World, c: Customer, dt: number) {
     case 'toFood': if (arrived) { c.state = 'waitFood'; c.timer = 50 * m.patience; c.patienceMax = c.timer; c.yaw = Math.PI / 2; } break;
     case 'waitFood':
       c.timer -= dt * (w.power < 1 ? 1.3 : 1);
-      if (c.timer <= 0) { c.foodFailed = true; c.mood -= 35; adjRating(w, -0.06); adjChaos(w, 3); toast(w, `${c.want === 'meal' ? '🍱 熱便當' : '☕ 咖啡'}等太久，顧客放棄了`, 'bad'); c.patienceMax = (55 + w.rating * 6) * m.patience; c.patience = c.patienceMax; nextStep(w, c); }
+      if (c.timer <= 0) { c.foodFailed = true; c.mood -= 35; adjRating(w, -0.06); adjChaos(w, 3); toast(w, `${FOOD_INFO[c.want!].icon} ${FOOD_INFO[c.want!].name}等太久，顧客放棄了`, 'bad'); c.patienceMax = (55 + w.rating * 6) * m.patience; c.patience = c.patienceMax; nextStep(w, c); }
       break;
     case 'queue': case 'toRegister': case 'atRegister':
       if (c.state === 'toRegister' && arrived) { c.state = 'atRegister'; c.yaw = Math.PI; }
@@ -666,7 +670,7 @@ function nearestPlayer(w: World, c: { x: number; z: number }) {
 }
 
 function fleeSpot(w: World, c: Customer, p: PlayerState) {
-  const cands = [...shelfBrowseSpots('drinks'), ...shelfBrowseSpots('snacks'), ...shelfBrowseSpots('bento'), { x: 8, z: 10 }, { x: 18, z: 6 }, { x: 5, z: 9 }, { x: 12, z: 12 }];
+  const cands = [...shelfBrowseSpots('drinks'), ...shelfBrowseSpots('snacks'), ...shelfBrowseSpots('bento'), ...WANDER_SPOTS];
   let best = cands[0], bs = -Infinity;
   for (const s of cands) {
     const dc = Math.hypot(s.x - c.x, s.z - c.z);
@@ -717,18 +721,18 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
     }
     case 'brew':
       if (t.t !== 'coffee') return { ok: false, reason: '目標錯誤' };
-      if (!w.cfg.foods.includes('coffee')) return { ok: false, reason: '這間店還沒賣咖啡' };
+      if (!w.cfg.foods.includes('coffee')) return { ok: false, reason: `這間店還沒賣${FOOD_INFO.coffee.name || '飲料'}` };
       if (!completing && !canTakeFood(p)) return { ok: false, reason: '雙手已滿（最多兩份餐點）' };
       return { ok: true, dur: brewTime(w.upgrades.coffee) * m.brew };
     case 'heat':
       if (t.t !== 'microwave') return { ok: false, reason: '目標錯誤' };
-      if (!w.cfg.foods.includes('meal')) return { ok: false, reason: '這間店還沒賣熱便當' };
+      if (!w.cfg.foods.includes('meal')) return { ok: false, reason: `這間店還沒賣${FOOD_INFO.meal.name || '熱食'}` };
       if (!completing && !canTakeFood(p)) return { ok: false, reason: '雙手已滿（最多兩份餐點）' };
-      if (!completing && w.backstock.bento <= 0) return { ok: false, reason: '便當缺貨，請採購' };
+      if (!completing && w.backstock.bento <= 0) return { ok: false, reason: `${FOOD_INFO.meal.uses}缺貨，請採購` };
       return { ok: true, dur: heatTime(w.upgrades.coffee) * m.brew };
     case 'deliver': {
       if (!c || c.state !== 'waitFood' || !c.want) return { ok: false, reason: '這位顧客沒有在等餐' };
-      if (p.held?.kind !== c.want && p.held2?.kind !== c.want) return { ok: false, reason: `他要的是${c.want === 'meal' ? '熱便當' : '咖啡'}` };
+      if (p.held?.kind !== c.want && p.held2?.kind !== c.want) return { ok: false, reason: `他要的是${FOOD_INFO[c.want].name}` };
       return { ok: true, dur: 0 };
     }
     case 'takeBox':
@@ -785,7 +789,7 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
       return { ok: true, dur: 1.0 / m.calm };
     case 'treat':
       if (!c || c.kind !== 'charger' || c.resolved) return { ok: false, reason: '不需要' };
-      if (p.held?.kind !== 'coffee' && p.held2?.kind !== 'coffee') return { ok: false, reason: '先去煮一杯咖啡' };
+      if (p.held?.kind !== 'coffee' && p.held2?.kind !== 'coffee') return { ok: false, reason: CURRENT_MAP.coffee ? `先去${FOOD_INFO.coffee.verb}` : '這間店沒有飲料可以請他' };
       return { ok: true, dur: 0.3 };
     case 'pickup': {
       if (t.t !== 'item') return { ok: false, reason: '目標錯誤' };
@@ -816,7 +820,7 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
     case 'checkout': {
       if (t.t !== 'register') return;
       const cc = customer(w, w.registers[t.idx]!)!;
-      let total = cc.items.reduce((s, it) => s + PRODUCT_INFO[it].price, 0) + (cc.foodDone ? (cc.want === 'meal' ? MEAL_PRICE : COFFEE_PRICE) : 0);
+      let total = cc.items.reduce((s, it) => s + PRODUCT_INFO[it].price, 0) + (cc.foodDone ? (cc.want === 'meal' ? FOOD_INFO.meal.price : FOOD_INFO.coffee.price) : 0);
       const tip = cc.kind === 'normal' ? Math.round(total * 0.18 * m.tips * Math.max(0, cc.mood) / 100 * (w.rating / 5) * (cc.patience / cc.patienceMax + 0.3)) : 0;
       total += tip;
       w.money += total; w.dayStats.revenue += total; w.dayStats.tips += tip; w.dayStats.served++; w.totals.revenue += total; w.totals.served++;
@@ -917,11 +921,11 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
       c!.hits++;
       ev(w, { e: 'sfx', name: 'unplug', x: c!.x, z: c!.z });
       if (c!.hits >= 2) { resolveKaren(w, c!, p, 0.08, `🔌 ${p.name} 拔掉插頭，充電霸王悻悻然離開（口碑 +0.08）`); leave(w, c!, false); }
-      else toast(w, '🔌 他又插回去了！再拔一次，或請他喝杯咖啡', 'info');
+      else toast(w, CURRENT_MAP.coffee ? `🔌 他又插回去了！再拔一次，或請他喝杯${FOOD_INFO.coffee.name}` : '🔌 他又插回去了！再拔一次', 'info');
       break;
     case 'treat':
       if (p.held?.kind === 'coffee') { p.held = p.held2; p.held2 = null; } else p.held2 = null;
-      resolveKaren(w, c!, p, 0.15, `☕ ${p.name} 請充電霸王喝咖啡，他開心地讓出插座（口碑 +0.15）`);
+      resolveKaren(w, c!, p, 0.15, `${FOOD_INFO.coffee.icon} ${p.name} 請充電霸王喝${FOOD_INFO.coffee.name}，他開心地讓出插座（口碑 +0.15）`);
       ev(w, { e: 'sfx', name: 'deliver', x: c!.x, z: c!.z });
       leave(w, c!, false);
       break;

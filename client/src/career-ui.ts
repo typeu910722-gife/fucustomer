@@ -8,6 +8,7 @@ import {
 import { ACHIEVEMENTS, Achievement } from '../../shared/achievements.ts';
 import { STORE_FUND, STORE_RESERVE, WAGES, WageMode, canOpenStore, closeStore, hireStaff, openStore, staffPace, withdraw } from '../../shared/ownstore.ts';
 import { defaultSave } from '../../shared/sim.ts';
+import { MAPS, getMap } from '../../shared/maps/index.ts';
 import { KAREN_INFO } from '../../shared/constants.ts';
 import { esc, show } from './ui.ts';
 
@@ -56,7 +57,8 @@ export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'ch
   on('st-open', () => {
     const name = (document.getElementById('st-name') as HTMLInputElement).value;
     const all = (document.getElementById('st-all') as HTMLInputElement | null)?.checked;
-    if (openStore(p, name, all ? p.wallet : STORE_FUND, defaultSave())) { saveProfile(p); h.opened(); }
+    const map = (document.querySelector('input[name="st-map"]:checked') as HTMLInputElement | null)?.value ?? 'convenience';
+    if (openStore(p, name, all ? p.wallet : STORE_FUND, defaultSave(), map)) { saveProfile(p); h.opened(); }
   });
   on('st-enter', () => h.enterStore());
   on('st-withdraw', () => { withdraw(p); redraw(); });
@@ -119,13 +121,16 @@ function storeHtml(p: CareerProfile) {
     return `<div class="chapter daily"><div class="chhead"><b>🏪 自己開店</b><span class="tag ok">存款 $${p.wallet}</span></div>
       <p>夢想的時刻到了。用存款開一家自己的店——這次換你當老闆。</p>
       <label class="field">店名<input id="st-name" maxlength="16" placeholder="我的便利商店"></label>
+      <p class="muted">要開哪一種店？</p>
+      <div class="grid2">${MAPS.map((m, i) => `<label class="shopitem"><b><input type="radio" name="st-map" value="${m.id}" ${i === 0 ? 'checked' : ''}> ${m.icon} ${esc(m.name)}</b><span class="muted">${esc(m.desc)}</span></label>`).join('')}</div>
       <label class="muted"><input type="checkbox" id="st-all"> 投入全部存款（$${p.wallet}）；不勾選只投入開店基金 $${STORE_FUND}</label>
       <p class="muted">⚠ 有機會倒閉：連續 3 天打烊時現金為負或口碑見底 → 店收掉，投入的錢沒了。</p>
       <button class="btn primary" id="st-open">開店！</button></div>${histLine}`;
   }
   const s = st.save, staff = st.staff;
   const mood = staff.quit ? '已辭職' : staff.mood >= 70 ? '😄 很有幹勁' : staff.mood >= 40 ? '🙂 普通' : staff.mood >= 20 ? '😒 很不爽' : '😡 快辭職了';
-  return `<div class="chapter daily"><div class="chhead"><b>🏪 ${esc(st.name)}</b><span class="muted">第 ${s.day} 天</span>
+  const mp = getMap(st.map);
+  return `<div class="chapter daily"><div class="chhead"><b>${mp.icon} ${esc(st.name)}</b><span class="muted">${esc(mp.name)}・第 ${s.day} 天</span>
       ${st.negDays ? `<span class="tag" style="background:#c92a2a">⚠ 經營危機 ${st.negDays}/3 天</span>` : ''}</div>
     <div class="grid2"><div>
       <div class="stat"><span>店裡現金</span><b>$${s.money}</b></div><div class="stat"><span>口碑</span><b>★ ${s.rating.toFixed(2)}</b></div>
@@ -148,8 +153,8 @@ function dailyHtml(p: CareerProfile) {
   const today = localDate();
   const plan = dailyPlan(p, today);
   const d = p.daily.date === today ? p.daily : { best: 0, rewarded: false };
-  const scene = CHAPTERS[plan.scene - 1];
-  return `<div class="chapter daily"><div class="chhead"><b>📅 每日挑戰・${today}</b><span class="muted">${esc(scene.place)}</span>
+  const dm = getMap(plan.map);
+  return `<div class="chapter daily"><div class="chhead"><b>📅 每日挑戰・${today}</b><span class="muted">今天在：${dm.icon} ${esc(dm.name)}</span>
       <span class="tag ${d.rewarded ? 'ok' : ''}">${d.rewarded ? '✅ 今日獎勵已領' : '🎁 今日獎勵未領'}</span>${p.daily.streak ? `<span class="tag">🔥 連續 ${p.daily.streak} 天</span>` : ''}</div>
     <div class="muted story">${plan.mods.map(m => `<b>${DAILY_MODS[m].name}</b>：${DAILY_MODS[m].desc}`).join('　')}${d.best ? `　・今日最佳 $${d.best}` : ''}</div>
     <button class="btn primary" data-play="${DAILY_ID}">開始今日挑戰</button></div>`;

@@ -3,6 +3,7 @@
 import { TICK_RATE } from '../../shared/constants.ts';
 import type { ClientMsg, ServerMsg, StoreSave } from '../../shared/protocol.ts';
 import { Room } from '../../shared/room.ts';
+import { applyMap } from '../../shared/map.ts';
 import type { ShiftConfig } from '../../shared/career.ts';
 import { Bot, botMessages } from '../../shared/bot.ts';
 import type { Snapshot } from '../../shared/protocol.ts';
@@ -12,6 +13,8 @@ export interface LocalExtras {
   staff?: { name: string; pace: number };
   /** Receives each nightly save instead of the free-play save slot. */
   onSave?: (save: StoreSave) => void;
+  /** Map for free play / own store (career shifts carry it in their config). */
+  map?: string;
 }
 
 export type NetStatus = 'connecting' | 'online' | 'reconnecting' | 'offline';
@@ -35,6 +38,7 @@ export class LocalConnection implements GameConnection {
   readonly onSave?: (save: StoreSave) => void;
   private staff: { bot: Bot; id: string; snap: Snapshot | null; rid: number } | null = null;
   constructor(name: string, save: StoreSave | null, shift?: ShiftConfig, seed?: number, extras: LocalExtras = {}) {
+    applyMap(shift?.map ?? extras.map); // must happen before the world and the 3D view are built
     this.room = new Room('SOLO', save, { solo: true, shift, seed });
     this.onSave = extras.onSave;
     const conn = { send: (m: ServerMsg) => queueMicrotask(() => { if (m.type === 'save') this.onSave?.(m.save); this.onMessage(m); }), close: () => {} };

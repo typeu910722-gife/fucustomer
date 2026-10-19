@@ -1,4 +1,5 @@
 // DOM menus: main menu, lobby, settings, in-game overlays (pause, shop, summary, quick messages).
+import { MAPS } from '../../shared/maps/index.ts';
 import { KAREN_INFO, MAX_PLAYERS, PRODUCT_INFO, PRODUCTS, QUICK_MESSAGES, UPGRADES, UPGRADE_IDS, shelfCapacity } from '../../shared/constants.ts';
 import type { LobbyState, Snapshot, StoreSave } from '../../shared/protocol.ts';
 import type { Settings } from './storage.ts';
@@ -37,8 +38,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: Sto
       <button class="btn primary" id="m-career" style="font-size:20px;padding:16px">🧑‍💼 職涯模式：從工讀生到終極打工人</button>
       <h3>自由營業（單人）</h3>
       <div class="row">
-        ${info.soloSave ? `<button class="btn" id="m-solo-cont">繼續經營（第 ${info.soloSave.day} 天）</button>` : ''}
-        <button class="btn" id="m-solo-new">${info.soloSave ? '開新店面' : '開始自由營業'}</button>
+        <button class="btn" id="m-solo-new">🗺 選擇店面開始營業（${MAPS.length} 種地圖）</button>
       </div>
       <h3>多人合作（最多 ${MAX_PLAYERS} 人，測試中）</h3>
       <button class="btn" id="m-create">建立房間</button>
@@ -55,8 +55,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: Sto
   const name = () => { const n = val('m-name').trim(); h.setName(n); return n; };
   on('m-name', 'change', name);
   on('m-career', 'click', () => { name(); h.career(); });
-  on('m-solo-cont', 'click', () => { name(); h.solo(false); });
-  on('m-solo-new', 'click', () => { name(); if (!info.soloSave || confirm('開新店面會覆蓋單人進度，確定嗎？')) h.solo(true); });
+  on('m-solo-new', 'click', () => { name(); h.solo(true); });
   on('m-create', 'click', () => { name(); h.create(!!(document.getElementById('m-coop-cont') as HTMLInputElement | null)?.checked); });
   on('m-join', 'click', () => { name(); const c = val('m-code').trim().toUpperCase(); if (c.length < 5) { document.getElementById('m-err')!.textContent = '請輸入 5 碼房間碼'; return; } h.join(c); });
   on('m-code', 'keydown', e => { if ((e as KeyboardEvent).key === 'Enter') document.getElementById('m-join')!.click(); });
@@ -223,4 +222,22 @@ export function summaryHtml(s: Snapshot, selfId: string) {
     <div>${s.players.map(p => `<span class="tag" style="margin:2px;display:inline-block"><span class="dot" style="display:inline-block;width:10px;height:10px;background:${hex(p.color)}"></span> ${esc(p.name)} ${p.ready ? '✅' : '⏳'}</span>`).join('')}</div>
     <div id="sum-shop"></div>
     <button class="btn ${me?.ready ? '' : 'primary'}" id="sum-ready">${me?.ready ? '等待隊友…（取消準備）' : `準備開始第 ${s.day + 1} 天`}</button>`;
+}
+
+/** Free play: pick a store type. Each map keeps its own save. */
+export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map: string, fresh: boolean): void; back(): void }) {
+  show(`<div class="card wide"><div class="row" style="align-items:center"><h2 style="flex:1;margin:0">選擇店面</h2><button class="btn small" id="mp-back" style="flex:0">← 主選單</button></div>
+    <p class="muted">每種店賣的東西、擺設和工作站都不一樣。各自有獨立的存檔。</p>
+    <div class="grid2">${MAPS.map(m => {
+      const sv = saves[m.id];
+      const foods = [m.coffee && `${m.coffee.icon}${m.coffee.food}`, m.meal && `${m.meal.icon}${m.meal.food}`].filter(Boolean).join('、') || '不賣吃的';
+      return `<div class="shopitem mapcard"><b style="font-size:20px">${m.icon} ${esc(m.name)}</b>
+        <span class="muted">${esc(m.desc)}</span>
+        <span class="muted">商品：${(['drinks', 'snacks', 'bento'] as const).map(p => esc(m.products[p].name)).join('、')}・現做：${esc(foods)}</span>
+        <div class="row">${sv ? `<button class="btn primary" data-map-cont="${m.id}">繼續（第 ${sv.day} 天）</button>` : ''}
+        <button class="btn ${sv ? '' : 'primary'}" data-map="${m.id}">${sv ? '重新開店' : '開店營業'}</button></div></div>`;
+    }).join('')}</div></div>`);
+  document.getElementById('mp-back')!.onclick = () => h.back();
+  document.querySelectorAll<HTMLButtonElement>('[data-map-cont]').forEach(b => { b.onclick = () => h.play(b.dataset.mapCont!, false); });
+  document.querySelectorAll<HTMLButtonElement>('[data-map]').forEach(b => { b.onclick = () => { if (!saves[b.dataset.map!] || confirm('重新開店會覆蓋這間店的進度，確定嗎？')) h.play(b.dataset.map!, true); }; });
 }

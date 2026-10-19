@@ -3,6 +3,7 @@
 import { KarenKind, Product } from './constants.ts';
 import type { OwnStore, StoreHistory, WageMode } from './ownstore.ts';
 import type { StoreSave } from './protocol.ts';
+import { MAPS } from './maps/index.ts';
 
 export type Ability = 'hit' | 'grab' | 'spin' | 'ultimate';
 
@@ -40,6 +41,8 @@ export interface ShiftConfig {
   daily?: { date: string; mods: DailyModId[]; scene: number };
   /** Own store: employee wage charged at each nightly settlement. */
   staffWage?: number;
+  /** Map id (shared/maps). Omitted = 便利商店. */
+  map?: string;
 }
 
 // ---------------- ranks & levels ----------------
@@ -343,15 +346,19 @@ function seededRng(seed: number) { let a = seed; return () => { a = (a + 0x6d2b7
 export function dailyPlan(p: CareerProfile, date: string) {
   const rng = seededRng(dailySeed(date));
   const scene = 1 + Math.floor(rng() * CHAPTERS.length);
-  const first = DAILY_MOD_IDS[Math.floor(rng() * DAILY_MOD_IDS.length)];
+  // a different kind of store each day
+  const map = MAPS[Math.floor(rng() * MAPS.length)].id;
+  const hasCoffee = !!MAPS.find(m => m.id === map)?.coffee;
+  const pool = DAILY_MOD_IDS.filter(m => m !== 'coffee' || hasCoffee);
+  const first = pool[Math.floor(rng() * pool.length)];
   const mods: DailyModId[] = [first];
   if (rng() < 0.6) {
     const karenMod = (m: DailyModId) => m === 'streamers' || m === 'chargers';
-    const rest = DAILY_MOD_IDS.filter(m => m !== first && !(karenMod(m) && karenMod(first)));
+    const rest = pool.filter(m => m !== first && !(karenMod(m) && karenMod(first)));
     mods.push(rest[Math.floor(rng() * rest.length)]);
   }
   let open = 1; for (const c of CHAPTERS) if (chapterUnlocked(p, c.n).ok) open = c.n;
-  return { date, scene, difficulty: Math.min(scene, open), mods };
+  return { date, scene, difficulty: Math.min(scene, open), mods, map };
 }
 
 export function buildDailyConfig(p: CareerProfile, date: string): ShiftConfig {
@@ -359,8 +366,8 @@ export function buildDailyConfig(p: CareerProfile, date: string): ShiftConfig {
   const ch = CHAPTERS[plan.difficulty - 1];
   const base = ch.shifts[Math.min(2, ch.shifts.length - 1)];
   const cfg = buildShiftConfig(p, base.id);
-  const sceneCh = CHAPTERS[plan.scene - 1];
-  cfg.id = DAILY_ID; cfg.title = `每日挑戰・${sceneCh.place.split('・')[0]}`;
+  const mapDef = MAPS.find(m => m.id === plan.map)!;
+  cfg.id = DAILY_ID; cfg.title = `每日挑戰・${mapDef.icon}${mapDef.name}`; cfg.map = plan.map;
   cfg.length = 150;
   let goal = base.goal * (150 / base.length);
   for (const m of plan.mods) {
@@ -501,5 +508,6 @@ function sanitizeStore(v: unknown, int: (x: unknown, lo: number, hi: number, d: 
     invested: int(o.invested, 0, 1e9, 0), save: { ...(sv as StoreSave), money: int(sv.money, -1e6, 1e9, 0), day: int(sv.day, 1, 1e6, 1), rating: Math.max(0, Math.min(5, Number(sv.rating) || 0)) },
     days: int(o.days, 0, 1e6, 0), negDays: int(o.negDays, 0, 3, 0), wage, bestDay: int(o.bestDay, -1e6, 1e9, 0), withdrawn: int(o.withdrawn, 0, 1e9, 0),
     staff: { name: typeof staff.name === 'string' ? staff.name.slice(0, 8) : '小陳', mood: int(staff.mood, 0, 100, 70), quit: staff.quit === true },
+    map: typeof o.map === 'string' && /^[a-z0-9-]{1,24}$/.test(o.map) ? o.map : 'convenience',
   };
 }

@@ -1,5 +1,9 @@
 // Store layout, collision and grid pathfinding. Units are metres, x → east, z → south.
-import { PLAYER_RADIUS, Product } from './constants.ts';
+// The fixed shell (walls, door, stockroom, crates, mop rack) is shared; everything else comes from the active map
+// (shared/maps/). Call applyMap() before creating a world or a view; the exported bindings below update in place.
+import { FOOD_INFO, PLAYER_RADIUS, PRODUCT_INFO, PRODUCTS, Product } from './constants.ts';
+import { DEFAULT_MAP, getMap } from './maps/index.ts';
+import type { MapDef } from './maps/types.ts';
 
 export interface AABB { x0: number; z0: number; x1: number; z1: number; h: number; kind: string }
 
@@ -24,65 +28,81 @@ export const WALLS: AABB[] = [
   box(4.2, 5, 6.5, 5.25, 3.2, 'wall'),
   box(6.5, 0, 6.75, 5.25, 3.2, 'wall'),
 ];
-
-export interface Shelf { product: Product; box: AABB }
-export const SHELVES: Shelf[] = [
-  { product: 'drinks', box: box(9, 3.4, 15, 4.3, 1.9, 'shelf') },
-  { product: 'snacks', box: box(9, 6.9, 15, 7.8, 1.6, 'shelf') },
-  { product: 'bento', box: box(22.9, 2, 23.8, 8, 2.0, 'fridge') },
-];
-
-export const COUNTER = box(15, 11, 21, 11.8, 1.05, 'counter');
-export const REGISTERS = [
-  { idx: 0, x: 16.5, z: 11.4, cashier: { x: 16.5, z: 10.3 }, customer: { x: 16.5, z: 12.5 } },
-  { idx: 1, x: 19.2, z: 11.4, cashier: { x: 19.2, z: 10.3 }, customer: { x: 19.2, z: 12.5 } },
-];
-export const COFFEE_MACHINE = box(15.1, 8.6, 16.1, 9.4, 1.0, 'coffee');
-export const MICROWAVE = box(17.7, 8.7, 18.6, 9.4, 1.0, 'microwave');
-export const COFFEE_PICKUP = { x: 14.2, z: 11.6 };
-export const COMPLAINT_SPOT = { x: 13.2, z: 13.2 };
-/** Wall socket by the front window that the 充電霸王 karen squats at. */
-export const OUTLET = { x: 3.2, z: 16 };
-export const CHARGE_SPOT = { x: 3.2, z: 15.2 };
 export const MOP_RACK = box(0, 12, 0.7, 13.4, 1.5, 'mop');
 export const CRATES: { product: Product; box: AABB }[] = [
   { product: 'drinks', box: box(0.6, 0.6, 1.8, 1.6, 1.1, 'crate') },
   { product: 'snacks', box: box(2.6, 0.6, 3.8, 1.6, 1.1, 'crate') },
   { product: 'bento', box: box(4.6, 0.6, 5.8, 1.6, 1.1, 'crate') },
 ];
-export const DECOR: AABB[] = [
-  box(0, 7.5, 0.6, 10.5, 1.2, 'atm'),
-  box(23.4, 13.5, 24, 15.5, 1.3, 'plant'),
-  box(7.2, 13.8, 8.2, 14.8, 0.9, 'display'),
-];
-
 export const ENTRANCE = { x: 12, z: 15.4 };
 export const SPAWN_OUTSIDE = { x: 12, z: 17.2 };
-export const PLAYER_SPAWNS = [
-  { x: 18, z: 9.5 }, { x: 12, z: 9.5 }, { x: 4, z: 7 }, { x: 18, z: 6 }, { x: 8, z: 11 },
-];
 
-export const QUEUE_SPOTS = [
-  { x: 17.85, z: 13.6 }, { x: 18.9, z: 14.4 }, { x: 19.9, z: 14.4 }, { x: 20.9, z: 14.4 }, { x: 21.9, z: 14.4 },
-  { x: 22.9, z: 13.8 }, { x: 22.9, z: 12.9 }, { x: 22.9, z: 12.0 }, { x: 21.9, z: 12.4 }, { x: 22.2, z: 15.3 },
-  { x: 21.2, z: 15.3 }, { x: 20.2, z: 15.3 },
-];
+/** A station that this map doesn't have is parked far outside so nothing can reach it. */
+const NOWHERE = box(-60, -60, -59, -59, 0, 'none');
 
-export const SOLIDS: AABB[] = [
-  ...WALLS, ...SHELVES.map(s => s.box), COUNTER, COFFEE_MACHINE, MICROWAVE, MOP_RACK, ...CRATES.map(c => c.box), ...DECOR,
-];
+export interface Shelf { product: Product; box: AABB }
+// ---- map-dependent layout (live bindings, replaced by applyMap) ----
+export let CURRENT_MAP: MapDef = getMap(DEFAULT_MAP);
+export let SHELVES: Shelf[] = [];
+export let COUNTER: AABB = NOWHERE;
+export let REGISTERS: MapDef['registers'] = CURRENT_MAP.registers;
+export let COFFEE_MACHINE: AABB = NOWHERE;
+export let MICROWAVE: AABB = NOWHERE;
+export let COFFEE_PICKUP = { x: 0, z: 0 };
+export let COMPLAINT_SPOT = { x: 0, z: 0 };
+/** Wall socket by the front window that the 充電霸王 karen squats at. */
+export let OUTLET = { x: 3.2, z: 16 };
+export let CHARGE_SPOT = { x: 3.2, z: 15.2 };
+export let DECOR: AABB[] = [];
+export let PLAYER_SPAWNS: { x: number; z: number }[] = [];
+export let QUEUE_SPOTS: { x: number; z: number }[] = [];
+export let WANDER_SPOTS: { x: number; z: number }[] = [];
+export let SOLIDS: AABB[] = [];
+/** Original product names/prices of the default map, so switching back restores them. */
+const BASE_PRODUCTS = JSON.parse(JSON.stringify(PRODUCT_INFO)) as typeof PRODUCT_INFO;
 
-/** Points customers stand at to browse a shelf. */
+/** Switches the whole game (simulation, renderer, bots) to a map. Returns the map actually used. */
+export function applyMap(id?: string): MapDef {
+  const m = getMap(id);
+  CURRENT_MAP = m;
+  SHELVES = m.shelves.map(s => ({ product: s.product, box: { ...s.box } }));
+  COUNTER = { ...m.counter };
+  REGISTERS = m.registers;
+  COFFEE_MACHINE = m.coffee ? { ...m.coffee.box } : NOWHERE;
+  MICROWAVE = m.meal ? { ...m.meal.box } : NOWHERE;
+  COFFEE_PICKUP = { ...m.pickup }; COMPLAINT_SPOT = { ...m.complaint };
+  OUTLET = { ...m.outlet }; CHARGE_SPOT = { ...m.chargeSpot };
+  DECOR = m.decor.map(d => ({ ...d }));
+  PLAYER_SPAWNS = m.playerSpawns; QUEUE_SPOTS = m.queue; WANDER_SPOTS = m.wander;
+  SOLIDS = [
+    ...WALLS, ...SHELVES.map(s => s.box), COUNTER, ...(m.coffee ? [COFFEE_MACHINE] : []), ...(m.meal ? [MICROWAVE] : []),
+    MOP_RACK, ...CRATES.map(c => c.box), ...DECOR,
+  ];
+  for (const p of PRODUCTS) {
+    const mp = m.products[p] ?? BASE_PRODUCTS[p];
+    Object.assign(PRODUCT_INFO[p], { name: mp.name, price: mp.price, boxCost: mp.boxCost, color: mp.color });
+  }
+  Object.assign(FOOD_INFO.coffee, m.coffee ? { name: m.coffee.food, station: m.coffee.station, verb: m.coffee.verb, icon: m.coffee.icon, price: m.coffee.price } : { name: '', station: '', verb: '', icon: '', price: 0 });
+  Object.assign(FOOD_INFO.meal, m.meal ? { name: m.meal.food, station: m.meal.station, verb: m.meal.verb, icon: m.meal.icon, price: m.meal.price, uses: m.meal.uses } : { name: '', station: '', verb: '', icon: '', price: 0, uses: '' });
+  rebuildGrid();
+  return m;
+}
+
+/** Points customers stand at to browse a shelf. Wall units are browsed from their open side. */
 export function shelfBrowseSpots(product: Product): { x: number; z: number }[] {
   const s = SHELVES.find(sh => sh.product === product)!.box;
   const spots: { x: number; z: number }[] = [];
-  if (product === 'bento') {
-    for (let z = s.z0 + 0.7; z < s.z1; z += 1.2) spots.push({ x: s.x0 - 0.6, z });
+  if (s.z1 - s.z0 > s.x1 - s.x0) {
+    const x = s.x1 > STORE_W - 1 ? s.x0 - 0.6 : s.x0 < 1 ? s.x1 + 0.6 : s.x0 - 0.6;
+    for (let z = s.z0 + 0.7; z < s.z1; z += 1.2) spots.push({ x, z });
   } else {
     for (let x = s.x0 + 0.6; x < s.x1; x += 1.2) { spots.push({ x, z: s.z0 - 0.6 }); spots.push({ x, z: s.z1 + 0.6 }); }
   }
   return spots;
 }
+
+/** Which way a wall unit opens: -1 = toward west (unit on the east wall), +1 = toward east. 0 for free-standing. */
+export function shelfFacing(b: AABB) { return b.z1 - b.z0 > b.x1 - b.x0 ? (b.x0 < 1 ? 1 : -1) : 0; }
 
 export function distToAABB(x: number, z: number, b: AABB) {
   const dx = Math.max(b.x0 - x, 0, x - b.x1);
@@ -121,12 +141,14 @@ export function clampToStore(x: number, z: number, r = PLAYER_RADIUS) {
   return { x: Math.min(Math.max(x, r), STORE_W - r), z: Math.min(Math.max(z, r), STORE_D - r) };
 }
 
+const pathCache = new Map<string, { x: number; z: number }[]>();
+
 // ---------- grid pathfinding for NPCs ----------
 export const CELL = 0.5;
 export const GW = Math.ceil(STORE_W / CELL);
 export const GD = Math.ceil((STORE_D + 2) / CELL); // include strip outside the door
 const blocked = new Uint8Array(GW * GD);
-(function buildGrid() {
+function rebuildGrid() {
   const npcR = 0.32;
   for (let gz = 0; gz < GD; gz++) for (let gx = 0; gx < GW; gx++) {
     const x = (gx + 0.5) * CELL, z = (gz + 0.5) * CELL;
@@ -135,7 +157,8 @@ const blocked = new Uint8Array(GW * GD);
     if (z > STORE_D && (x < DOOR_X0 - 1 || x > DOOR_X1 + 1)) b = 1;
     blocked[gz * GW + gx] = b;
   }
-})();
+  pathCache.clear();
+}
 
 export function isBlockedCell(gx: number, gz: number) {
   if (gx < 0 || gz < 0 || gx >= GW || gz >= GD) return true;
@@ -154,7 +177,6 @@ function nearestFree(gx: number, gz: number) {
   return { gx, gz };
 }
 
-const pathCache = new Map<string, { x: number; z: number }[]>();
 
 /** A* on the grid with 8-way movement, followed by line-of-sight smoothing. */
 export function findPath(from: { x: number; z: number }, to: { x: number; z: number }): { x: number; z: number }[] {
@@ -220,3 +242,5 @@ function lineClear(p: { x: number; z: number }, q: { x: number; z: number }) {
   }
   return true;
 }
+
+applyMap(DEFAULT_MAP);
