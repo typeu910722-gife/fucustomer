@@ -1,7 +1,8 @@
 // Entry point: main menu, solo / create / join flows, reconnect-to-last-room.
 import { audio } from './audio.ts';
 import { Game } from './game.ts';
-import { LocalConnection, WsConnection } from './net.ts';
+import { LocalConnection, GameConnection } from './net.ts';
+import type { Intent } from './net-ws.ts';
 import {
   clearSoloSave, defaultServerUrl, detectPlatform, isTouch, loadCoopSave, loadLastSession, loadSettings, loadSoloSave, saveSettings,
 } from './storage.ts';
@@ -28,7 +29,7 @@ function freshCanvas() {
 
 let current: Game | null = null;
 
-function startGame(make: () => LocalConnection | WsConnection, onDone?: (reason?: string, result?: ShiftResult | null) => void) {
+function startGame(make: () => GameConnection, onDone?: (reason?: string, result?: ShiftResult | null) => void) {
   audio.unlock();
   freshCanvas();
   UI.show('<div class="card"><h2>載入中…</h2><p class="muted">準備開店</p></div>');
@@ -43,6 +44,15 @@ function tryFullscreenLandscape() {
   const el = document.documentElement as HTMLElement & { webkitRequestFullscreen?: () => void };
   try { void (el.requestFullscreen?.() ?? el.webkitRequestFullscreen?.()); } catch { /* ignore */ }
   try { void (screen.orientation as unknown as { lock?: (o: string) => Promise<void> }).lock?.('landscape').catch(() => {}); } catch { /* ignore */ }
+}
+
+/** Multiplayer code is fetched on demand, so solo players never download it. */
+async function online(url: string, intent: Intent) {
+  UI.show('<div class="card"><h2>連線中…</h2><p class="muted">正在連線到伺服器</p></div>');
+  try {
+    const { WsConnection } = await import('./net-ws.ts');
+    startGame(() => new WsConnection(url, intent, platform));
+  } catch { menu('無法載入連線模組，請檢查網路'); }
 }
 
 // ---------------- career (single-player main story) ----------------
@@ -75,11 +85,11 @@ function menu(error?: string) {
       const save = fresh ? null : loadSoloSave();
       startGame(() => new LocalConnection(playerName(), save));
     },
-    create: cont => startGame(() => new WsConnection(serverUrl(), { kind: 'create', name: playerName(), save: cont ? loadCoopSave() : null }, platform)),
-    join: code => startGame(() => new WsConnection(serverUrl(), { kind: 'join', code, name: playerName() }, platform)),
+    create: cont => online(serverUrl(), { kind: 'create', name: playerName(), save: cont ? loadCoopSave() : null }),
+    join: code => online(serverUrl(), { kind: 'join', code, name: playerName() }),
     rejoin: () => {
       const l = loadLastSession(); if (!l) return menu();
-      startGame(() => new WsConnection(l.url, { kind: 'join', code: l.code, name: playerName(), token: l.token }, platform));
+      online(l.url, { kind: 'join', code: l.code, name: playerName(), token: l.token });
     },
     settings: () => UI.settingsMenu(settings, s => { settings = s; saveSettings(s); audio.setVolume(s.volume); audio.setMusicVolume(s.music); menu(); }),
   }, { soloSave: loadSoloSave(), coopSave: loadCoopSave(), canRejoin, server: serverUrl(), platform, error });
@@ -96,3 +106,9 @@ if (deepJoin && /^[A-Z0-9]{5}$/i.test(deepJoin)) {
 
 window.addEventListener('pointerdown', () => audio.unlock(), { once: true });
 window.addEventListener('keydown', () => audio.unlock(), { once: true });
+
+// Offline support: cache the game files so solo play opens without a connection (web only).
+const isApp = !!(window as unknown as { Capacitor?: unknown }).Capacitor || navigator.userAgent.includes('Electron');
+if ('serviceWorker' in navigator && !isApp && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(() => { /* optional */ }); });
+}

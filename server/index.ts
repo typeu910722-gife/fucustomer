@@ -3,6 +3,7 @@
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { promises as fs, existsSync, readFileSync } from 'node:fs';
 import { randomInt } from 'node:crypto';
+import { gzipSync } from 'node:zlib';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -82,11 +83,31 @@ function serveStatic(req: IncomingMessage, res: ServerResponse) {
   const file = path.join(STATIC_DIR, p);
   if (!file.startsWith(STATIC_DIR) || !existsSync(file)) {
     const idx = path.join(STATIC_DIR, 'index.html');
-    if (existsSync(idx)) { res.writeHead(200, { 'content-type': MIME['.html'] }); res.end(readFileSync(idx)); return; }
+    if (existsSync(idx)) { sendFile(req, res, idx); return; }
     res.writeHead(404); res.end('not found'); return;
   }
-  res.writeHead(200, { 'content-type': MIME[path.extname(file)] ?? 'application/octet-stream' });
-  res.end(readFileSync(file));
+  sendFile(req, res, file);
+}
+
+// Static files are gzip-compressed once and kept in memory; hashed assets are cached by browsers for a year.
+const fileCache = new Map<string, { raw: Buffer; gz: Buffer | null; mtime: number }>();
+function sendFile(req: IncomingMessage, res: ServerResponse, file: string) {
+  const ext = path.extname(file);
+  let entry = fileCache.get(file);
+  if (!entry) {
+    const raw = readFileSync(file);
+    const gz = /\.(js|css|html|json|svg|webmanifest)$/.test(file) && raw.length > 1024 ? gzipSync(raw, { level: 9 }) : null;
+    entry = { raw, gz, mtime: Date.now() };
+    if (process.env.NODE_ENV === 'production') fileCache.set(file, entry);
+  }
+  const headers: Record<string, string> = {
+    'content-type': MIME[ext] ?? 'application/octet-stream',
+    'cache-control': file.includes(`${path.sep}assets${path.sep}`) ? 'public, max-age=31536000, immutable' : 'no-cache',
+    'x-content-type-options': 'nosniff',
+  };
+  const acceptsGzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''));
+  if (entry.gz && acceptsGzip) { headers['content-encoding'] = 'gzip'; headers['vary'] = 'accept-encoding'; res.writeHead(200, headers); res.end(entry.gz); return; }
+  res.writeHead(200, headers); res.end(entry.raw);
 }
 
 const http = createServer(serveStatic);

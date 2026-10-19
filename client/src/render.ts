@@ -1,5 +1,6 @@
 // Three.js scene: the store, live stock displays, characters (players, customers, karens) and effects.
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { PRODUCT_INFO, PRODUCTS, Product, shelfCapacity, EYE_HEIGHT } from '../../shared/constants.ts';
 import {
   AABB, COFFEE_MACHINE, MICROWAVE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DECOR, DOOR_X0, DOOR_X1, MOP_RACK, REGISTERS, SHELVES,
@@ -31,6 +32,8 @@ function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number,
   g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
 }
 
+const labelCache = new Map<string, THREE.CanvasTexture>();
+
 class Label {
   sprite: THREE.Sprite; key = ''; private tex: THREE.CanvasTexture | null = null;
   constructor(public scaleW = 1.4, public scaleH = 0.35) {
@@ -42,20 +45,44 @@ class Label {
   set(key: string, draw: () => HTMLCanvasElement) {
     if (key === this.key) return;
     this.key = key;
-    this.tex?.dispose();
     if (!key) { this.sprite.visible = false; return; }
     this.sprite.visible = true;
-    this.tex = new THREE.CanvasTexture(draw());
-    this.tex.colorSpace = THREE.SRGBColorSpace;
+    // label textures are cached by content and shared between characters (no canvas redraw/upload per change)
+    let tex = labelCache.get(key);
+    if (!tex) {
+      tex = new THREE.CanvasTexture(draw()); tex.colorSpace = THREE.SRGBColorSpace;
+      labelCache.set(key, tex);
+      if (labelCache.size > 300) { const k = labelCache.keys().next().value!; labelCache.get(k)!.dispose(); labelCache.delete(k); }
+    }
+    this.tex = tex;
     (this.sprite.material as THREE.SpriteMaterial).map = this.tex;
     (this.sprite.material as THREE.SpriteMaterial).needsUpdate = true;
   }
 }
 
-function mat(color: number, q: Quality, opts: { emissive?: number; rough?: number; metal?: number; transparent?: boolean; opacity?: number } = {}) {
+const matCache = new Map<string, THREE.Material>();
+/** Shared materials: identical colour/options reuse one material (fewer state changes, merge-friendly). */
+function mat(color: number, q: Quality, opts: { emissive?: number; rough?: number; metal?: number; transparent?: boolean; opacity?: number } = {}): THREE.Material {
+  const key = `${q}|${color}|${opts.emissive ?? 0}|${opts.rough ?? 0.8}|${opts.metal ?? 0}|${opts.transparent ? 1 : 0}|${opts.opacity ?? 1}`;
+  let m = matCache.get(key);
+  if (!m) { m = makeMat(color, q, opts); matCache.set(key, m); }
+  return m;
+}
+function makeMat(color: number, q: Quality, opts: { emissive?: number; rough?: number; metal?: number; transparent?: boolean; opacity?: number }) {
   if (q === 'low') return new THREE.MeshLambertMaterial({ color, emissive: opts.emissive ?? 0, transparent: opts.transparent, opacity: opts.opacity ?? 1 });
   return new THREE.MeshStandardMaterial({ color, roughness: opts.rough ?? 0.8, metalness: opts.metal ?? 0, emissive: opts.emissive ?? 0, transparent: opts.transparent, opacity: opts.opacity ?? 1 });
 }
+
+const geoCache = new Map<string, THREE.BufferGeometry>();
+/** Shared geometries for repeated character/prop parts. */
+function geo<T extends THREE.BufferGeometry>(key: string, make: () => T): T {
+  let g = geoCache.get(key) as T | undefined;
+  if (!g) { g = make(); geoCache.set(key, g); }
+  return g;
+}
+const basicCache = new Map<number, THREE.MeshBasicMaterial>();
+const basic = (color: number) => { let m = basicCache.get(color); if (!m) { m = new THREE.MeshBasicMaterial({ color }); basicCache.set(color, m); } return m; };
+const B = (w: number, h: number, d: number) => geo(`b${w.toFixed(3)},${h.toFixed(3)},${d.toFixed(3)}`, () => new THREE.BoxGeometry(w, h, d));
 
 function boxMesh(b: AABB, h: number, m: THREE.Material, y0 = 0) {
   const g = new THREE.BoxGeometry(b.x1 - b.x0, h, b.z1 - b.z0);
@@ -131,74 +158,115 @@ export class Human {
     const w = opts.build ?? 1;
     const leg = (x: number) => {
       const lg = new THREE.Group(); lg.position.set(x * w, 0.85, 0);
-      const m = new THREE.Mesh(new THREE.BoxGeometry(0.17 * w, 0.8, 0.2), pantsM); m.position.y = -0.4; m.castShadow = true; lg.add(m);
-      const shoe = new THREE.Mesh(new THREE.BoxGeometry(0.19 * w, 0.1, 0.3), shoeM); shoe.position.set(0, -0.8, 0.05); lg.add(shoe);
+      const m = new THREE.Mesh(B(0.17 * w, 0.8, 0.2), pantsM); m.position.y = -0.4; m.castShadow = true; lg.add(m);
+      const shoe = new THREE.Mesh(B(0.19 * w, 0.1, 0.3), shoeM); shoe.position.set(0, -0.8, 0.05); lg.add(shoe);
       g.add(lg); return lg;
     };
     this.legL = leg(-0.11); this.legR = leg(0.11);
     g.add(this.torso);
-    this.body = new THREE.Mesh(new THREE.BoxGeometry(0.48 * w, 0.62, 0.28 * Math.sqrt(w)), shirtM); this.body.position.y = 1.16; this.body.castShadow = true; this.torso.add(this.body);
-    const shoulders = new THREE.Mesh(new THREE.BoxGeometry(0.54 * w, 0.1, 0.3 * Math.sqrt(w)), shirtM); shoulders.position.y = 1.43; this.torso.add(shoulders);
-    const neck = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.08, 0.1), skinM); neck.position.y = 1.5; this.torso.add(neck);
+    this.body = new THREE.Mesh(B(0.48 * w, 0.62, 0.28 * Math.sqrt(w)), shirtM); this.body.position.y = 1.16; this.body.castShadow = true; this.torso.add(this.body);
+    const shoulders = new THREE.Mesh(B(0.54 * w, 0.1, 0.3 * Math.sqrt(w)), shirtM); shoulders.position.y = 1.43; this.torso.add(shoulders);
+    const neck = new THREE.Mesh(B(0.1, 0.08, 0.1), skinM); neck.position.y = 1.5; this.torso.add(neck);
     if (opts.apron) {
-      const ap = new THREE.Mesh(new THREE.BoxGeometry(0.42 * w, 0.62, 0.02), mat(0x2f9e44, q)); ap.position.set(0, 1.06, 0.15 * Math.sqrt(w)); this.torso.add(ap);
-      const badge = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.05, 0.01), new THREE.MeshBasicMaterial({ color: 0xffffff })); badge.position.set(0.12, 1.3, 0.17 * Math.sqrt(w)); this.torso.add(badge);
+      const ap = new THREE.Mesh(B(0.42 * w, 0.62, 0.02), mat(0x2f9e44, q)); ap.position.set(0, 1.06, 0.15 * Math.sqrt(w)); this.torso.add(ap);
+      const badge = new THREE.Mesh(B(0.1, 0.05, 0.01), basic(0xffffff)); badge.position.set(0.12, 1.3, 0.17 * Math.sqrt(w)); this.torso.add(badge);
     }
     const arm = (x: number) => {
       const ag = new THREE.Group(); ag.position.set(x * w, 1.42, 0);
-      const m = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.58, 0.15), shirtM); m.position.y = -0.27; m.castShadow = true; ag.add(m);
-      const h = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.12, 0.12), skinM); h.position.y = -0.6; ag.add(h);
+      const m = new THREE.Mesh(B(0.13, 0.58, 0.15), shirtM); m.position.y = -0.27; m.castShadow = true; ag.add(m);
+      const h = new THREE.Mesh(B(0.11, 0.12, 0.12), skinM); h.position.y = -0.6; ag.add(h);
       this.torso.add(ag); return ag;
     };
     this.armL = arm(-0.31); this.armR = arm(0.31);
-    this.head = new THREE.Mesh(new THREE.SphereGeometry(0.17, q === 'low' ? 10 : 16, q === 'low' ? 8 : 12), skinM);
+    this.head = new THREE.Mesh(geo('head'+q, () => new THREE.SphereGeometry(0.17, q === 'low' ? 10 : 16, q === 'low' ? 8 : 12)), skinM);
     this.head.position.y = 1.68; this.head.castShadow = true; this.torso.add(this.head);
-    const dark = new THREE.MeshBasicMaterial({ color: 0x111111 });
-    for (const x of [-0.06, 0.06]) { const e = new THREE.Mesh(new THREE.SphereGeometry(0.022, 6, 6), dark); e.position.set(x, 0.03, 0.155); this.head.add(e); }
-    this.browL = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.012, 0.01), dark); this.browL.position.set(-0.06, 0.085, 0.158); this.head.add(this.browL);
-    this.browR = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.012, 0.01), dark); this.browR.position.set(0.06, 0.085, 0.158); this.head.add(this.browR);
-    this.mouth = new THREE.Mesh(new THREE.BoxGeometry(0.07, 0.015, 0.01), new THREE.MeshBasicMaterial({ color: 0x7a2e2e })); this.mouth.position.set(0, -0.06, 0.162); this.head.add(this.mouth);
+    const dark = basic(0x111111);
+    for (const x of [-0.06, 0.06]) { const e = new THREE.Mesh(geo('eye', () => new THREE.SphereGeometry(0.022, 6, 6)), dark); e.position.set(x, 0.03, 0.155); this.head.add(e); }
+    this.browL = new THREE.Mesh(B(0.06, 0.012, 0.01), dark); this.browL.position.set(-0.06, 0.085, 0.158); this.head.add(this.browL);
+    this.browR = new THREE.Mesh(B(0.06, 0.012, 0.01), dark); this.browR.position.set(0.06, 0.085, 0.158); this.head.add(this.browR);
+    this.mouth = new THREE.Mesh(B(0.07, 0.015, 0.01), basic(0x7a2e2e)); this.mouth.position.set(0, -0.06, 0.162); this.head.add(this.mouth);
     if (opts.hairStyle !== 2) {
       const hair = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 8, 0, Math.PI * 2, 0, Math.PI * (opts.hairStyle === 1 ? 0.62 : 0.5)), hairM);
       hair.position.y = 0.02; this.head.add(hair);
-      if (opts.hairStyle === 1) { const back = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.32, 0.08), hairM); back.position.set(0, -0.12, -0.14); this.head.add(back); }
+      if (opts.hairStyle === 1) { const back = new THREE.Mesh(B(0.32, 0.32, 0.08), hairM); back.position.set(0, -0.12, -0.14); this.head.add(back); }
       if (opts.hairStyle === 3) { const bun = new THREE.Mesh(new THREE.SphereGeometry(0.08, 8, 6), hairM); bun.position.set(0, 0.14, -0.12); this.head.add(bun); }
-      if (opts.hairStyle === 4) { for (const x of [-0.16, 0.16]) { const tail = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.22, 0.06), hairM); tail.position.set(x, -0.08, -0.04); this.head.add(tail); } }
-      if (opts.hairStyle === 5) { const mohawk = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.1, 0.3), hairM); mohawk.position.set(0, 0.18, -0.02); this.head.add(mohawk); }
+      if (opts.hairStyle === 4) { for (const x of [-0.16, 0.16]) { const tail = new THREE.Mesh(B(0.06, 0.22, 0.06), hairM); tail.position.set(x, -0.08, -0.04); this.head.add(tail); } }
+      if (opts.hairStyle === 5) { const mohawk = new THREE.Mesh(B(0.05, 0.1, 0.3), hairM); mohawk.position.set(0, 0.18, -0.02); this.head.add(mohawk); }
     }
     // accessories
     const acc = opts.accessory ?? 0;
     if (acc === 1) { // glasses
-      const rim = new THREE.MeshBasicMaterial({ color: 0x222222 });
+      const rim = basic(0x222222);
       for (const x of [-0.06, 0.06]) { const l = new THREE.Mesh(new THREE.TorusGeometry(0.035, 0.008, 4, 12), rim); l.position.set(x, 0.03, 0.165); this.head.add(l); }
-      const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.008, 0.008), rim); bridge.position.set(0, 0.035, 0.168); this.head.add(bridge);
+      const bridge = new THREE.Mesh(B(0.05, 0.008, 0.008), rim); bridge.position.set(0, 0.035, 0.168); this.head.add(bridge);
     } else if (acc === 2) { // cap
       const cm = mat([0x1c7ed6, 0xe03131, 0x2b8a3e, 0x212529][(opts.shirt >> 4) % 4], q);
       const cap = new THREE.Mesh(new THREE.SphereGeometry(0.185, 12, 6, 0, Math.PI * 2, 0, Math.PI * 0.45), cm); cap.position.y = 0.03; this.head.add(cap);
-      const brim = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.015, 0.14), cm); brim.position.set(0, 0.07, 0.19); this.head.add(brim);
+      const brim = new THREE.Mesh(B(0.2, 0.015, 0.14), cm); brim.position.set(0, 0.07, 0.19); this.head.add(brim);
     } else if (acc === 3) { // beanie
       const bm = mat([0xf76707, 0x5c940d, 0x862e9c][(opts.shirt >> 3) % 3], q);
       const beanie = new THREE.Mesh(new THREE.SphereGeometry(0.19, 12, 8, 0, Math.PI * 2, 0, Math.PI * 0.5), bm); beanie.position.y = 0.04; beanie.scale.y = 1.15; this.head.add(beanie);
     } else if (acc === 4) { // backpack
-      const bp = new THREE.Mesh(new THREE.BoxGeometry(0.34 * w, 0.42, 0.14), mat([0x364fc7, 0x495057, 0xc2255c][(opts.shirt >> 2) % 3], q)); bp.position.set(0, 1.18, -0.22 * Math.sqrt(w)); this.torso.add(bp);
+      const bp = new THREE.Mesh(B(0.34 * w, 0.42, 0.14), mat([0x364fc7, 0x495057, 0xc2255c][(opts.shirt >> 2) % 3], q)); bp.position.set(0, 1.18, -0.22 * Math.sqrt(w)); this.torso.add(bp);
     } else if (acc === 5) { // headphones
       const hm = mat(0x212529, q);
       const band = new THREE.Mesh(new THREE.TorusGeometry(0.18, 0.015, 4, 16, Math.PI), hm); band.position.y = 0.04; this.head.add(band);
       for (const x of [-0.18, 0.18]) { const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.04, 10), hm); cup.rotation.z = Math.PI / 2; cup.position.set(x, 0.0, 0); this.head.add(cup); }
     }
+    this.mergeStaticParts();
     this.hand = new THREE.Group(); this.hand.position.set(0, 1.05, 0.35); g.add(this.hand);
     this.label.sprite.position.y = 2.15; g.add(this.label.sprite);
     this.icon.sprite.position.y = 2.45; g.add(this.icon.sprite);
     const sc = (opts.scale ?? 1) * (opts.height ?? 1);
     if (sc !== 1) g.scale.set(opts.scale ?? 1, sc, opts.scale ?? 1);
   }
+  /**
+   * Merge the torso + head + hair + accessories into one mesh per material (≈30 → ≈14 draw calls per character).
+   * Brows and mouth stay separate (they animate); `head` becomes an empty anchor for later accessories.
+   */
+  private mergeStaticParts() {
+    const t = this.torso;
+    const headPos = this.head.position.clone();
+    for (const keep of [this.browL, this.browR, this.mouth]) { keep.position.add(headPos); t.add(keep); }
+    t.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(t.matrixWorld).invert();
+    const groups = new Map<THREE.Material, THREE.BufferGeometry[]>();
+    const parts: THREE.Mesh[] = [];
+    const collect = (o: THREE.Object3D) => {
+      for (const c of [...o.children]) {
+        if (c === this.armL || c === this.armR || c === this.browL || c === this.browR || c === this.mouth) continue;
+        if ((c as THREE.Mesh).isMesh) {
+          const m = c as THREE.Mesh;
+          const g = m.geometry.clone().applyMatrix4(new THREE.Matrix4().multiplyMatrices(inv, m.matrixWorld));
+          for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+          const key = m.material as THREE.Material;
+          (groups.get(key) ?? groups.set(key, []).get(key)!).push(g.index ? g : g);
+          parts.push(m);
+        }
+        collect(c);
+      }
+    };
+    collect(t);
+    for (const p of parts) p.parent?.remove(p);
+    for (const [m, list] of groups) {
+      const indexed = list.filter(g => g.index), plain = list.filter(g => !g.index);
+      for (const l of [indexed, plain]) {
+        if (!l.length) continue;
+        const merged = mergeGeometries(l, false);
+        if (!merged) continue;
+        const mesh = new THREE.Mesh(merged, m); mesh.castShadow = true; t.add(mesh);
+      }
+    }
+    this.head = new THREE.Mesh(); this.head.position.copy(headPos); t.add(this.head);
+  }
+
   /** Shopping basket in the left hand while the customer carries items. */
   setBasket(q: Quality, on: boolean) {
     if (on === !!this.basket) return;
     if (!on) { this.armL.remove(this.basket!); this.basket = null; return; }
     const b = new THREE.Group();
-    const tub = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.14, 0.2), mat(0xe03131, q)); tub.position.y = -0.72;
-    const goods = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.06, 0.14), mat(0x74c0fc, q)); goods.position.y = -0.63;
+    const tub = new THREE.Mesh(B(0.28, 0.14, 0.2), mat(0xe03131, q)); tub.position.y = -0.72;
+    const goods = new THREE.Mesh(B(0.22, 0.06, 0.14), mat(0x74c0fc, q)); goods.position.y = -0.63;
     b.add(tub, goods); this.armL.add(b); this.basket = b;
   }
   animate(dt: number, moving: boolean, speed = 1, pose: Pose = 'normal') {
@@ -361,7 +429,9 @@ export class StoreView {
     this.highlight = new THREE.Box3Helper(new THREE.Box3(), new THREE.Color(0xffe066));
     this.highlight.visible = false;
     this.scene.add(this.highlight);
+    const before = new Set(this.scene.children);
     this.build();
+    this.mergeStatic(before);
     this.resize();
   }
 
@@ -373,9 +443,13 @@ export class StoreView {
     this.resize();
   }
 
+  /** Dynamic resolution: 0.5–1 multiplier on the quality's pixel ratio. */
+  resScale = 1;
+  setResolutionScale(f: number) { this.resScale = Math.max(0.5, Math.min(1, f)); this.resize(); }
+
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
-    const pr = this.q === 'high' ? Math.min(devicePixelRatio, 2) : this.q === 'medium' ? Math.min(devicePixelRatio, 1.25) : Math.min(devicePixelRatio, 0.85);
+    const pr = (this.q === 'high' ? Math.min(devicePixelRatio, 2) : this.q === 'medium' ? Math.min(devicePixelRatio, 1.25) : Math.min(devicePixelRatio, 0.85)) * this.resScale;
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
@@ -438,9 +512,10 @@ export class StoreView {
     const doorM = mat(0xd0ebff, q, { transparent: true, opacity: 0.35, rough: 0.05 });
     this.doorL = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.55, 0.06), doorM); this.doorL.position.set(DOOR_X0 + 0.75, 1.3, STORE_D + 0.15);
     this.doorR = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.55, 0.06), doorM); this.doorR.position.set(DOOR_X1 - 0.75, 1.3, STORE_D + 0.15);
+    this.doorL.userData.dynamic = this.doorR.userData.dynamic = true;
     S.add(this.doorL, this.doorR);
     this.exitGlow = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_X1 - DOOR_X0, 2.6), new THREE.MeshBasicMaterial({ color: 0xff922b, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
-    this.exitGlow.position.set(12, 1.3, STORE_D + 0.05); S.add(this.exitGlow);
+    this.exitGlow.position.set(12, 1.3, STORE_D + 0.05); this.exitGlow.userData.dynamic = true; S.add(this.exitGlow);
     // sign
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 0.9), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '奧客退散 FUCustomer', size: 70, color: '#fff' }], 1024, 200, '#ff6b6b')) }));
     sign.position.set(12, 2.86, STORE_D - 0.02); sign.rotation.y = Math.PI; sign.scale.set(0.8, 0.62, 1); S.add(sign);
@@ -448,7 +523,7 @@ export class StoreView {
     const exitSign = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.25), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '出口 EXIT', size: 64, color: '#fff' }], 512, 160, '#2b8a3e')) }));
     exitSign.position.set(12, 2.4, STORE_D - 0.03); exitSign.rotation.y = Math.PI; S.add(exitSign);
     this.beacon = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.MeshBasicMaterial({ color: 0x5c1a1a }));
-    this.beacon.position.set(13.9, 2.9, STORE_D - 0.25); S.add(this.beacon);
+    this.beacon.position.set(13.9, 2.9, STORE_D - 0.25); this.beacon.userData.dynamic = true; S.add(this.beacon);
     if (q !== 'low') { this.beaconLight = new THREE.PointLight(0xff3b30, 0, 9, 1.5); this.beaconLight.position.copy(this.beacon.position).add(new THREE.Vector3(0, -0.3, -0.4)); S.add(this.beaconLight); }
     const stockSign = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.4), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '倉庫 STOCK', size: 60 }], 512, 128, '#495057')) }));
     stockSign.position.set(3.4, 2.4, 5.27); S.add(stockSign);
@@ -558,6 +633,35 @@ export class StoreView {
     // posters
     const poster = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.1), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '顧客至上', size: 72, color: '#ffd43b' }, { text: '但奧客退散', size: 54 }], 512, 256, '#c92a2a')) }));
     poster.position.set(12, 2.0, 0.02); S.add(poster);
+  }
+
+  /**
+   * Merge every static, opaque mesh added by build() into one mesh per material.
+   * Cuts draw calls a lot (walls, shelves, fixtures, street) without changing the look.
+   */
+  private mergeStatic(before: Set<THREE.Object3D>) {
+    const groups = new Map<THREE.Material, THREE.BufferGeometry[]>();
+    const remove: THREE.Mesh[] = [];
+    for (const o of this.scene.children) {
+      if (before.has(o) || !(o instanceof THREE.Mesh) || o instanceof THREE.InstancedMesh || o.userData.dynamic) continue;
+      const m = o.material as THREE.Material;
+      if (Array.isArray(o.material) || m.transparent) continue;
+      o.updateMatrixWorld(true);
+      const g = o.geometry.index ? o.geometry.clone() : o.geometry.clone();
+      g.applyMatrix4(o.matrixWorld);
+      for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+      if (!g.index) continue;
+      (groups.get(m) ?? groups.set(m, []).get(m)!).push(g);
+      remove.push(o);
+    }
+    for (const o of remove) this.scene.remove(o);
+    for (const [m, list] of groups) {
+      const merged = mergeGeometries(list, false);
+      if (!merged) continue;
+      const mesh = new THREE.Mesh(merged, m);
+      mesh.castShadow = true; mesh.receiveShadow = true; mesh.matrixAutoUpdate = false;
+      this.scene.add(mesh);
+    }
   }
 
   /** Unlit material that follows the store's power level (outage dims it). */
@@ -727,6 +831,8 @@ export class StoreView {
       if (!e) {
         const h = new Human(q, { shirt: p.color, pants: 0x343a40, skin: SKIN[p.id.charCodeAt(1) % SKIN.length], hair: HAIR[p.id.charCodeAt(2) % HAIR.length], hairStyle: p.id.charCodeAt(3) % 4, apron: true });
         e = { h, s: { x: p.x, z: p.z, yaw: p.yaw } };
+        // player models get their own material copies: disconnect fading must not touch shared materials
+        e.h.group.traverse(o => { const mm = o as THREE.Mesh; if (mm.isMesh && !Array.isArray(mm.material)) mm.material = (mm.material as THREE.Material).clone(); });
         this.players.set(p.id, e); this.scene.add(e.h.group);
       }
       const rp = renderPlayers(p.id) ?? p;
@@ -809,7 +915,7 @@ export class StoreView {
     for (const f of this.floaters) { f.life -= dt; f.obj.position.y += f.vy * dt; (f.obj.material as THREE.SpriteMaterial).opacity = Math.min(1, f.life); }
     this.floaters = this.floaters.filter(f => { if (f.life <= 0) { this.scene.remove(f.obj); (f.obj.material as THREE.SpriteMaterial).map?.dispose(); return false; } return true; });
     for (const p of this.particles) { p.life -= dt; p.v.y -= 6 * dt; p.mesh.position.addScaledVector(p.v, dt); p.mesh.scale.setScalar(Math.max(0.01, p.life)); }
-    this.particles = this.particles.filter(p => { if (p.life <= 0) { this.scene.remove(p.mesh); return false; } return true; });
+    this.particles = this.particles.filter(p => { if (p.life <= 0) { this.scene.remove(p.mesh); if (this.particlePool.length < 120) this.particlePool.push(p.mesh); return false; } return true; });
   }
 
   floatText(text: string, x: number, z: number, color = '#69db7c') {
@@ -820,14 +926,16 @@ export class StoreView {
 
   burst(x: number, z: number, color: number, n = 14) {
     if (this.q === 'low') n = Math.ceil(n / 2);
-    const m = new THREE.MeshBasicMaterial({ color });
+    const m = basic(color);
     for (let i = 0; i < n; i++) {
-      const mesh = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.06), m);
-      mesh.position.set(x, 0.6, z);
+      // reuse finished particle meshes instead of allocating new ones (less GC on phones)
+      const mesh = this.particlePool.pop() ?? new THREE.Mesh(B(0.06, 0.06, 0.06), m);
+      mesh.material = m; mesh.position.set(x, 0.6, z); mesh.scale.setScalar(1);
       this.scene.add(mesh);
       this.particles.push({ mesh, v: new THREE.Vector3((Math.random() - 0.5) * 3, 2 + Math.random() * 2.5, (Math.random() - 0.5) * 3), life: 0.9 });
     }
   }
+  private particlePool: THREE.Mesh[] = [];
 
   /** First-person camera + held item view model. */
   private viewHeld2 = new THREE.Group();

@@ -102,7 +102,7 @@ export class Game {
     switch (m.type) {
       case 'welcome':
         this.selfId = m.playerId; this.code = m.code;
-        if (!m.solo && this.conn instanceof Object && 'url' in this.conn) {
+        if (!m.solo && 'url' in this.conn) {
           saveLastSession({ code: m.code, token: m.token, name: this.settings.name, url: (this.conn as unknown as { url: string }).url, at: Date.now() });
         }
         if (m.reconnected) this.toast('🔌 已重新連線，世界狀態已同步', 'good');
@@ -429,11 +429,25 @@ export class Game {
   }
 
   // ---------------- frame ----------------
+  private perfT = 0; private perfFrames = 0;
   private frame = (now: number) => {
     if (this.destroyed) return;
     this.raf = requestAnimationFrame(this.frame);
+    if (document.hidden) return; // never render in the background (battery)
+    const cap = this.settings.fpsCap ?? 0;
+    if (cap > 0 && now - this.last < 1000 / cap - 2) return;
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
+    // dynamic resolution: drop pixel ratio when the device can't keep up, raise it again when it can
+    if (this.settings.adaptive !== false && this.started) {
+      this.perfT += dt; this.perfFrames++;
+      if (this.perfT >= 2) {
+        const fps = this.perfFrames / this.perfT, target = cap > 0 ? cap : 60;
+        if (fps < target * 0.75 && this.view.resScale > 0.5) this.view.setResolutionScale(this.view.resScale - 0.1);
+        else if (fps > target * 0.95 && this.view.resScale < 1) this.view.setResolutionScale(this.view.resScale + 0.05);
+        this.perfT = 0; this.perfFrames = 0;
+      }
+    }
     this.input.update(dt);
     const s = this.snap;
     if (!this.started || !s) { this.view.render(); return; }

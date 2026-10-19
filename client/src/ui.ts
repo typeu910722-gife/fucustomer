@@ -69,17 +69,21 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
       <label class="field">視野 FOV <span id="s-fov-v"></span><input type="range" id="s-fov" min="60" max="100" step="1" value="${s.fov}"></label>
       <label class="field">音效音量<input type="range" id="s-vol" min="0" max="1" step="0.05" value="${s.volume}"></label>
       <label class="field">音樂音量<input type="range" id="s-music" min="0" max="1" step="0.05" value="${s.music}"></label>
+      <label class="field">幀率上限（手機建議 30，較省電）
+        <select id="s-fps-cap"><option value="0">不限制</option><option value="60">60 FPS</option><option value="30">30 FPS</option></select></label>
+      <label class="muted"><input type="checkbox" id="s-adapt" ${s.adaptive ? 'checked' : ''}> 自動調整解析度（卡頓時自動降低）</label><br>
       <label class="muted"><input type="checkbox" id="s-inv" ${s.invertY ? 'checked' : ''}> 反轉 Y 軸</label><br>
       <label class="muted"><input type="checkbox" id="s-fps" ${s.showFps ? 'checked' : ''}> 顯示 FPS</label>
       <label class="field">自訂伺服器（留空使用預設）<input type="text" id="s-url" placeholder="wss://example.com/ws" value="${esc(s.serverUrl)}"></label>
       <button class="btn primary" id="s-ok">完成</button>
     </div>`, overlay ? 'screen overlay' : 'screen');
   (document.getElementById('s-q') as HTMLSelectElement).value = s.quality;
+  (document.getElementById('s-fps-cap') as HTMLSelectElement).value = String(s.fpsCap ?? 0);
   const upd = () => { document.getElementById('s-sens-v')!.textContent = val('s-sens'); document.getElementById('s-fov-v')!.textContent = val('s-fov'); };
   upd(); on('s-sens', 'input', upd); on('s-fov', 'input', upd);
   on('s-ok', 'click', () => {
     onDone({
-      ...s, quality: val('s-q') as Settings['quality'], sensitivity: Number(val('s-sens')), fov: Number(val('s-fov')), volume: Number(val('s-vol')), music: Number(val('s-music')),
+      ...s, quality: val('s-q') as Settings['quality'], sensitivity: Number(val('s-sens')), fov: Number(val('s-fov')), volume: Number(val('s-vol')), music: Number(val('s-music')), fpsCap: Number(val('s-fps-cap')), adaptive: (document.getElementById('s-adapt') as HTMLInputElement).checked,
       invertY: (document.getElementById('s-inv') as HTMLInputElement).checked, showFps: (document.getElementById('s-fps') as HTMLInputElement).checked,
       serverUrl: val('s-url').trim(),
     });
