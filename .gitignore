@@ -7,3 +7,4 @@ release/
 .env
 .env.*
 !.env.example
+FUCustomer-v0.4-site.zip
