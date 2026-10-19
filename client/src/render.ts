@@ -343,7 +343,12 @@ export function heldModel(q: Quality, held: Held): THREE.Object3D {
   return g;
 }
 
-function customerLook(c: CustomerSnap) {
+/** Heavy karens (抓不動) are noticeably bigger. */
+function customerLook(c: CustomerSnap): Look {
+  const l = baseLook(c);
+  return c.heavy ? { ...l, build: 1.6, height: 1.08 } : l;
+}
+function baseLook(c: CustomerSnap) {
   const L = c.look;
   const base: Look = {
     shirt: SHIRT[L % SHIRT.length], pants: [0x343a40, 0x1c3f6e, 0x5c4033, 0x495057, 0x868e96, 0x2b2d42][(L >> 3) % 6], skin: SKIN[(L >> 2) % SKIN.length],
@@ -823,10 +828,13 @@ export class StoreView {
         const ph = ['', '插隊霸王', '退貨暴君', '直播帝王', '召喚小弟', '強弩之末'][c.phase] ?? '';
         key = 'boss' + c.phase + (c.phase === 2 ? Math.round(c.anger / 5) : '');
         draw = () => textCanvas([{ text: `👑 奧客之王・${ph}`, size: 44, color: '#ffe066' }], 512, 150, 'rgba(80,20,120,0.92)', c.phase === 2 ? { v: c.anger / 100, color: '#ff6b6b' } : { v: (c.phase - 1) / 4, color: '#ffd43b' });
-      } else if (c.down > 0) { key = 'down'; draw = () => textCanvas([{ text: '💫 好痛…', size: 50 }], 512, 128, 'rgba(15,16,26,0.6)'); }
+      } else if (c.stun > 0 && !c.held && !c.flying) { key = 'stun' + (c.heavy ? 'h' : ''); draw = () => textCanvas([{ text: c.heavy ? '💫 暈了！現在抓得動' : '💫 暈了', size: 46, color: '#fff3bf' }], 512, 128, 'rgba(15,16,26,0.7)'); }
+      else if (c.down > 0) { key = 'down'; draw = () => textCanvas([{ text: '💫 好痛…', size: 50 }], 512, 128, 'rgba(15,16,26,0.6)'); }
       else if (c.held || c.flying) { key = c.held ? 'held' : 'fly'; draw = () => textCanvas([{ text: c.held ? '😵 放開我！' : '😱 啊——', size: 50 }], 512, 128, 'rgba(15,16,26,0.7)'); }
       else if (c.kind !== 'normal' && !c.resolved && c.revealed) {
-        if (c.kind === 'rager') { const a = c.anger; key = 'r' + Math.round(a / 4); draw = () => textCanvas([{ text: '😡 退貨大鬧', size: 46, color: '#ffc9c9' }], 512, 150, 'rgba(120,10,30,0.88)', { v: a / 100, color: a > 70 ? '#ff3b3b' : '#ffa94d' }); }
+        const tag = (c.violent ? '🤬' : '') + (c.vip ? '💼' : '') + (c.heavy ? '🏋' : '');
+        if (tag && c.kind !== 'rager') { key = 'tag' + c.kind + tag + (c.kind === 'charger' ? Math.round(c.patience * 10) + '' + c.phase : ''); const name = { cutter: '⚠ 插隊！', streamer: '📱 直播亂拍', hog: '❓ 偷吃中', litterer: '🗑 亂丟垃圾', charger: c.phase ? '🔌 又插回去了！' : '🔌 霸佔插座' }[c.kind as string] ?? ''; draw = () => textCanvas([{ text: name, size: 44, color: '#ffe066' }, { text: `${c.vip ? '💼 好像有背景' : ''}${c.vip && c.heavy ? '・' : ''}${c.heavy ? '🏋 抓不動' : ''}`, size: 34, color: '#ffc9c9' }], 512, 170, 'rgba(60,20,40,0.9)'); }
+        else if (c.kind === 'rager') { const a = c.anger; key = 'r' + Math.round(a / 4) + tag; draw = () => textCanvas([{ text: c.violent ? '🤬 失控！可正當防衛' : '😡 退貨大鬧', size: 46, color: '#ffc9c9' }, ...(c.vip || c.heavy ? [{ text: `${c.vip ? '💼 好像有背景' : ''}${c.vip && c.heavy ? '・' : ''}${c.heavy ? '🏋 抓不動' : ''}`, size: 32, color: '#ffe066' }] : [])], 512, 150, 'rgba(120,10,30,0.88)', { v: a / 100, color: a > 70 ? '#ff3b3b' : '#ffa94d' }); }
         else if (c.kind === 'cutter') { key = 'cut'; draw = () => textCanvas([{ text: '⚠ 插隊！', size: 54, color: '#ffe066' }], 512, 128, 'rgba(120,60,0,0.88)'); }
         else if (c.kind === 'streamer') { key = 'str'; draw = () => textCanvas([{ text: '📱 直播亂拍', size: 50, color: '#d0bfff' }], 512, 128, 'rgba(60,20,120,0.88)'); }
         else if (c.kind === 'hog') { key = 'hog'; draw = () => textCanvas([{ text: '❓ 偷吃中', size: 52, color: '#ffe066' }], 512, 128, 'rgba(60,60,60,0.88)'); }

@@ -69,6 +69,7 @@ export class Audio {
     const v = this.gainFor(x, z);
     switch (name) {
       case 'grab': this.tone(330, 0.12, 'triangle', 0.16 * v, 0, 520); this.noise(0.12, 0.12 * v, 1200); this.tone(260, 0.18, 'sawtooth', 0.05 * v, 0.06, 420); break;
+      case 'hit': this.noise(0.12, 0.35 * v, 2500); this.tone(180, 0.12, 'square', 0.14 * v, 0, 70); this.tone(1200, 0.08, 'triangle', 0.06 * v, 0.03); break;
       case 'throw': this.noise(0.35, 0.18 * v, 1800, 0, 'bandpass'); this.tone(700, 0.3, 'sine', 0.1 * v, 0, 240); break;
       case 'eject': this.noise(0.2, 0.25 * v, 900); [659, 880, 1175].forEach((f, i) => this.tone(f, 0.16, 'square', 0.07 * v, 0.08 + i * 0.07)); break;
       case 'impact': this.noise(0.22, 0.32 * v, 600); this.tone(110, 0.22, 'sine', 0.2 * v, 0, 55); break;

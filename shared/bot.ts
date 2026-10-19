@@ -9,6 +9,8 @@ export interface BotOutput {
   act?: { kind: ActKind; target: Target };
   drop?: boolean; buy?: string; ready?: boolean;
   throw?: { yaw: number; pitch: number }; spin?: boolean; ultimate?: boolean;
+  /** Customer id to hit (the bot only ever hits in self-defence, never anyone with connections). */
+  hit?: number;
 }
 
 /** Turn a bot decision into the same protocol messages a real client sends. */
@@ -21,6 +23,7 @@ export function botMessages(o: BotOutput, rid: () => string): ClientMsg[] {
   if (o.throw) out.push({ type: 'throw', rid: rid(), yaw: o.throw.yaw, pitch: o.throw.pitch });
   if (o.spin) out.push({ type: 'spin', rid: rid() });
   if (o.ultimate) out.push({ type: 'ultimate', rid: rid() });
+  if (o.hit != null) out.push({ type: 'hit', rid: rid(), id: o.hit });
   return out;
 }
 
@@ -54,6 +57,11 @@ export class Bot {
     // full burst: clear the store
     if (open && ab.includes('ultimate') && s.burst >= 100 && this.cooldown <= 0 && (karens.length >= 2 || karens.some(k => k.kind === 'boss' && k.phase === 5))) {
       out.ultimate = true; this.cooldown = 0.5; return out;
+    }
+    // self-defence: smack a karen who has lost it (never one with connections)
+    if (open && ab.includes('hit') && me.grabbing == null && this.cooldown <= 0) {
+      const v = karens.find(k => k.violent && !k.vip && !(k.kind === 'boss' && k.stun > 0) && Math.hypot(k.x - me.x, k.z - me.z) < 1.8);
+      if (v) { out.hit = v.id; out.yaw = Math.atan2(v.x - me.x, v.z - me.z); this.cooldown = 0.8; return out; }
     }
     // mop spin when a karen is close and no regular customer would get hit
     if (open && ab.includes('spin') && me.spinCd <= 0 && me.grabbing == null && this.cooldown <= 0) {
@@ -144,13 +152,13 @@ export class Bot {
       if (k.kind === 'boss') {
         if (k.phase === 1 && ['queue', 'toRegister', 'atRegister'].includes(k.state)) return cust(k, 'askQueue');
         if (k.phase === 4) continue; // deal with the minions first
-        if (canGrab && k.phase !== 1) return cust(k, 'grab');
+        if (canGrab && k.phase !== 1) return cust(k, 'grab'); // walks up; the self-defence hit above stuns him first (he is too heavy otherwise)
         if (k.phase === 2 && k.state === 'complain') return cust(k, 'calm');
         if (k.phase === 3) return cust(k, 'stopFilm');
         continue;
       }
       if (k.kind === 'cutter' && ['queue', 'toRegister', 'atRegister'].includes(k.state)) return cust(k, 'askQueue');
-      if (canGrab && k.kind !== 'cutter') return cust(k, 'grab');
+      if (canGrab && k.kind !== 'cutter' && (!k.heavy || k.stun > 0)) return cust(k, 'grab');
       if (k.kind === 'rager' && k.state === 'complain') return cust(k, 'calm');
       if (k.kind === 'cutter' && ['queue', 'toRegister', 'atRegister'].includes(k.state)) return cust(k, 'askQueue');
       if (k.kind === 'streamer' && this.role !== 'cashier') return cust(k, 'stopFilm');

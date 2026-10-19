@@ -19,6 +19,7 @@ const out = {};
   await pg.waitForSelector('#m-first');
   await pg.screenshot({ path: `${OUT}/r8-welcome.png` });
   await pg.click('#m-first');
+  await pg.waitForFunction(() => document.getElementById('sc-skip') || window.__game?.started, null, { timeout: 30000 }); if (await pg.locator('#sc-skip').count()) await pg.click('#sc-skip'); // chapter intro scene
   await pg.waitForFunction(() => window.__game?.started, null, { timeout: 25000 });
   out.shift = await pg.evaluate(() => window.__game.snap.shift.id);
   await pg.keyboard.press('Enter');

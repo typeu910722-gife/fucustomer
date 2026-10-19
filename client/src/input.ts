@@ -1,5 +1,5 @@
 // Unified input: keyboard + mouse (pointer lock), gamepad, and multi-touch virtual controls.
-export type Action = 'interact' | 'alt' | 'drop' | 'ping' | 'menu' | 'quick' | 'shop' | 'ready' | 'tab' | 'grab' | 'spin' | 'ultimate'
+export type Action = 'interact' | 'alt' | 'drop' | 'ping' | 'menu' | 'quick' | 'shop' | 'ready' | 'tab' | 'grab' | 'spin' | 'ultimate' | 'hit'
   | 'q1' | 'q2' | 'q3' | 'q4' | 'q5' | 'q6';
 
 export class Input {
@@ -55,7 +55,7 @@ export class Input {
       if (!this.keys.has(k)) {
         const map: Record<string, Action> = {
           KeyE: 'interact', KeyF: 'alt', KeyG: 'drop', KeyV: 'ping', Escape: 'menu', KeyP: 'menu', KeyT: 'quick', KeyB: 'shop', Enter: 'ready', Tab: 'tab',
-          Space: 'grab', KeyQ: 'spin', KeyR: 'ultimate',
+          Space: 'grab', KeyQ: 'spin', KeyR: 'ultimate', KeyX: 'hit',
           Digit1: 'q1', Digit2: 'q2', Digit3: 'q3', Digit4: 'q4', Digit5: 'q5', Digit6: 'q6',
         };
         const a = map[k];
@@ -123,7 +123,7 @@ export class Input {
     };
     bind('t-interact', 'interact'); bind('t-item', 'drop'); bind('t-alt', 'alt'); bind('t-run', 'run');
     bind('t-ping', 'ping'); bind('t-chat', 'quick'); bind('t-menu', 'menu'); bind('t-shop', 'shop');
-    bind('t-grab', 'grab'); bind('t-spin', 'spin'); bind('t-ult', 'ultimate');
+    bind('t-grab', 'grab'); bind('t-spin', 'spin'); bind('t-ult', 'ultimate'); bind('t-hit', 'hit');
   }
 
   /** Call once per frame. dt in seconds. */
@@ -146,7 +146,7 @@ export class Input {
       this.lookDX += rx * 900 * dt; this.lookDY += ry * 700 * dt;
       const b = gp.buttons.map(bt => bt.pressed);
       const edge = (i: number, a: Action) => { if (b[i] && !this.padPrev[i]) { this.pressed.add(a); this.usingGamepad = true; } };
-      edge(0, 'interact'); edge(1, 'drop'); edge(2, 'alt'); edge(3, 'grab'); edge(5, 'spin'); edge(4, 'ultimate'); edge(9, 'menu'); edge(8, 'quick');
+      edge(0, 'interact'); edge(1, 'drop'); edge(2, 'alt'); edge(3, 'grab'); edge(5, 'spin'); edge(4, 'ultimate'); edge(7, 'hit'); edge(9, 'menu'); edge(8, 'quick');
       edge(12, 'ping'); edge(13, 'shop'); edge(15, 'ready');
       if (b[0]) this.holdInteract = true; else if (this.padPrev[0]) this.holdInteract = false;
       run = run || !!b[10] || !!b[6];

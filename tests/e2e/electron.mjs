@@ -25,6 +25,7 @@ await page.click('#m-career');
 await page.waitForSelector('.rankcard');
 await page.click('[data-tab="chapters"]');
 await page.click('[data-play="1-1"]');
+await page.waitForFunction(() => document.getElementById('sc-skip') || window.__game?.started, null, { timeout: 30000 }); if (await page.locator('#sc-skip').count()) await page.click('#sc-skip'); // chapter intro scene
 await page.waitForFunction(() => window.__game?.started, null, { timeout: 25000 });
 await page.waitForTimeout(1500);
 await page.screenshot({ path: process.env.SHOT ?? '/tmp/electron.png' });

@@ -18,6 +18,7 @@ const ff = (pg, sec) => pg.evaluate(s => { const r = window.__game.conn.room; fo
 // 1) tutorial
 let pg = await page(null);
 await pg.click('#m-career'); await pg.click('[data-play="1-1"]');
+await pg.waitForFunction(() => document.getElementById('sc-skip') || window.__game?.started, null, { timeout: 30000 }); if (await pg.locator('#sc-skip').count()) await pg.click('#sc-skip'); // chapter intro scene
 await pg.waitForFunction(() => window.__game?.started);
 await pg.keyboard.press('Enter');
 await pg.waitForFunction(() => window.__game.snap.phase === 'open', null, { timeout: 20000 });

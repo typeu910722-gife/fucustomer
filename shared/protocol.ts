@@ -56,7 +56,8 @@ export interface CustomerSnap {
   patience: number; // 0..1
   anger: number; // 0..100 (rager)
   resolved: boolean; revealed: boolean; items: number; want: Food | null; look: number; moving: boolean;
-  y: number; held: boolean; flying: boolean; down: number; // seconds left lying on the pavement after being thrown out
+  y: number; held: boolean; flying: boolean; down: number;
+  heavy: boolean; vip: boolean; stun: number; violent: boolean; // seconds left lying on the pavement after being thrown out
   phase: number; // boss phase; for 充電霸王 the number of unplugs so far
 }
 export interface Snapshot {
@@ -93,6 +94,7 @@ export type ClientMsg =
   | { type: 'throw'; rid: string; yaw: number; pitch: number }
   | { type: 'spin'; rid: string }
   | { type: 'ultimate'; rid: string }
+  | { type: 'hit'; rid: string; id: number }
   | { type: 'endShift' }
   | { type: 'buy'; rid: string; item: string; level?: number }
   | { type: 'ping'; x: number; z: number }
@@ -110,7 +112,7 @@ export type GameEvent =
   | { e: 'quick'; from: string; text: string }
   | { e: 'phase'; phase: Phase; day: number }
   | { e: 'hint'; text: string }
-  | { e: 'fx'; name: 'eject' | 'ultimate' | 'spin' | 'throw' | 'mistake' | 'impact'; x: number; z: number; combo?: number; by?: string };
+  | { e: 'fx'; name: 'eject' | 'ultimate' | 'spin' | 'throw' | 'mistake' | 'impact' | 'hit' | 'shove'; x: number; z: number; combo?: number; by?: string };
 
 export type ServerMsg =
   | { type: 'welcome'; playerId: string; token: string; code: string; reconnected: boolean; solo: boolean }

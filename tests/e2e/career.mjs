@@ -23,6 +23,7 @@ await page.screenshot({ path: `${OUT}/career.png` });
 await page.click('[data-tab="skills"]'); await page.click('[data-skill="body"]');
 await page.click('[data-tab="chapters"]');
 await page.click('[data-play="3-1"]');
+await page.waitForFunction(() => document.getElementById('sc-skip') || window.__game?.started, null, { timeout: 30000 }); if (await page.locator('#sc-skip').count()) await page.click('#sc-skip'); // chapter intro scene
 await page.waitForFunction(() => window.__game?.started);
 await page.keyboard.press('Enter'); // start shift
 await page.waitForFunction(() => window.__game.snap.phase === 'open');

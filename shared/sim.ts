@@ -13,7 +13,7 @@ import {
 import type {
   ActKind, CustomerKind, DayStats, GameEvent, Held, Phase, Snapshot, StoreSave, Target,
 } from './protocol.ts';
-import { BASE_MODS, Food, ShiftConfig, ShiftResult } from './career.ts';
+import { BASE_MODS, Food, Incident, ShiftConfig, ShiftResult } from './career.ts';
 
 export function mulberry32(seed: number) {
   let a = seed >>> 0;
@@ -31,7 +31,7 @@ export interface PlayerState {
   id: string; name: string; color: number; x: number; z: number; yaw: number; pitch: number;
   held: Held | null; held2: Held | null; connected: boolean; away: boolean; ready: boolean; busy: Busy | null;
   lastInputAt: number; recent: Map<string, { ok: boolean; reason?: string }>;
-  grabbing: number | null; spinReadyAt: number;
+  grabbing: number | null; spinReadyAt: number; hitReadyAt?: number;
   stats: { served: number; karens: number; cleaned: number; restocked: number; ejected: number };
 }
 
@@ -52,10 +52,19 @@ export interface Customer {
   phase: number; minions: number[];
   /** Thrown out: seconds left lying dazed on the pavement before getting up and walking off. */
   downT?: number; ejected?: boolean;
+  /** Too heavy to pick up unless stunned. */
+  heavy?: boolean;
+  /** Has connections: hitting them always brings the police. */
+  vip?: boolean;
+  /** Seconds left dazed after being hit. */
+  stunT?: number;
+  /** Time this karen last shoved a worker (makes hitting back self-defence for a while). */
+  shoveAt?: number;
 }
 
 export interface World {
   cfg: ShiftConfig;
+  incidents: Incident[];
   time: number; phase: Phase; phaseLeft: number; clock: number; day: number;
   money: number; rating: number; backstock: Record<Product, number>; shelves: Record<Product, number>;
   upgrades: Record<UpgradeId, number>; mopsOnRack: number;
@@ -131,7 +140,7 @@ export function createWorld(save: StoreSave = defaultSave(), seed = Date.now(), 
     nextId: 1, rng: mulberry32(seed), spawnTimer: 3, karenTimer: cfg.firstKaren, mopbotTimer: 20,
     dayStats: emptyStats(shift ? cfg.start.rating : s.rating), bonusPaidDay: 0, totals: { ...s.totals }, events: [], results: [],
     emptyShelfToastAt: -99, saveOut: null, difficultyPlayers: 1,
-    chaos: 0, chaosTimer: 0, burst: 0, combo: 0, comboUntil: 0, power: 1, event: null, nextEvent: cfg.firstEvent,
+    incidents: [], chaos: 0, chaosTimer: 0, burst: 0, combo: 0, comboUntil: 0, power: 1, event: null, nextEvent: cfg.firstEvent,
     guardTimer: guardInterval(cfg.mods.guard), hintQueue: cfg.hints.map((text, i) => ({ at: 1 + i * 16, text })), result: null,
     bossSpawned: false, bossDefeated: false, bossTimer: 0, rampTimer: 0, openTime: 0,
   };
@@ -294,6 +303,10 @@ function spawnCustomer(w: World, kind: CustomerKind) {
     c.speed = 1.9; c.phase = 1; c.patienceMax = 1e9; c.life = 1e9; c.anger = 0;
   }
   c.patience = c.patienceMax;
+  if (kind !== 'normal' && kind !== 'boss' && w.cfg.mode === 'shift') {
+    if (w.cfg.chapter >= 3 && w.rng() < 0.2) { c.heavy = true; c.speed *= 0.85; }
+    if (w.cfg.chapter >= 2 && w.rng() < 0.12) c.vip = true;
+  }
   w.customers.push(c);
   if (kind !== 'normal') {
     ev(w, { e: 'karen', kind, id: c.id });
@@ -499,6 +512,7 @@ function updateCustomer(w: World, c: Customer, dt: number) {
   const n = activePlayers(w);
   const m = w.cfg.mods;
   if (c.downT && c.downT > 0) { c.downT = Math.max(0, c.downT - dt); c.moving = false; return; }
+  if (c.stunT && c.stunT > 0) { c.stunT = Math.max(0, c.stunT - dt); c.moving = false; return; }
   const arrived = moveAlong(c, dt);
   const drain = (cutterActive(w) && c.kind !== 'cutter' ? 2.2 : 1) * (w.power < 1 ? 1.3 : 1)
     * (w.customers.some(s => s.kind === 'streamer' && !s.resolved && Math.hypot(s.x - c.x, s.z - c.z) < 3) ? 1.35 : 1);
@@ -547,6 +561,14 @@ function updateCustomer(w: World, c: Customer, dt: number) {
     case 'toComplain': if (arrived) { c.state = 'complain'; c.yaw = 0; } // fallthrough to anger
     // eslint-disable-next-line no-fallthrough
     case 'complain': {
+      if (c.kind === 'rager' && !c.resolved && c.anger >= 85 && w.time - (c.shoveAt ?? -99) > 5) {
+        const near = nearestPlayer(w, c);
+        if (near && near.d < 1.7) {
+          c.shoveAt = w.time;
+          ev(w, { e: 'fx', name: 'shove', x: near.p.x, z: near.p.z, by: near.p.name });
+          toast(w, `🤬 退貨奧客推了 ${near.p.name} 一把！現在出手算正當防衛`, 'bad');
+        }
+      }
       const rate = (1.4 + 0.45 * n) * (w.upgrades.camera > 0 ? 0.7 : 1) * m.angerRate * (w.power < 1 ? 1.25 : 1);
       c.anger += rate * dt * (c.kind === 'boss' ? 1.4 : 1);
       if (c.anger >= 100 && c.kind === 'boss') {
@@ -779,6 +801,7 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
       if (p.held || p.held2) return { ok: false, reason: '先放下手上的東西' };
       if (c.heldBy) return { ok: false, reason: '已經被隊友抓住了' };
       if (c.state === 'leaving' || c.fly) return { ok: false, reason: '抓不到' };
+      if (c.heavy && !(c.stunT && c.stunT > 0)) return { ok: false, reason: '太重了抓不動！先出手揍暈他，或用拖把旋風' };
       return { ok: true, dur: 0 };
     }
   }
@@ -1004,7 +1027,9 @@ export function requestSpin(w: World, playerId: string, rid: string) {
     if (d > m.spinRange) continue;
     const k = Math.max(0.1, d);
     detachFromLines(w, c);
-    c.fly = { vx: (c.x - p.x) / k * 7, vz: (c.z - p.z) / k * 7, vy: 3.8, y: 0.3, t: 1.8, thrown: false, by: p.id };
+    const push = c.heavy ? 2.5 : 7;
+    if (c.heavy) c.stunT = 2.2;
+    c.fly = { vx: (c.x - p.x) / k * push, vz: (c.z - p.z) / k * push, vy: c.heavy ? 1.6 : 3.8, y: 0.3, t: c.heavy ? 0.8 : 1.8, thrown: false, by: p.id };
     c.state = 'flying'; c.path = []; hits++;
     if (c.kind === 'normal') { hitNormal++; c.mood -= 30; }
   }
@@ -1013,6 +1038,60 @@ export function requestSpin(w: World, playerId: string, rid: string) {
   ev(w, { e: 'sfx', name: 'spin', x: p.x, z: p.z });
   if (hitNormal) toast(w, `🌀 旋風也掃到 ${hitNormal} 位一般顧客（混亂 +${4 * hitNormal}）`, 'bad');
   else if (hits) toast(w, `🌀 拖把旋風！擊退 ${hits} 人`, 'good');
+}
+
+/** Is hitting this customer self-defence right now? */
+export function isViolent(w: World, c: Customer) {
+  if (c.kind === 'boss') return true;
+  if (c.kind === 'rager' && !c.resolved && c.state === 'complain' && c.anger >= 70) return true;
+  return w.time - (c.shoveAt ?? -99) < 6;
+}
+
+/** 出手: a cartoon smack that dazes the target. Whether it was justified decides if the police come. */
+export function requestHit(w: World, playerId: string, rid: string, id: number) {
+  const p = w.players.get(playerId);
+  if (!p || !once(p, rid)) return;
+  const fail = (reason: string) => w.results.push({ playerId, rid, ok: false, reason });
+  if (!w.cfg.abilities.includes('hit')) return fail('還不能出手（正職店員 Lv.6 解鎖）');
+  if (w.phase === 'summary') return fail('已經結算');
+  if (w.time < (p.hitReadyAt ?? 0)) return;
+  if (p.grabbing != null) return fail('先把抓著的人丟出去');
+  const c = customer(w, id);
+  if (!c || c.gone || c.fly || c.heldBy || c.state === 'leaving') return fail('打不到');
+  if (Math.hypot(c.x - p.x, c.z - p.z) > 2.0) return fail('距離太遠');
+  p.hitReadyAt = w.time + 0.7;
+  w.results.push({ playerId, rid, ok: true });
+  const legal = c.kind !== 'normal' && isViolent(w, c);
+  const name = c.kind === 'normal' ? '一般顧客' : KAREN_INFO[c.kind as KarenKind].name;
+  // small knock-back away from the worker, then dazed
+  const d = Math.max(0.1, Math.hypot(c.x - p.x, c.z - p.z));
+  const pos = resolveCollision(c.x + (c.x - p.x) / d * 0.5, c.z + (c.z - p.z) / d * 0.5, 0.25);
+  c.x = pos.x; c.z = pos.z;
+  const wasStunned = (c.stunT ?? 0) > 0;
+  c.stunT = c.kind === 'boss' ? 1.5 : 2.5;
+  ev(w, { e: 'fx', name: 'hit', x: c.x, z: c.z, by: p.name });
+  ev(w, { e: 'sfx', name: 'hit', x: c.x, z: c.z });
+  if (c.kind === 'normal') {
+    adjRating(w, -0.3); adjChaos(w, 8);
+    w.incidents.push({ who: name, legal: false, vip: !!c.vip, normal: true, why: '打了一般顧客' });
+    toast(w, '😱 你打了一般顧客！口碑大跌，他要去報警了', 'bad');
+    angryLeave(w, c);
+    return;
+  }
+  adjBurst(w, legal ? 10 : 5);
+  if (legal) {
+    if (c.kind === 'rager') c.anger = Math.max(0, c.anger - 45);
+    if (c.vip) w.incidents.push({ who: name, legal: true, vip: true, normal: false, why: '對方先失控（正當防衛），但他有背景' });
+    if (wasStunned && c.kind !== 'boss' && !c.resolved) {
+      resolveKaren(w, c, p, 0, `🥊 ${p.name} 制伏了失控的${name}，他摸摸鼻子走了`);
+      leave(w, c, false);
+    } else toast(w, c.vip ? `💼 正當防衛……但${name}好像有背景，可能會有人報警` : `🥊 正當防衛！${name}被打暈了`, c.vip ? 'bad' : 'good');
+  } else {
+    adjRating(w, -0.1);
+    if (c.kind === 'rager') c.anger = Math.min(99, c.anger + 15);
+    w.incidents.push({ who: name, legal: false, vip: !!c.vip, normal: false, why: c.vip ? '先動手打了有背景的奧客' : '對方沒有失控，你先動手' });
+    toast(w, c.vip ? `💼 糟了！你先動手打了有背景的${name}，下班警察一定會來` : `⚠ 你先動手了！${name}沒有失控，這可能會惹上麻煩`, 'bad');
+  }
 }
 
 export function requestUltimate(w: World, playerId: string, rid: string) {
@@ -1127,7 +1206,7 @@ export function finishShift(w: World, failReason: string) {
     served: d.served, angryLeft: d.angryLeft, karensResolved: d.karensResolved, karensFailed: d.karensFailed,
     ejected: d.ejected, cleaned: d.spillsCleaned, maxCombo: d.maxCombo,
     score: w.cfg.endless ? score : undefined, survived, bossDefeated: w.cfg.boss ? w.bossDefeated : undefined,
-    date: w.cfg.daily?.date,
+    date: w.cfg.daily?.date, tips: d.tips, incidents: w.incidents.length ? [...w.incidents] : undefined,
   };
   if (w.cfg.endless) w.result.failReason = failReason ? `${failReason}・撐了 ${survived} 秒` : `主動下班・撐了 ${survived} 秒`;
   clearFloor(w);
@@ -1283,6 +1362,8 @@ export function snapshot(w: World, now: number): Snapshot {
     return false;
   };
   const r2 = (v: number) => Math.round(v * 100) / 100;
+  // 有背景 shows only up close (a gold watch, a bodyguard's phone call…)
+  const near4 = (c: Customer) => { for (const p of w.players.values()) if (Math.hypot(p.x - c.x, p.z - c.z) < 4) return true; return false; };
   return {
     t: now, phase: w.phase, phaseLeft: Math.max(0, w.phaseLeft), clock: w.clock, day: w.day,
     money: w.money, rating: r2(w.rating), backstock: { ...w.backstock }, shelves: { ...w.shelves }, upgrades: { ...w.upgrades },
@@ -1297,7 +1378,8 @@ export function snapshot(w: World, now: number): Snapshot {
       patience: Math.max(0, Math.min(1, c.state === 'waitFood' ? c.timer / c.patienceMax : c.kind === 'charger' ? c.life / 75 : c.patience / c.patienceMax)),
       anger: Math.round(c.anger), resolved: c.resolved, revealed: reveal(c), items: c.items.length,
       want: c.want && !c.foodDone && !c.foodFailed ? c.want : null, look: c.look, moving: c.moving,
-      y: c.fly ? r2(c.fly.y) : c.state === 'held' ? 0.25 : 0, held: c.state === 'held', flying: !!c.fly, down: c.downT ? r2(c.downT) : 0, phase: c.kind === 'charger' ? c.hits : c.phase,
+      y: c.fly ? r2(c.fly.y) : c.state === 'held' ? 0.25 : 0, held: c.state === 'held', flying: !!c.fly, down: c.downT ? r2(c.downT) : 0,
+      heavy: !!c.heavy, vip: !!c.vip && near4(c), stun: c.stunT ? r2(c.stunT) : 0, violent: c.kind !== 'normal' && !c.resolved && isViolent(w, c), phase: c.kind === 'charger' ? c.hits : c.phase,
     })),
     spills: w.spills.map(s => ({ id: s.id, x: r2(s.x), z: r2(s.z) })),
     items: w.items.map(i => ({ id: i.id, x: r2(i.x), z: r2(i.z), held: i.held })),

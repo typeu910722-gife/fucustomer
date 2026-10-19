@@ -11,6 +11,10 @@ import { careerScreen, loadProfile, resultScreen, saveProfile } from './career-u
 import { DAILY_ID, ENDLESS_ID, applyResult, buildDailyConfig, buildShiftConfig, dailySeed, dailyUnlocked, endlessUnlocked, localDate, shiftUnlocked } from '../../shared/career.ts';
 import type { ShiftResult } from '../../shared/career.ts';
 import { updateAchievements } from '../../shared/achievements.ts';
+import { CHAPTERS } from '../../shared/career.ts';
+import { needsCourt, payFine } from '../../shared/court.ts';
+import { SCENES, sceneAfter, sceneBefore } from '../../shared/story.ts';
+import { courtScreen, playScene } from './story-ui.ts';
 import { desktop, initPlatform, isApp, onAppPause, onBack, quitApp, reportAchievements } from './platform.ts';
 
 let settings = loadSettings();
@@ -74,6 +78,24 @@ function playShift(id: string) {
   const date = localDate();
   const cfg = id === DAILY_ID ? buildDailyConfig(p, date) : buildShiftConfig(p, id);
   const seed = id === DAILY_ID ? dailySeed(date) : undefined; // same customers for everyone on the same day
+  // a story scene once, the first time a chapter starts
+  const intro = sceneBefore(id);
+  if (intro && SCENES[intro] && !p.story.includes(intro)) {
+    p.story.push(intro); saveProfile(p);
+    return playScene(intro, () => runShift(id, cfg, seed));
+  }
+  runShift(id, cfg, seed);
+}
+
+/** Plays a story scene once, then continues. */
+function sceneOnce(sceneId: string | null, then: () => void, profile?: ReturnType<typeof loadProfile>) {
+  const p = profile ?? loadProfile();
+  if (!sceneId || !SCENES[sceneId] || p.story.includes(sceneId)) { then(); return; }
+  p.story.push(sceneId); saveProfile(p);
+  playScene(sceneId, then);
+}
+
+function runShift(id: string, cfg: ReturnType<typeof buildShiftConfig>, seed?: number) {
   startGame(() => new LocalConnection(playerName(), null, cfg, seed), (reason, result) => {
     if (!result) { if (reason) UI.message('提示', reason, '回職涯', career); else career(); return; }
     const prof = loadProfile();
@@ -81,10 +103,24 @@ function playShift(id: string) {
     const fresh = updateAchievements(prof, result);
     saveProfile(prof);
     reportAchievements(prof.achievements);
-    resultScreen(result, reward, prof, fresh, { retry: () => playShift(id), next: n => (n ? playShift(n) : career()), career });
-    audio.play(result.won ? 'win' : 'lose');
-    if (reward.levels.length) window.setTimeout(() => audio.play('levelup'), 900);
-    if (fresh.length) window.setTimeout(() => audio.play('achievement'), 1500);
+    // after the last shift of a chapter: that chapter's ending scene, then carry on
+    const lastOf: Record<number, string> = {}; for (const c of CHAPTERS) lastOf[c.n] = c.shifts[c.shifts.length - 1].id;
+    const outro = result.won ? sceneAfter(result.shiftId, lastOf) : null;
+    const then = (fn: () => void) => () => sceneOnce(outro, fn);
+    const show = () => {
+      resultScreen(result, reward, prof, fresh, { retry: then(() => playShift(id)), next: n => then(() => (n ? playShift(n) : career()))(), career: then(career) });
+      audio.play(result.won ? 'win' : 'lose');
+      if (reward.levels.length) window.setTimeout(() => audio.play('levelup'), 900);
+      if (fresh.length) window.setTimeout(() => audio.play('achievement'), 1500);
+    };
+    if (!needsCourt(result.incidents)) return show();
+    // someone called the police: interrogation before the pay slip
+    sceneOnce('first-court', () => courtScreen(result.incidents!, cfg.chapter, cr => {
+      const paid = payFine(prof, cr.fine, cr.extraCost);
+      reward.court = { fine: paid, text: cr.text };
+      saveProfile(prof);
+      show();
+    }), prof);
   });
 }
 

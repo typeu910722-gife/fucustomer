@@ -6,7 +6,7 @@ import {
 import type { ClientMsg, GameEvent, LobbyState, ServerMsg, StoreSave, Target } from './protocol.ts';
 import {
   World, addPing, addPlayer, applyInput, createWorld, playerDisconnected, removePlayer, requestAct, requestBuy, requestDrop,
-  finishShift, requestSpin, requestThrow, requestUltimate, sanitizeSave, setReady, snapshot, tick,
+  finishShift, requestSpin, requestHit, requestThrow, requestUltimate, sanitizeSave, setReady, snapshot, tick,
 } from './sim.ts';
 import type { ShiftConfig } from './career.ts';
 
@@ -227,6 +227,9 @@ export class Room {
         break;
       case 'spin':
         if (w && typeof msg.rid === 'string' && !this.paused) { requestSpin(w, playerId, msg.rid.slice(0, 40)); this.flushResults(); }
+        break;
+      case 'hit':
+        if (w && typeof msg.rid === 'string' && Number.isFinite(msg.id) && !this.paused) { requestHit(w, playerId, msg.rid.slice(0, 40), Number(msg.id)); this.flushResults(); }
         break;
       case 'ultimate':
         if (w && typeof msg.rid === 'string' && !this.paused) { requestUltimate(w, playerId, msg.rid.slice(0, 40)); this.flushResults(); }

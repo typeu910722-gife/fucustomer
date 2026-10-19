@@ -2,7 +2,10 @@
 // Pure data + functions so it can be unit-tested and used by the client and the simulation.
 import { KarenKind, Product } from './constants.ts';
 
-export type Ability = 'grab' | 'spin' | 'ultimate';
+export type Ability = 'hit' | 'grab' | 'spin' | 'ultimate';
+
+/** One time you hit someone during a shift. legal = self-defence; vip = the person had connections. */
+export interface Incident { who: string; legal: boolean; vip: boolean; normal: boolean; why: string }
 export type Food = 'coffee' | 'meal';
 export type ShiftEvent = 'rush' | 'outage';
 
@@ -45,8 +48,9 @@ export function rankOf(level: number) { let r = RANKS[0]; for (const k of RANKS)
 /** EXP needed to go from `level` to `level + 1`. */
 export function expToNext(level: number) { return level >= MAX_LEVEL ? Infinity : 60 + 25 * (level - 1); }
 
-export const ABILITY_LEVEL: Record<Ability, number> = { grab: 11, spin: 16, ultimate: 26 };
+export const ABILITY_LEVEL: Record<Ability, number> = { hit: 6, grab: 11, spin: 16, ultimate: 26 };
 export const ABILITY_INFO: Record<Ability, { name: string; desc: string }> = {
+  hit: { name: '出手', desc: '把失控的奧客揍暈。對方先失控就是正當防衛；不佔理或打到有背景的人會被警察帶走' },
   grab: { name: '抓起／投擲', desc: '抓起奧客，對準發光出口丟出店外' },
   spin: { name: '拖把旋風', desc: '擊退身邊所有人（小心一般顧客）' },
   ultimate: { name: '全店退散', desc: '爆發值滿 100，店內奧客一次送走' },
@@ -86,6 +90,10 @@ export interface CareerProfile {
   achievements: string[];
   /** Daily challenge: today's best and whether today's reward was paid; streak counts consecutive days won. */
   daily: { date: string; best: number; rewarded: boolean; streak: number; lastWin: string; wins: number };
+  /** Court record. */
+  court: { trials: number; fines: number; acquittals: number };
+  /** Story scenes already watched (ids from story.ts). */
+  story: string[];
 }
 export function newProfile(): CareerProfile {
   return {
@@ -93,6 +101,7 @@ export function newProfile(): CareerProfile {
     skills: { service: 0, body: 0, crisis: 0 }, gear: { shoes: 0, mop: 0, machine: 0, cleaner: 0, guard: 0 },
     stars: {}, clears: {}, stats: { shifts: 0, wins: 0, served: 0, ejected: 0, karens: 0, revenue: 0 }, endlessBest: 0, title: '',
     achievements: [], daily: { date: '', best: 0, rewarded: false, streak: 0, lastWin: '', wins: 0 },
+    court: { trials: 0, fines: 0, acquittals: 0 }, story: [],
   };
 }
 export function sanitizeProfile(v: unknown): CareerProfile {
@@ -114,6 +123,9 @@ export function sanitizeProfile(v: unknown): CareerProfile {
   for (const k of Object.keys(p.stats) as (keyof CareerProfile['stats'])[]) p.stats[k] = int(o.stats?.[k], 0, 1e12, 0);
   p.endlessBest = int(o.endlessBest, 0, 1e12, 0);
   p.title = typeof o.title === 'string' ? o.title.slice(0, 20) : '';
+  const ct = o.court;
+  if (ct && typeof ct === 'object') p.court = { trials: int(ct.trials, 0, 1e6, 0), fines: int(ct.fines, 0, 1e9, 0), acquittals: int(ct.acquittals, 0, 1e6, 0) };
+  if (Array.isArray(o.story)) p.story = [...new Set(o.story.filter((a): a is string => typeof a === 'string' && /^[a-z0-9-]{1,24}$/.test(a)))].slice(0, 64);
   if (Array.isArray(o.achievements)) p.achievements = [...new Set(o.achievements.filter((a): a is string => typeof a === 'string' && /^[A-Z0-9_]{1,24}$/.test(a)))].slice(0, 64);
   const d = o.daily, isDate = (x: unknown): x is string => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x);
   if (d && typeof d === 'object') {
@@ -361,6 +373,10 @@ export interface ShiftResult {
   shiftId: string; won: boolean; failReason: string; revenue: number; goal: number; rating: number; chaos: number;
   served: number; angryLeft: number; karensResolved: number; karensFailed: number; ejected: number; cleaned: number; maxCombo: number;
   score?: number; survived?: number; bossDefeated?: boolean;
+  /** Tips from customers (already included in revenue) — the worker keeps these. */
+  tips?: number;
+  /** Everyone you hit this shift; any illegal hit or VIP hit means the police come. */
+  incidents?: Incident[];
   /** Daily challenge date (YYYY-MM-DD). */
   date?: string;
 }
@@ -377,7 +393,32 @@ export interface Reward {
   stars: number; exp: number; wallet: number; levels: number[]; firstClear: boolean; newBest: boolean;
   /** Daily challenge: reward already taken today (this run paid nothing), current win streak. */
   daily?: { already: boolean; streak: number };
+  /** Career shifts: how the pay was worked out (wallet already includes it). */
+  pay?: Pay;
+  /** Set after an interrogation: what was paid (fine + lawyer) and the final verdict. */
+  court?: { fine: number; text: string };
 }
+export interface Pay { wage: number; bonus: number; cut: number; cutReason: string; tips: number; extra: number }
+
+/** 錢董's excuses for docking your pay. */
+export const BOSS_EXCUSES = [
+  '制服清潔費', '收銀機短少（明明是他自己拿的）', '打卡晚了 1 分鐘', '空調電費分攤', '員工旅遊預繳（從來沒去過）',
+  '「公司今年很辛苦」', '試吃品損耗', '拖把折舊費', '「年輕人要學習，不要計較」', '招牌燈泡錢', '「你笑得不夠親切」',
+];
+function hashStr(s: string) { let h = 2166136261; for (const ch of s) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+
+/** Shift pay: hourly wage + sales bonus, then the boss skims 15–45% (less when you earn 3 stars); tips are yours. */
+export function shiftPay(chapter: number, r: ShiftResult, stars: number): Pay {
+  const tips = Math.max(0, Math.round(r.tips ?? 0));
+  const wage = Math.round((40 + 20 * chapter) * (r.won ? 1 : 0.6));
+  const bonus = Math.round(Math.max(0, r.revenue - tips) * 0.12);
+  const h = hashStr(`${r.shiftId}:${r.revenue}:${r.served}:${r.ejected}`);
+  const pct = Math.min(0.45, Math.max(0.15, 0.36 - 0.06 * stars + ((h % 100) / 100) * 0.12));
+  const cut = Math.round((wage + bonus) * pct);
+  const extra = r.ejected * 4 + r.cleaned * 2;
+  return { wage, bonus, cut, cutReason: BOSS_EXCUSES[(h >>> 8) % BOSS_EXCUSES.length], tips, extra };
+}
+export const payTotal = (p: Pay) => p.wage + p.bonus - p.cut + p.tips + p.extra;
 /** Applies a finished shift to the profile. EXP: full on first clear, 60% on replays, 35% on a failed attempt. */
 export function applyResult(p: CareerProfile, r: ShiftResult): Reward {
   if (r.shiftId === ENDLESS_ID) {
@@ -399,7 +440,8 @@ export function applyResult(p: CareerProfile, r: ShiftResult): Reward {
   const mul = f?.shift.expMul ?? 1;
   let exp = (r.won ? base * (0.7 + 0.15 * stars) * (firstClear || stars > prevStars ? 1 : 0.6) : base * 0.35) * mul;
   exp = Math.round(exp);
-  const wallet = Math.round(r.revenue * 0.18 + (r.won ? 60 : 15) + stars * 20 + r.ejected * 4 + r.cleaned * 2);
+  const pay = shiftPay(f?.chapter.n ?? 1, r, stars);
+  const wallet = payTotal(pay);
   p.wallet += wallet;
   p.stats.shifts++; if (r.won) p.stats.wins++;
   p.stats.served += r.served; p.stats.ejected += r.ejected; p.stats.karens += r.karensResolved; p.stats.revenue += r.revenue;
@@ -407,7 +449,7 @@ export function applyResult(p: CareerProfile, r: ShiftResult): Reward {
   if (r.won) p.clears[r.shiftId] = (p.clears[r.shiftId] ?? 0) + 1;
   if (r.shiftId === '6-3' && r.won && p.title !== '終極打工人') p.title = '奧客剋星';
   const levels = addExp(p, exp);
-  return { stars, exp, wallet, levels, firstClear, newBest: stars > prevStars };
+  return { stars, exp, wallet, levels, firstClear, newBest: stars > prevStars, pay };
 }
 
 function applyDaily(p: CareerProfile, r: ShiftResult): Reward {

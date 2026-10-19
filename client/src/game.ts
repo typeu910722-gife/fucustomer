@@ -132,6 +132,8 @@ export class Game {
   /** App sent to the background: show the pause menu so play doesn't resume by surprise. */
   appPaused() { if (this.started && this.overlay === 'none') this.openOverlay('pause'); }
 
+  private myName() { return this.snap?.players.find(p => p.id === this.selfId)?.name ?? ''; }
+
   send(m: ClientMsg) { this.conn.send(m); }
 
   // ---------------- network ----------------
@@ -236,6 +238,8 @@ export class Game {
         else if (e.name === 'mistake') { this.flash(true); this.view.shake = 0.4; }
         else if (e.name === 'impact') this.view.burst(e.x, e.z, 0xffd69a, 6);
         else if (e.name === 'throw') this.view.shake = 0.15;
+        else if (e.name === 'hit') { this.view.burst(e.x, e.z, 0xfff3bf, 14); this.view.floatText('啪！', e.x, e.z, '#fff3bf'); this.view.shake = Math.max(this.view.shake, 0.18); }
+        else if (e.name === 'shove' && e.by === this.myName()) { this.flash(true); this.view.shake = 0.45; this.stamina = Math.max(0, this.stamina - 25); }
         break;
     }
   }
@@ -394,6 +398,12 @@ export class Game {
   }
 
   private customerCandidate(c: CustomerSnap, hands: (string | null)[], money: number): Candidate | null {
+    const cand = this.baseCandidate(c, hands, money);
+    if (!cand || c.kind === 'normal' || c.resolved) return cand;
+    const tags = [c.violent ? '🤬 失控（出手算正當防衛）' : '', c.vip ? '💼 有背景' : '', c.heavy && !(c.stun > 0) ? '🏋 抓不動' : '', c.stun > 0 ? '💫 暈了' : ''].filter(Boolean);
+    return tags.length ? { ...cand, label: `${cand.label}・${tags.join('・')}` } : cand;
+  }
+  private baseCandidate(c: CustomerSnap, hands: (string | null)[], money: number): Candidate | null {
     const pos = this.view.customerWorldPos(c.id) ?? c;
     const point = { x: pos.x, z: pos.z, r: 0.45, h: 1.8 };
     const t: Target = { t: 'customer', id: c.id };
@@ -552,6 +562,11 @@ export class Game {
         else { const k = this.karenTarget(s); if (k) this.send({ type: 'act', rid: newRid(), kind: 'grab', target: { t: 'customer', id: k.id } }); else this.toast('準星對準身前的顧客再抓', 'info', 1400); }
       }
       if (this.input.consume('spin')) this.send({ type: 'spin', rid: newRid() });
+      if (this.input.consume('hit')) {
+        if (!s.shift.abilities.includes('hit')) this.toast('「出手」在 Lv.6 正職店員解鎖', 'info', 1800);
+        else if (me.grabbing != null) this.toast('先把抓著的人丟出去', 'info', 1200);
+        else { const k = this.karenTarget(s); if (k) this.send({ type: 'hit', rid: newRid(), id: k.id }); else this.toast('準星對準身前的人再出手', 'info', 1200); }
+      }
       if (this.input.consume('ultimate')) this.send({ type: 'ultimate', rid: newRid() });
       if (this.input.consume('ping')) this.doPing();
       if (this.input.consume('ready') && (s.phase === 'prep' || s.phase === 'summary')) this.send({ type: 'ready', ready: !me.ready });
@@ -711,6 +726,7 @@ export class Game {
     if (this.touch) {
       const ab = s.shift.abilities;
       $('t-grab').classList.toggle('hidden', !ab.includes('grab'));
+      $('t-hit').classList.toggle('hidden', !ab.includes('hit'));
       $('t-grab').textContent = me.grabbing != null ? '丟出' : '抓起';
       $('t-spin').classList.toggle('hidden', !ab.includes('spin'));
       $('t-spin').textContent = me.spinCd > 0 ? `${Math.ceil(me.spinCd)}` : '旋風';

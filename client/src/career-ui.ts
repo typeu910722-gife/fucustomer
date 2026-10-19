@@ -80,6 +80,19 @@ function chaptersHtml(p: CareerProfile) {
   }).join('') + endless;
 }
 
+/** The pay slip: wage, sales bonus, the boss's cut (with his excuse), tips you keep, and any court fine. */
+function payHtml(r: Reward) {
+  const pay = r.pay;
+  if (!pay) return '';
+  const row = (k: string, v: number, cls = '') => `<div class="stat"><span>${k}</span><b class="${cls}">${v < 0 ? '−' : '+'}$${Math.abs(v)}</b></div>`;
+  return `<div class="paylist">
+    ${row('時薪', pay.wage)}${row('營業獎金', pay.bonus)}
+    ${row(`🤑 錢董硬凹：「${esc(pay.cutReason)}」`, -pay.cut, 'neg')}
+    ${row('💵 小費（自己的）', pay.tips, 'pos')}${pay.extra ? row('阿芬姐偷塞的退散獎金', pay.extra, 'pos') : ''}
+    ${r.court ? row(`⚖ 法院罰款${r.court.fine === 0 ? '（無罪）' : ''}`, -r.court.fine, 'neg') : ''}
+  </div>`;
+}
+
 function dailyHtml(p: CareerProfile) {
   if (!dailyUnlocked(p)) return `<div class="chapter locked"><div class="chhead"><b>📅 每日挑戰</b></div><div class="muted story">🔒 通過第 1 章「店長來巡店」後解鎖</div></div>`;
   const today = localDate();
@@ -131,7 +144,9 @@ function statsHtml(p: CareerProfile) {
       <div class="stat"><span>上班次數</span><b>${s.shifts}</b></div><div class="stat"><span>成功下班</span><b>${s.wins}</b></div>
       <div class="stat"><span>服務顧客</span><b>${s.served}</b></div><div class="stat"><span>累計營業額</span><b>$${s.revenue}</b></div></div><div>
       <div class="stat"><span>處理奧客</span><b>${s.karens}</b></div><div class="stat"><span>請出門</span><b>${s.ejected}</b></div>
-      <div class="stat"><span>主線星數</span><b>★ ${totalStars}/${maxStars}</b></div><div class="stat"><span>職級</span><b>${rankOf(p.level)} Lv.${p.level}</b></div></div></div>`;
+      <div class="stat"><span>主線星數</span><b>★ ${totalStars}/${maxStars}</b></div><div class="stat"><span>職級</span><b>${rankOf(p.level)} Lv.${p.level}</b></div></div></div>
+    <div class="grid2"><div><div class="stat"><span>💰 存款</span><b>$${p.wallet}</b></div><div class="stat"><span>⚖ 被帶去審訊</span><b>${p.court.trials} 次</b></div></div>
+      <div><div class="stat"><span>罰款總額</span><b>$${p.court.fines}</b></div><div class="stat"><span>無罪</span><b>${p.court.acquittals} 次</b></div></div></div>`;
 }
 
 export function resultScreen(r: ShiftResult, reward: Reward, p: CareerProfile, fresh: Achievement[], h: { retry(): void; next(id: string | null): void; career(): void }) {
@@ -163,7 +178,8 @@ export function resultScreen(r: ShiftResult, reward: Reward, p: CareerProfile, f
           <div class="stat"><span>清潔</span><b>${r.cleaned}</b></div>
         </div>
       </div>
-      <div class="reward">EXP +${reward.exp}${reward.firstClear ? '（首次通關）' : ''}　💰 +${reward.wallet}</div>
+      ${payHtml(reward)}
+      <div class="reward">EXP +${reward.exp}${reward.firstClear ? '（首次通關）' : ''}　💰 存款 +${reward.wallet - (reward.court?.fine ?? 0)}</div>
       ${lvl}
       ${newAbil.map(a => `<div class="levelup">🔓 新能力：${ABILITY_INFO[a].name} — ${ABILITY_INFO[a].desc}</div>`).join('')}
       ${achHtml(fresh)}

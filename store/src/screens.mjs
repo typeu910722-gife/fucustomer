@@ -32,6 +32,7 @@ async function startShift(page, id, warm) {
   await page.click('#m-career');
   await page.click('[data-tab="chapters"]');
   await page.click(`[data-play="${id}"]`);
+  await page.waitForFunction(() => document.getElementById('sc-skip') || window.__game?.started, null, { timeout: 30000 }); if (await page.locator('#sc-skip').count()) await page.click('#sc-skip'); // chapter intro scene
   await page.waitForFunction(() => window.__game?.started, null, { timeout: 30000 });
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.__game.snap.phase === 'open', null, { timeout: 30000 });

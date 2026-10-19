@@ -16,6 +16,7 @@ await ctx.setOffline(true);
 await pg.reload();
 await pg.waitForSelector('#m-career', { timeout: 15000 });
 await pg.click('#m-career'); await pg.click('[data-play="1-1"]');
+await pg.waitForFunction(() => document.getElementById('sc-skip') || window.__game?.started, null, { timeout: 30000 }); if (await pg.locator('#sc-skip').count()) await pg.click('#sc-skip'); // chapter intro scene
 await pg.waitForFunction(() => window.__game?.started, null, { timeout: 20000 });
 const ok = await pg.evaluate(() => !!window.__game.snap && !navigator.onLine);
 console.log(JSON.stringify({ offlineSolo: ok, errs }));
