@@ -78,6 +78,75 @@ export class Audio {
     }
   }
 
+  // ---------------- procedural background music ----------------
+  private musicGain: GainNode | null = null;
+  private musicTimer = 0;
+  private musicMood = -1;
+  private nextBeat = 0;
+  private beat = 0;
+  musicVolume = 0.5;
+  setMusicVolume(v: number) { this.musicVolume = v; if (this.musicGain) this.musicGain.gain.value = v * 0.35; }
+
+  /** mood: 0 menu/co-op, 1–6 chapters, 7 endless. Different tempo, key and chord loop per mood. */
+  startMusic(mood: number) {
+    const c = this.ctx; if (!c || !this.master) return;
+    if (this.musicMood === mood && this.musicTimer) return;
+    this.stopMusic();
+    this.musicMood = mood;
+    this.musicGain = c.createGain(); this.musicGain.gain.value = this.musicVolume * 0.35; this.musicGain.connect(this.master);
+    this.nextBeat = c.currentTime + 0.1; this.beat = 0;
+    this.musicTimer = window.setInterval(() => this.schedule(), 90);
+  }
+  stopMusic() {
+    clearInterval(this.musicTimer); this.musicTimer = 0; this.musicMood = -1;
+    if (this.musicGain) { const g = this.musicGain; try { g.gain.setTargetAtTime(0, this.ctx!.currentTime, 0.2); } catch { /* ignore */ } setTimeout(() => g.disconnect(), 800); }
+    this.musicGain = null;
+  }
+
+  private schedule() {
+    const c = this.ctx; if (!c || !this.musicGain) return;
+    const M = MOODS[this.musicMood] ?? MOODS[0];
+    const spb = 60 / M.bpm / 2; // eighth notes
+    while (this.nextBeat < c.currentTime + 0.35) {
+      const t = this.nextBeat, b = this.beat;
+      const bar = Math.floor(b / 8), step = b % 8;
+      const chord = M.prog[bar % M.prog.length].map(n => n + M.root);
+      if (step === 0) for (const n of chord) this.note(n + 12, spb * 7.5, M.pad, 0.05, t);       // pad
+      if (step === 0 || step === 4) this.note(chord[0] - 12, spb * 3.5, 'triangle', 0.16, t);      // bass
+      if (M.drums) {
+        if (step === 0 || step === 4) this.kick(t);
+        if (step % 2 === 1) this.hat(t, 0.035);
+        if (M.bpm > 115 && (step === 2 || step === 6)) this.hat(t, 0.06, 2500);
+      }
+      // melody: chord tones with a few passing notes, deterministic per bar
+      const seed = (bar * 7 + step * 13 + this.musicMood * 31) % 17;
+      if (seed % (M.sparse ? 3 : 2) === 0) {
+        const tone = chord[seed % chord.length] + 24 + (seed % 5 === 0 ? M.scale[(seed >> 1) % M.scale.length] - chord[0] % 12 : 0);
+        this.note(tone, spb * 0.9, M.lead, 0.06, t);
+      }
+      this.nextBeat += spb; this.beat++;
+    }
+  }
+  private note(midi: number, dur: number, type: OscillatorType, vol: number, t: number) {
+    const c = this.ctx!; const o = c.createOscillator(); const g = c.createGain();
+    o.type = type; o.frequency.value = 440 * Math.pow(2, (midi - 69) / 12);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(this.musicGain!); o.start(t); o.stop(t + dur + 0.05);
+  }
+  private kick(t: number) {
+    const c = this.ctx!; const o = c.createOscillator(); const g = c.createGain();
+    o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+    g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    o.connect(g); g.connect(this.musicGain!); o.start(t); o.stop(t + 0.2);
+  }
+  private hat(t: number, vol: number, freq = 7000) {
+    const c = this.ctx!; if (!this.noiseBuf) return;
+    const s = c.createBufferSource(); s.buffer = this.noiseBuf;
+    const f = c.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = freq;
+    const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+    s.connect(f); f.connect(g); g.connect(this.musicGain!); s.start(t); s.stop(t + 0.06);
+  }
+
   /** Soft store ambience: low pad + occasional chime. */
   startAmbient() {
     const c = this.ctx; if (!c || !this.master || this.ambient) return;
@@ -88,4 +157,17 @@ export class Audio {
   }
   stopAmbient() { this.ambient?.stop(); this.ambient = null; }
 }
+interface Mood { bpm: number; root: number; prog: number[][]; scale: number[]; pad: OscillatorType; lead: OscillatorType; drums: boolean; sparse?: boolean }
+const MAJ = [0, 2, 4, 5, 7, 9, 11], MIN = [0, 2, 3, 5, 7, 8, 10], PENTA = [0, 2, 4, 7, 9];
+const MOODS: Record<number, Mood> = {
+  0: { bpm: 92, root: 53, prog: [[0, 4, 7], [-3, 0, 4], [-7, -3, 0], [-5, -1, 2]], scale: MAJ, pad: 'sine', lead: 'triangle', drums: false, sparse: true },
+  1: { bpm: 104, root: 60, prog: [[0, 4, 7], [7, 11, 14], [9, 12, 16], [5, 9, 12]], scale: MAJ, pad: 'sine', lead: 'square', drums: true },        // sunny corner shop
+  2: { bpm: 82, root: 57, prog: [[2, 5, 9, 12], [7, 11, 14, 17], [0, 3, 7, 10], [0, 3, 7, 10]], scale: MIN, pad: 'sine', lead: 'triangle', drums: true, sparse: true }, // late-night jazz
+  3: { bpm: 122, root: 62, prog: [[0, 4, 7], [-3, 0, 4], [5, 9, 12], [7, 11, 14]], scale: MAJ, pad: 'triangle', lead: 'square', drums: true },  // station rush
+  4: { bpm: 110, root: 55, prog: [[0, 4, 7], [2, 7, 9], [-3, 0, 4], [4, 7, 11]], scale: PENTA, pad: 'sine', lead: 'triangle', drums: true },   // tourist street
+  5: { bpm: 128, root: 60, prog: [[0, 4, 7], [5, 9, 12], [7, 11, 14], [0, 4, 7]], scale: MAJ, pad: 'sawtooth', lead: 'square', drums: true },  // countdown party
+  6: { bpm: 140, root: 52, prog: [[0, 3, 7], [-4, 0, 3], [-2, 2, 5], [-5, -1, 2]], scale: MIN, pad: 'sawtooth', lead: 'square', drums: true }, // boss
+  7: { bpm: 116, root: 50, prog: [[0, 3, 7], [5, 8, 12], [-2, 2, 5], [3, 7, 10]], scale: MIN, pad: 'sine', lead: 'triangle', drums: true },     // endless night
+};
+
 export const audio = new Audio();

@@ -67,7 +67,8 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
         <select id="s-q"><option value="low">低（省電）</option><option value="medium">中</option><option value="high">高（陰影）</option></select></label>
       <label class="field">視角靈敏度 <span id="s-sens-v"></span><input type="range" id="s-sens" min="0.2" max="3" step="0.1" value="${s.sensitivity}"></label>
       <label class="field">視野 FOV <span id="s-fov-v"></span><input type="range" id="s-fov" min="60" max="100" step="1" value="${s.fov}"></label>
-      <label class="field">音量<input type="range" id="s-vol" min="0" max="1" step="0.05" value="${s.volume}"></label>
+      <label class="field">音效音量<input type="range" id="s-vol" min="0" max="1" step="0.05" value="${s.volume}"></label>
+      <label class="field">音樂音量<input type="range" id="s-music" min="0" max="1" step="0.05" value="${s.music}"></label>
       <label class="muted"><input type="checkbox" id="s-inv" ${s.invertY ? 'checked' : ''}> 反轉 Y 軸</label><br>
       <label class="muted"><input type="checkbox" id="s-fps" ${s.showFps ? 'checked' : ''}> 顯示 FPS</label>
       <label class="field">自訂伺服器（留空使用預設）<input type="text" id="s-url" placeholder="wss://example.com/ws" value="${esc(s.serverUrl)}"></label>
@@ -78,7 +79,7 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
   upd(); on('s-sens', 'input', upd); on('s-fov', 'input', upd);
   on('s-ok', 'click', () => {
     onDone({
-      ...s, quality: val('s-q') as Settings['quality'], sensitivity: Number(val('s-sens')), fov: Number(val('s-fov')), volume: Number(val('s-vol')),
+      ...s, quality: val('s-q') as Settings['quality'], sensitivity: Number(val('s-sens')), fov: Number(val('s-fov')), volume: Number(val('s-vol')), music: Number(val('s-music')),
       invertY: (document.getElementById('s-inv') as HTMLInputElement).checked, showFps: (document.getElementById('s-fps') as HTMLInputElement).checked,
       serverUrl: val('s-url').trim(),
     });

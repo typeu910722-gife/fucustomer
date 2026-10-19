@@ -159,7 +159,8 @@ export class Game {
       $('hud').classList.remove('hidden');
       if (this.touch) { $('touch').classList.remove('hidden'); document.body.classList.add('touch'); }
       else this.input.lock();
-      audio.startAmbient();
+      audio.setMusicVolume(this.settings.music);
+      audio.startMusic(s.shift.endless ? 7 : s.shift.boss ? 6 : s.shift.mode === 'shift' ? s.shift.chapter : 0);
     }
     if (first || !this.started) { this.pos = { x: me.x, z: me.z }; this.yaw = me.yaw; }
     // server reconciliation (the server clamps speed and resolves collisions)
@@ -191,9 +192,9 @@ export class Game {
         break;
       case 'hint': this.showHint(e.text); break;
       case 'fx':
-        if (e.name === 'eject') { this.view.floatText(e.combo && e.combo > 1 ? `${e.combo} 連送！` : '退散！', e.x, e.z - 0.6, '#ffa94d'); this.view.burst(e.x, e.z - 0.4, 0xff922b, 26); this.view.shake = 0.25; if (e.combo && e.combo > 1) this.showCombo(e.combo); }
-        else if (e.name === 'ultimate') { this.flash(false); this.view.shake = 0.65; this.view.burst(e.x, e.z, 0xffd43b, 40); }
-        else if (e.name === 'spin') { this.view.burst(e.x, e.z, 0x63e6be, 30); this.view.shake = 0.2; }
+        if (e.name === 'eject') { this.view.shockwave(e.x, e.z - 0.3, 0xff922b, 2.5); this.view.floatText(e.combo && e.combo > 1 ? `${e.combo} 連送！` : '退散！', e.x, e.z - 0.6, '#ffa94d'); this.view.burst(e.x, e.z - 0.4, 0xff922b, 26); this.view.shake = 0.25; if (e.combo && e.combo > 1) this.showCombo(e.combo); }
+        else if (e.name === 'ultimate') { this.flash(false); this.view.shake = 0.65; this.view.burst(e.x, e.z, 0xffd43b, 40); this.view.shockwave(e.x, e.z, 0xffd43b, 6); }
+        else if (e.name === 'spin') { this.view.burst(e.x, e.z, 0x63e6be, 30); this.view.shake = 0.2; this.view.shockwave(e.x, e.z, 0x63e6be, 3.2); }
         else if (e.name === 'mistake') { this.flash(true); this.view.shake = 0.4; }
         else if (e.name === 'impact') this.view.burst(e.x, e.z, 0xffd69a, 6);
         else if (e.name === 'throw') this.view.shake = 0.15;
@@ -262,7 +263,7 @@ export class Game {
     this.settings = s; saveSettings(s);
     this.view.setQuality(s.quality);
     this.view.camera.fov = s.fov; this.view.camera.updateProjectionMatrix();
-    audio.setVolume(s.volume);
+    audio.setVolume(s.volume); audio.setMusicVolume(s.music);
   }
 
   private wireShopButtons(container: HTMLElement) {
@@ -608,6 +609,11 @@ export class Game {
         document.getElementById('pb-shop')!.addEventListener('click', () => this.openOverlay('shop'));
       }
     } else if (pb.dataset.k) { pb.dataset.k = ''; pb.innerHTML = ''; }
+    // chaos warning vignette
+    const vg = $('vignette');
+    const danger = Math.max(0, (s.chaos - 55) / 45);
+    vg.style.opacity = danger > 0 ? String(0.35 + danger * 0.65) : '0';
+    vg.classList.toggle('pulse', s.chaos >= 80);
     // shift HUD
     const shiftMode = s.shift.mode === 'shift';
     $('shiftbar').classList.toggle('hidden', !shiftMode);
@@ -667,7 +673,7 @@ export class Game {
     document.removeEventListener('pointerlockchange', this.onLockChange);
     this.input.unlock();
     this.conn.close();
-    audio.stopAmbient();
+    audio.stopMusic();
     $('hud').classList.add('hidden'); $('touch').classList.add('hidden'); $('netstatus').classList.add('hidden');
     document.body.classList.remove('shiftmode');
     this.view.renderer.dispose();

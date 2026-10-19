@@ -13,6 +13,7 @@ import type { ShiftResult } from '../../shared/career.ts';
 let settings = loadSettings();
 const platform = detectPlatform();
 audio.setVolume(settings.volume);
+audio.setMusicVolume(settings.music);
 if (!isTouch) document.getElementById('rotate')!.classList.remove('enabled');
 
 function serverUrl() { return settings.serverUrl || defaultServerUrl(); }
@@ -80,7 +81,7 @@ function menu(error?: string) {
       const l = loadLastSession(); if (!l) return menu();
       startGame(() => new WsConnection(l.url, { kind: 'join', code: l.code, name: playerName(), token: l.token }, platform));
     },
-    settings: () => UI.settingsMenu(settings, s => { settings = s; saveSettings(s); audio.setVolume(s.volume); menu(); }),
+    settings: () => UI.settingsMenu(settings, s => { settings = s; saveSettings(s); audio.setVolume(s.volume); audio.setMusicVolume(s.music); menu(); }),
   }, { soloSave: loadSoloSave(), coopSave: loadCoopSave(), canRejoin, server: serverUrl(), platform, error });
 }
 

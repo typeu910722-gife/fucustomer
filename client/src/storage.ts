@@ -3,7 +3,7 @@ import type { StoreSave } from '../../shared/protocol.ts';
 
 export type Quality = 'low' | 'medium' | 'high';
 export interface Settings {
-  name: string; sensitivity: number; invertY: boolean; quality: Quality; volume: number; serverUrl: string; showFps: boolean; fov: number;
+  name: string; sensitivity: number; invertY: boolean; quality: Quality; volume: number; music: number; serverUrl: string; showFps: boolean; fov: number;
 }
 
 const SETTINGS_KEY = 'fucustomer.settings.v1';
@@ -22,7 +22,7 @@ function write(key: string, v: unknown) {
 
 export function loadSettings(): Settings {
   const d: Settings = {
-    name: '', sensitivity: 1, invertY: false, quality: isTouch ? 'low' : 'high', volume: 0.7, serverUrl: '', showFps: false, fov: 75,
+    name: '', sensitivity: 1, invertY: false, quality: isTouch ? 'low' : 'high', volume: 0.7, music: 0.5, serverUrl: '', showFps: false, fov: 75,
   };
   return { ...d, ...(read<Partial<Settings>>(SETTINGS_KEY) ?? {}) };
 }
