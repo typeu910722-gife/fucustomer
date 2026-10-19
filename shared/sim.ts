@@ -1187,8 +1187,9 @@ function settleDay(w: World) {
     w.bonusPaidDay = w.day;
     const bonus = Math.round(w.rating * 12 + w.dayStats.karensResolved * 10);
     w.dayStats.bonus = bonus;
-    w.dayStats.expenses += DAILY_RENT;
-    w.money += bonus - DAILY_RENT;
+    const staff = w.cfg.staffWage ?? 0; // own store: your employee's day wage
+    w.dayStats.expenses += DAILY_RENT + staff;
+    w.money += bonus - DAILY_RENT - staff;
   }
   w.saveOut = { ...toSave(w), day: w.day + 1 };
 }

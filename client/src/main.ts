@@ -15,6 +15,8 @@ import { CHAPTERS } from '../../shared/career.ts';
 import { needsCourt, payFine } from '../../shared/court.ts';
 import { SCENES, sceneAfter, sceneBefore } from '../../shared/story.ts';
 import { courtScreen, playScene } from './story-ui.ts';
+import { ownStoreConfig, settleStoreDay, staffPace } from '../../shared/ownstore.ts';
+import { dayConfig } from '../../shared/sim.ts';
 import { desktop, initPlatform, isApp, onAppPause, onBack, quitApp, reportAchievements } from './platform.ts';
 
 let settings = loadSettings();
@@ -63,12 +65,39 @@ async function online(url: string, intent: Intent) {
 }
 
 // ---------------- career (single-player main story) ----------------
-function career() {
+function career(tab?: Parameters<typeof careerScreen>[2]) {
   screenDepth = 1;
   const p = loadProfile();
   // progress made before achievements existed counts too (no pop-ups for these)
   if (updateAchievements(p).length) saveProfile(p);
-  careerScreen(p, { back: () => menu(), play: id => playShift(id) });
+  careerScreen(p, {
+    back: () => menu(), play: id => playShift(id), enterStore: () => playStore(),
+    opened: () => sceneOnce('store-open', () => career('store')),
+  }, tab);
+}
+
+/** Your own store: business days with an employee; every nightly save may end in bankruptcy. */
+function playStore() {
+  const p = loadProfile();
+  if (!p.store) return career('store');
+  const cfg = ownStoreConfig(p, dayConfig());
+  const st = p.store.staff;
+  let conn: LocalConnection | null = null;
+  let bankrupt = '';
+  startGame(() => (conn = new LocalConnection(playerName(), p.store!.save, cfg, undefined, {
+    staff: st.quit ? undefined : { name: st.name, pace: staffPace(st.mood) },
+    onSave: save => {
+      const prof = loadProfile();
+      const out = settleStoreDay(prof, save);
+      saveProfile(prof);
+      if (out.quit) { conn?.dismissStaff(); cfg.staffWage = 0; current?.toast(`📋 員工受不了你的薪水，辭職了！`, 'bad', 5000); }
+      else if (prof.store) conn?.setStaffPace(staffPace(prof.store.staff.mood));
+      if (out.bankrupt) { bankrupt = out.reason; current?.toast(`💸 ${out.reason}……店撐不下去了`, 'bad', 5000); window.setTimeout(() => current?.exit(), 2500); }
+    },
+  })), () => {
+    if (!bankrupt) return career('store');
+    playScene('store-bankrupt', () => UI.message('倒閉了', `${bankrupt}。投入的錢全部賠光了，回去打工重新存吧。`, '回職涯', () => career('store')));
+  });
 }
 
 function playShift(id: string) {

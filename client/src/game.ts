@@ -158,7 +158,8 @@ export class Game {
         if (this.overlay === 'shop' || this.overlay === 'summary') { this.shopKey = ''; this.summaryKey = ''; }
         break;
       case 'save':
-        if (this.conn.solo) saveSoloSave(m.save); else saveCoopSave(m.save);
+        if ('onSave' in this.conn && (this.conn as { onSave?: unknown }).onSave) { /* own store: saved by its owner */ }
+        else if (this.conn.solo) saveSoloSave(m.save); else saveCoopSave(m.save);
         break;
       case 'error':
         if (m.code === 'not_ready') this.toast(m.message, 'bad');

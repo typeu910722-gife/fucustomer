@@ -208,7 +208,7 @@ export function summaryHtml(s: Snapshot, selfId: string) {
         <div class="stat"><span>營業收入</span><b>$${d.revenue}</b></div>
         <div class="stat"><span>　其中小費</span><b>$${d.tips}</b></div>
         <div class="stat"><span>每日獎勵（評價＋奧客處理）</span><b>+$${d.bonus}</b></div>
-        <div class="stat"><span>支出（進貨＋租金）</span><b>-$${d.expenses}</b></div>
+        <div class="stat"><span>支出（進貨＋租金＋員工薪水）</span><b>-$${d.expenses}</b></div>
         <div class="stat"><span>現金</span><b>$${s.money}</b></div>
       </div>
       <div>

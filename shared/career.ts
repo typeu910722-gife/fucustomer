@@ -1,6 +1,8 @@
 // Single-player career: ranks, EXP, skill trees, gear, chapters/shifts and rewards.
 // Pure data + functions so it can be unit-tested and used by the client and the simulation.
 import { KarenKind, Product } from './constants.ts';
+import type { OwnStore, StoreHistory, WageMode } from './ownstore.ts';
+import type { StoreSave } from './protocol.ts';
 
 export type Ability = 'hit' | 'grab' | 'spin' | 'ultimate';
 
@@ -36,6 +38,8 @@ export interface ShiftConfig {
   eventEvery?: number;
   /** Set for the daily challenge. */
   daily?: { date: string; mods: DailyModId[]; scene: number };
+  /** Own store: employee wage charged at each nightly settlement. */
+  staffWage?: number;
 }
 
 // ---------------- ranks & levels ----------------
@@ -94,6 +98,9 @@ export interface CareerProfile {
   court: { trials: number; fines: number; acquittals: number };
   /** Story scenes already watched (ids from story.ts). */
   story: string[];
+  /** Your own store (after the main story), or null. */
+  store: OwnStore | null;
+  storeHistory: StoreHistory;
 }
 export function newProfile(): CareerProfile {
   return {
@@ -102,6 +109,7 @@ export function newProfile(): CareerProfile {
     stars: {}, clears: {}, stats: { shifts: 0, wins: 0, served: 0, ejected: 0, karens: 0, revenue: 0 }, endlessBest: 0, title: '',
     achievements: [], daily: { date: '', best: 0, rewarded: false, streak: 0, lastWin: '', wins: 0 },
     court: { trials: 0, fines: 0, acquittals: 0 }, story: [],
+    store: null, storeHistory: { opened: 0, closed: 0, lost: 0, lastReason: '' },
   };
 }
 export function sanitizeProfile(v: unknown): CareerProfile {
@@ -126,6 +134,9 @@ export function sanitizeProfile(v: unknown): CareerProfile {
   const ct = o.court;
   if (ct && typeof ct === 'object') p.court = { trials: int(ct.trials, 0, 1e6, 0), fines: int(ct.fines, 0, 1e9, 0), acquittals: int(ct.acquittals, 0, 1e6, 0) };
   if (Array.isArray(o.story)) p.story = [...new Set(o.story.filter((a): a is string => typeof a === 'string' && /^[a-z0-9-]{1,24}$/.test(a)))].slice(0, 64);
+  const sh = o.storeHistory;
+  if (sh && typeof sh === 'object') p.storeHistory = { opened: int(sh.opened, 0, 1e5, 0), closed: int(sh.closed, 0, 1e5, 0), lost: int(sh.lost, 0, 1e9, 0), lastReason: typeof sh.lastReason === 'string' ? sh.lastReason.slice(0, 40) : '' };
+  p.store = sanitizeStore(o.store, int);
   if (Array.isArray(o.achievements)) p.achievements = [...new Set(o.achievements.filter((a): a is string => typeof a === 'string' && /^[A-Z0-9_]{1,24}$/.test(a)))].slice(0, 64);
   const d = o.daily, isDate = (x: unknown): x is string => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x);
   if (d && typeof d === 'object') {
@@ -476,4 +487,19 @@ function applyDaily(p: CareerProfile, r: ShiftResult): Reward {
   p.wallet += wallet;
   const levels = addExp(p, exp);
   return { stars, exp, wallet, levels, firstClear: false, newBest, daily: { already, streak: p.daily.streak } };
+}
+
+function sanitizeStore(v: unknown, int: (x: unknown, lo: number, hi: number, d: number) => number): OwnStore | null {
+  if (!v || typeof v !== 'object') return null;
+  const o = v as Partial<OwnStore>;
+  const sv = o.save as Partial<StoreSave> | undefined;
+  if (!sv || typeof sv !== 'object' || typeof sv.money !== 'number' || !sv.backstock || !sv.shelves || !sv.upgrades) return null;
+  const wage: WageMode = o.wage === 'kind' || o.wage === 'stingy' ? o.wage : 'fair';
+  const staff = o.staff && typeof o.staff === 'object' ? o.staff : { name: '小陳', mood: 70, quit: false };
+  return {
+    name: typeof o.name === 'string' ? o.name.slice(0, 16) : '我的便利商店',
+    invested: int(o.invested, 0, 1e9, 0), save: { ...(sv as StoreSave), money: int(sv.money, -1e6, 1e9, 0), day: int(sv.day, 1, 1e6, 1), rating: Math.max(0, Math.min(5, Number(sv.rating) || 0)) },
+    days: int(o.days, 0, 1e6, 0), negDays: int(o.negDays, 0, 3, 0), wage, bestDay: int(o.bestDay, -1e6, 1e9, 0), withdrawn: int(o.withdrawn, 0, 1e9, 0),
+    staff: { name: typeof staff.name === 'string' ? staff.name.slice(0, 8) : '小陳', mood: int(staff.mood, 0, 100, 70), quit: staff.quit === true },
+  };
 }

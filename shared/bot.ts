@@ -39,6 +39,8 @@ export class Bot {
   private lastPos = { x: 0, z: 0 };
   private still = 0;
   private direct = 0;
+  /** Movement speed multiplier (an unhappy employee drags their feet). */
+  pace = 1;
   constructor(public role: 'any' | 'cashier' | 'stocker' | 'cleaner' = 'any', private seed = Math.random()) {}
 
   update(s: Snapshot, me: PlayerSnap, dt: number): BotOutput {
@@ -100,7 +102,7 @@ export class Bot {
       this.direct -= dt;
       const dx = pos.x - me.x, dz = pos.z - me.z, d = Math.hypot(dx, dz) || 1;
       const side = Math.sin(performance.now() / 300) * 0.6;
-      const step = WALK_SPEED * dt;
+      const step = WALK_SPEED * dt * this.pace;
       out.x = me.x + (dx / d) * step + (-dz / d) * side * step; out.z = me.z + (dz / d) * step + (dx / d) * side * step;
       out.yaw = Math.atan2(dx, dz);
       if (this.direct <= 0) this.path = findPath(out, pos);
@@ -109,7 +111,7 @@ export class Bot {
     // re-path toward moving targets
     const last = this.path[this.path.length - 1];
     if (!last || Math.hypot(last.x - pos.x, last.z - pos.z) > 1.0 || ++this.stuck > 200) { this.path = findPath(me, pos); this.stuck = 0; }
-    let step = WALK_SPEED * 1.2 * dt;
+    let step = WALK_SPEED * 1.2 * dt * this.pace;
     let x = me.x, z = me.z;
     while (step > 0 && this.path.length) {
       const t = this.path[0];

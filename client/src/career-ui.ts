@@ -6,6 +6,8 @@ import {
   spendSkill,
 } from '../../shared/career.ts';
 import { ACHIEVEMENTS, Achievement } from '../../shared/achievements.ts';
+import { STORE_FUND, STORE_RESERVE, WAGES, WageMode, canOpenStore, closeStore, hireStaff, openStore, staffPace, withdraw } from '../../shared/ownstore.ts';
+import { defaultSave } from '../../shared/sim.ts';
 import { KAREN_INFO } from '../../shared/constants.ts';
 import { esc, show } from './ui.ts';
 
@@ -15,8 +17,8 @@ export function loadProfile(): CareerProfile {
 }
 export function saveProfile(p: CareerProfile) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ignore */ } }
 
-type Tab = 'chapters' | 'skills' | 'gear' | 'achievements' | 'stats';
-export interface CareerHandlers { play(shiftId: string): void; back(): void }
+type Tab = 'chapters' | 'store' | 'skills' | 'gear' | 'achievements' | 'stats';
+export interface CareerHandlers { play(shiftId: string): void; back(): void; enterStore(): void; opened(): void }
 
 const stars = (n: number, max = 3) => '★'.repeat(n) + '<span class="dim">' + '★'.repeat(max - n) + '</span>';
 
@@ -37,18 +39,30 @@ function rankCard(p: CareerProfile) {
 }
 
 export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'chapters') {
-  const tabs: [Tab, string][] = [['chapters', '📖 主線'], ['skills', `🧠 技能${p.skillPoints ? ` (${p.skillPoints})` : ''}`], ['gear', '🧰 裝備'], ['achievements', `🏆 成就 ${p.achievements.length}/${ACHIEVEMENTS.length}`], ['stats', '📊 紀錄']];
+  const tabs: [Tab, string][] = [['chapters', '📖 主線'], ['store', p.store ? `🏪 ${esc(p.store.name)}` : '🏪 我的店'], ['skills', `🧠 技能${p.skillPoints ? ` (${p.skillPoints})` : ''}`], ['gear', '🧰 裝備'], ['achievements', `🏆 成就 ${p.achievements.length}/${ACHIEVEMENTS.length}`], ['stats', '📊 紀錄']];
   show(`
     <div class="card wide career">
       <div class="row" style="align-items:center"><h2 style="flex:1;margin:0">打工人職涯</h2><button class="btn small" id="c-back" style="flex:0">← 主選單</button></div>
       ${rankCard(p)}
       <div class="tabs">${tabs.map(([t, l]) => `<button class="tab ${t === tab ? 'on' : ''}" data-tab="${t}">${l}</button>`).join('')}</div>
-      <div id="c-body">${tab === 'chapters' ? chaptersHtml(p) : tab === 'skills' ? skillsHtml(p) : tab === 'gear' ? gearHtml(p) : tab === 'achievements' ? achievementsHtml(p) : statsHtml(p)}</div>
+      <div id="c-body">${tab === 'chapters' ? chaptersHtml(p) : tab === 'skills' ? skillsHtml(p) : tab === 'gear' ? gearHtml(p) : tab === 'store' ? storeHtml(p) : tab === 'achievements' ? achievementsHtml(p) : statsHtml(p)}</div>
     </div>`);
   document.getElementById('c-back')!.onclick = () => h.back();
   document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(b => { b.onclick = () => careerScreen(p, h, b.dataset.tab as Tab); });
   document.querySelectorAll<HTMLButtonElement>('[data-play]').forEach(b => { b.onclick = () => h.play(b.dataset.play!); });
   document.querySelectorAll<HTMLButtonElement>('[data-skill]').forEach(b => { b.onclick = () => { if (spendSkill(p, b.dataset.skill as SkillTree)) saveProfile(p); careerScreen(p, h, 'skills'); }; });
+  const redraw = () => { saveProfile(p); careerScreen(p, h, 'store'); };
+  const on = (id: string, fn: () => void) => { const el = document.getElementById(id); if (el) el.onclick = fn; };
+  on('st-open', () => {
+    const name = (document.getElementById('st-name') as HTMLInputElement).value;
+    const all = (document.getElementById('st-all') as HTMLInputElement | null)?.checked;
+    if (openStore(p, name, all ? p.wallet : STORE_FUND, defaultSave())) { saveProfile(p); h.opened(); }
+  });
+  on('st-enter', () => h.enterStore());
+  on('st-withdraw', () => { withdraw(p); redraw(); });
+  on('st-hire', () => { hireStaff(p); redraw(); });
+  on('st-close', () => { if (confirm('確定要收掉這家店嗎？剩下的現金會回到存款。')) { closeStore(p); redraw(); } });
+  document.querySelectorAll<HTMLInputElement>('[name="st-wage"]').forEach(r => { r.onchange = () => { if (p.store) { p.store.wage = r.value as WageMode; redraw(); } }; });
   document.querySelectorAll<HTMLButtonElement>('[data-gear]').forEach(b => { b.onclick = () => { if (buyGear(p, b.dataset.gear as GearId)) saveProfile(p); careerScreen(p, h, 'gear'); }; });
 }
 
@@ -91,6 +105,42 @@ function payHtml(r: Reward) {
     ${row('💵 小費（自己的）', pay.tips, 'pos')}${pay.extra ? row('阿芬姐偷塞的退散獎金', pay.extra, 'pos') : ''}
     ${r.court ? row(`⚖ 法院罰款${r.court.fine === 0 ? '（無罪）' : ''}`, -r.court.fine, 'neg') : ''}
   </div>`;
+}
+
+function storeHtml(p: CareerProfile) {
+  const hist = p.storeHistory;
+  const histLine = hist.opened ? `<p class="muted">開過 ${hist.opened} 家店・收掉 ${hist.closed} 家・倒閉賠掉 $${hist.lost}${hist.lastReason ? `（上次：${esc(hist.lastReason)}）` : ''}</p>` : '';
+  const st = p.store;
+  if (!st) {
+    const can = canOpenStore(p);
+    if (!can.ok) return `<div class="chapter locked"><div class="chhead"><b>🏪 自己開店</b></div>
+      <div class="muted story">🔒 ${esc(can.why ?? '')}</div>
+      <p class="muted">開店基金 $${STORE_FUND}。目前存款 $${p.wallet}。開店後要付租金、進貨、員工薪水；連續 3 天打烊時現金為負或口碑見底（≤0.5）就會倒閉，投入的錢全部賠光。</p></div>${histLine}`;
+    return `<div class="chapter daily"><div class="chhead"><b>🏪 自己開店</b><span class="tag ok">存款 $${p.wallet}</span></div>
+      <p>夢想的時刻到了。用存款開一家自己的店——這次換你當老闆。</p>
+      <label class="field">店名<input id="st-name" maxlength="16" placeholder="我的便利商店"></label>
+      <label class="muted"><input type="checkbox" id="st-all"> 投入全部存款（$${p.wallet}）；不勾選只投入開店基金 $${STORE_FUND}</label>
+      <p class="muted">⚠ 有機會倒閉：連續 3 天打烊時現金為負或口碑見底 → 店收掉，投入的錢沒了。</p>
+      <button class="btn primary" id="st-open">開店！</button></div>${histLine}`;
+  }
+  const s = st.save, staff = st.staff;
+  const mood = staff.quit ? '已辭職' : staff.mood >= 70 ? '😄 很有幹勁' : staff.mood >= 40 ? '🙂 普通' : staff.mood >= 20 ? '😒 很不爽' : '😡 快辭職了';
+  return `<div class="chapter daily"><div class="chhead"><b>🏪 ${esc(st.name)}</b><span class="muted">第 ${s.day} 天</span>
+      ${st.negDays ? `<span class="tag" style="background:#c92a2a">⚠ 經營危機 ${st.negDays}/3 天</span>` : ''}</div>
+    <div class="grid2"><div>
+      <div class="stat"><span>店裡現金</span><b>$${s.money}</b></div><div class="stat"><span>口碑</span><b>★ ${s.rating.toFixed(2)}</b></div>
+      <div class="stat"><span>投入資本</span><b>$${st.invested}</b></div></div><div>
+      <div class="stat"><span>最佳單日</span><b>$${st.bestDay}</b></div><div class="stat"><span>已提領</span><b>$${st.withdrawn}</b></div>
+      <div class="stat"><span>員工 ${esc(staff.name)}</span><b>${staff.quit ? '已辭職' : `${mood}（${staff.mood}）`}</b></div></div></div>
+    <h3>怎麼給員工薪水？</h3>
+    <div class="grid2">${(Object.keys(WAGES) as WageMode[]).map(w => `<label class="shopitem"><b><input type="radio" name="st-wage" value="${w}" ${st.wage === w ? 'checked' : ''}> ${WAGES[w].label}</b><span class="muted">${esc(WAGES[w].desc)}</span></label>`).join('')}</div>
+    <p class="muted">員工速度目前 ×${staffPace(staff.mood).toFixed(1)}。薪水在每天打烊結算時從店裡現金扣。</p>
+    <div class="row">
+      <button class="btn primary" id="st-enter">▶ 進店營業</button>
+      <button class="btn" id="st-withdraw" ${s.money > STORE_RESERVE ? '' : 'disabled'}>💰 提領 $${Math.max(0, s.money - STORE_RESERVE)} 到存款</button>
+      ${staff.quit ? `<button class="btn" id="st-hire" ${s.money >= 150 ? '' : 'disabled'}>📋 招募新員工（$150）</button>` : ''}
+      <button class="btn small" id="st-close">收店</button>
+    </div></div>${histLine}`;
 }
 
 function dailyHtml(p: CareerProfile) {

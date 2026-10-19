@@ -1,6 +1,7 @@
 // Balance report: a simulated player at each chapter's expected level/skills/gear plays every shift.
 import { Room } from './shared/room.ts';
 import { Bot, botMessages } from './shared/bot.ts';
+import { shiftPay, payTotal } from './shared/career.ts';
 import { CHAPTERS, buildShiftConfig, buildDailyConfig, dailyPlan, newProfile, starsFor, GEAR_IDS, ENDLESS_ID, ShiftConfig } from './shared/career.ts';
 const SEEDS = Number(process.env.SEEDS ?? 4);
 function profileFor(ch: number, level: number) {
@@ -31,7 +32,8 @@ for (const ch of CHAPTERS) for (const sh of ch.shifts) {
   const wins = rs.filter(r => r.won).length;
   const st = rs.map(r => starsFor(r)).join('');
   const fails = rs.filter(r => !r.won).map(r => r.failReason).join(' / ');
-  console.log(`${sh.id.padEnd(4)} goal ${String(sh.goal).padStart(4)} avg ${avg.toFixed(0).padStart(4)} (${(avg / sh.goal).toFixed(2)}x) win ${wins}/${rs.length} stars ${st} chaos ${rs.map(r => r.chaos).join(',')} ${sh.boss ? 'boss:' + rs.map(r => r.bossDefeated ? 'Y' : 'N').join('') : ''} ${fails}`);
+  const pay = rs.reduce((a, r) => a + payTotal(shiftPay(ch.n, r, starsFor(r))), 0) / rs.length;
+  console.log(`${sh.id.padEnd(4)} goal ${String(sh.goal).padStart(4)} avg ${avg.toFixed(0).padStart(4)} (${(avg / sh.goal).toFixed(2)}x) win ${wins}/${rs.length} pay $${pay.toFixed(0)} stars ${st} chaos ${rs.map(r => r.chaos).join(',')} ${sh.boss ? 'boss:' + rs.map(r => r.bossDefeated ? 'Y' : 'N').join('') : ''} ${fails}`);
 }
 if (!only || only === 'endless') {
   const r = play(ENDLESS_ID, profileFor(7, 30), 1, 900);

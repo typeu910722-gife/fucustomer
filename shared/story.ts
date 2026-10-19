@@ -73,6 +73,18 @@ export const SCENES: Record<string, Scene> = {
     { who: 'fen', text: '去吧。記得開店也會倒閉，別把錢一次花光。還有，下班前記得鎖門。' },
     { who: 'lin', text: '「便利商店打工人勇退奧客之王，自立門戶」——明天頭版就是你。' },
   ] },
+  'store-open': { id: 'store-open', title: '開幕', lines: [
+    { who: 'me', text: '鐵門拉起來的聲音，從來沒有這麼好聽過。這是我的店。' },
+    { who: 'fen', text: '恭喜！記得：現在付薪水的是你。對員工好一點，他們做事才會用心。' },
+    { who: 'lin', text: '開幕快樂！我會寫一篇報導……如果你哪天倒閉，我也會寫。' },
+    { who: 'boss', text: '（打電話來）聽說你開店了？哼，撐不過一個月的。' },
+  ] },
+  'store-bankrupt': { id: 'store-bankrupt', title: '倒閉', lines: [
+    { who: 'me', text: '……鐵門拉下來了。投進去的錢，全部沒了。' },
+    { who: 'lin', text: '「打工人創業夢碎」……抱歉，這是我的工作。但我相信你會再站起來。' },
+    { who: 'fen', text: '我當年也倒過一次。回來打工吧，重新存，下一次會更好。' },
+    { who: 'boss', text: '（打電話來）缺人喔，時薪照舊。扣薪……也照舊。' },
+  ] },
   'first-court': { id: 'first-court', title: '警察來了', lines: [
     { who: 'cop', text: '店員先生／小姐，有人報案說你在店裡動手打人。麻煩跟我們走一趟。' },
     { who: 'fen', text: '別緊張。誠實說明就好。如果遇到「恐龍法官」……你也可以做點不一樣的事。' },
