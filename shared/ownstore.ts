@@ -2,6 +2,7 @@
 // Runs on the business-day loop (rent, stock, upgrades, daily settlement); now you are the boss.
 import { CareerProfile, abilitiesAt, modsFor, ShiftConfig } from './career.ts';
 import type { StoreSave } from './protocol.ts';
+import { getMap } from './maps/index.ts';
 
 /** Savings needed to open a store: roughly 10 late-game shifts of take-home pay. */
 export const STORE_FUND = 2500;
@@ -55,7 +56,7 @@ export function ownStoreConfig(p: CareerProfile, base: ShiftConfig): ShiftConfig
   const st = p.store!;
   return {
     ...base, title: st.name, abilities: abilitiesAt(p.level), mods: modsFor(p),
-    karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'], maxKarens: 2, maxCustomers: 9,
+    karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger', ...(getMap(st.map).karens ?? [])], maxKarens: 2, maxCustomers: 9,
     staffWage: st.staff.quit ? 0 : WAGES[st.wage].pay, map: st.map,
   };
 }

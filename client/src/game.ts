@@ -426,6 +426,13 @@ export class Game {
       if (c.kind === 'streamer') return { label: `請${name}停止拍攝`, primary: 'stopFilm', target: t, point };
       if (c.kind === 'hog') return { label: `請${name}先結帳`, primary: 'checkBag', target: t, point };
       if (c.kind === 'litterer') return { label: `請${name}不要亂丟`, primary: 'stopLitter', target: t, point };
+      if (c.kind === 'custom') return c.state === 'atRegister' ? { label: `對${name}複誦點單`, primary: 'repeatOrder', target: t, point } : { label: name, reason: '他還在挑，到收銀台才會開始改單', target: t, point };
+      if (c.kind === 'fickle') {
+        if (c.state !== 'waitFood') return { label: name, reason: '正走向取餐區', target: t, point };
+        return hands.includes(c.want ?? '') ? { label: `交付${FOOD_INFO.coffee.name}（${c.phase ? '第二杯' : '第一杯'}）`, primary: 'deliver', alt: 'recommend', altLabel: '推薦招牌', target: t, point }
+          : { label: `向${name}推薦招牌`, primary: 'recommend', target: t, point };
+      }
+      if (c.kind === 'tryhard') return c.state === 'tryon' ? { label: `請${name}限試穿 3 件`, primary: 'limitTry', target: t, point } : { label: name, reason: '正走向試衣間', target: t, point };
       if (c.kind === 'charger') {
         const treat = hands.includes('coffee') ? `請他喝${FOOD_INFO.coffee.name}` : undefined;
         return c.state === 'charge'

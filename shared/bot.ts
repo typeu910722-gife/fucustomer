@@ -167,6 +167,9 @@ export class Bot {
       if (k.kind === 'hog') return cust(k, 'checkBag');
       if (k.kind === 'litterer') return cust(k, 'stopLitter');
       if (k.kind === 'charger' && k.state === 'charge') return cust(k, 'unplug');
+      if (k.kind === 'custom' && k.state === 'atRegister') return cust(k, 'repeatOrder');
+      if (k.kind === 'fickle' && k.state === 'waitFood') return cust(k, 'recommend');
+      if (k.kind === 'tryhard' && k.state === 'tryon') return cust(k, 'limitTry');
     }
     const regs = s.upgrades.register2 > 0 ? REGISTERS : [REGISTERS[0]];
     const tasks: Goal[] = [];

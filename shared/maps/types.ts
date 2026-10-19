@@ -60,6 +60,8 @@ export interface MapDef {
   /** Food stations; null = this store sells no prepared food (e.g. a clothes shop). */
   coffee: MapStation | null;
   meal: (MapStation & { /** what the station uses up from the bento stock */ uses: string }) | null;
+  /** Daily-challenge goals are multiplied by this (shops with pricier goods earn more per customer). Default 1. */
+  goalScale?: number;
   /** Share of customers who also want prepared food. */
   foodChance: number;
   /** Where customers wait for their food, and where angry customers complain. */
@@ -72,6 +74,10 @@ export interface MapDef {
   decor: Box[];
   /** Optional queue rope: posts from x0 to x1 at z. */
   rope?: { x0: number; x1: number; z: number };
+  /** Karens that only show up in this kind of store (added to the usual mix in free play, own store and daily). */
+  karens?: import('../constants.ts').KarenKind[];
+  /** Where 試穿狂 stands (in front of a fitting room); needed only if the map uses that karen. */
+  tryOnSpots?: Pt[];
   playerSpawns: Pt[];
   /** Open floor spots where wandering karens stroll to. */
   wander: Pt[];

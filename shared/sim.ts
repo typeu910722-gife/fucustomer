@@ -7,7 +7,7 @@ import {
 } from './constants.ts';
 import {
   CHARGE_SPOT, COFFEE_MACHINE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DOOR_X0, DOOR_X1, ENTRANCE, MICROWAVE, MOP_RACK,
-  PLAYER_SPAWNS, QUEUE_SPOTS, REGISTERS, SHELVES, SPAWN_OUTSIDE, STORE_D, WANDER_SPOTS, CURRENT_MAP, clampToStore, distToAABB, findPath,
+  PLAYER_SPAWNS, QUEUE_SPOTS, REGISTERS, SHELVES, SPAWN_OUTSIDE, STORE_D, WANDER_SPOTS, CURRENT_MAP, TRYON_SPOTS, clampToStore, distToAABB, findPath,
   resolveCollision, shelfBrowseSpots, applyMap,
 } from './map.ts';
 import type {
@@ -37,7 +37,7 @@ export interface PlayerState {
 
 type CState =
   | 'enter' | 'toShelf' | 'browse' | 'toFood' | 'waitFood' | 'queue' | 'toRegister' | 'atRegister'
-  | 'leaving' | 'toComplain' | 'complain' | 'wander' | 'flee' | 'toEat' | 'eat' | 'held' | 'flying' | 'toSummon' | 'summon' | 'toCharge' | 'charge';
+  | 'leaving' | 'toComplain' | 'complain' | 'wander' | 'flee' | 'toEat' | 'eat' | 'held' | 'flying' | 'toSummon' | 'summon' | 'toCharge' | 'charge' | 'toTry' | 'tryon';
 
 export interface Flight { vx: number; vy: number; vz: number; y: number; t: number; thrown: boolean; by: string }
 
@@ -86,7 +86,7 @@ export interface World {
 export function dayConfig(): ShiftConfig {
   return {
     mode: 'day', id: 'day', title: '合作營業日', chapter: 0, length: DAY_OPEN_SECONDS, goal: 0, map: CURRENT_MAP.id,
-    karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], firstKaren: 22, karenEvery: 50, maxKarens: 1,
+    karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', ...(CURRENT_MAP.karens ?? [])], firstKaren: 22, karenEvery: 50, maxKarens: 1,
     spawnEvery: 9, maxCustomers: 6, foods: ['coffee', 'meal'], foodChance: CURRENT_MAP.foodChance, events: ['rush', 'outage'], firstEvent: 70,
     register2: false, abilities: ['grab', 'spin', 'ultimate'],
     start: { money: 200, rating: 3, backstock: { drinks: 24, snacks: 24, bento: 18 }, shelves: { drinks: 8, snacks: 8, bento: 6 } },
@@ -303,6 +303,14 @@ function spawnCustomer(w: World, kind: CustomerKind) {
     c.speed = 1.8; c.life = 80; c.knockTimer = 4;
   } else if (kind === 'charger') {
     c.speed = 1.6; c.life = 75; c.knockTimer = 5;
+  } else if (kind === 'custom') {
+    // shops like everyone else, then holds up the register changing the order
+    c.shopping.push(pick(w, PRODUCTS)); if (w.rng() < 0.5) c.shopping.push(pick(w, PRODUCTS));
+    c.patienceMax = 400; c.life = 40;
+  } else if (kind === 'fickle') {
+    c.want = w.cfg.foods.includes('coffee') ? 'coffee' : w.cfg.foods[0] ?? null; c.patienceMax = 200; c.life = 999;
+  } else if (kind === 'tryhard') {
+    c.speed = 1.7; c.life = 70; c.knockTimer = 6;
   } else if (kind === 'boss') {
     c.speed = 1.9; c.phase = 1; c.patienceMax = 1e9; c.life = 1e9; c.anger = 0;
   }
@@ -333,6 +341,7 @@ function nextStep(w: World, c: Customer) {
   if ((c.kind === 'streamer' || c.kind === 'litterer') && !c.resolved) { c.state = 'wander'; c.speed = c.kind === 'streamer' ? 2.0 : 1.7; setGoal(c, randomWanderSpot(w)); return; }
   if (c.kind === 'hog' && !c.resolved) { goEat(w, c); return; }
   if (c.kind === 'charger' && !c.resolved) { c.state = 'toCharge'; setGoal(c, CHARGE_SPOT); return; }
+  if (c.kind === 'tryhard' && !c.resolved) { c.state = 'toTry'; setGoal(c, pick(w, TRYON_SPOTS)); return; }
   if (c.shopping.length) {
     c.state = 'toShelf';
     setGoal(c, pick(w, shelfBrowseSpots(c.shopping[0])));
@@ -539,11 +548,16 @@ function updateCustomer(w: World, c: Customer, dt: number) {
     case 'toFood': if (arrived) { c.state = 'waitFood'; c.timer = 50 * m.patience; c.patienceMax = c.timer; c.yaw = Math.PI / 2; } break;
     case 'waitFood':
       c.timer -= dt * (w.power < 1 ? 1.3 : 1);
+      if (c.timer <= 0 && c.kind === 'fickle' && !c.resolved) { failKaren(w, c, -0.2, 6, '🧋 改單達人等不到他要的那杯，罵罵咧咧走了'); leave(w, c, true); break; }
       if (c.timer <= 0) { c.foodFailed = true; c.mood -= 35; adjRating(w, -0.06); adjChaos(w, 3); toast(w, `${FOOD_INFO[c.want!].icon} ${FOOD_INFO[c.want!].name}等太久，顧客放棄了`, 'bad'); c.patienceMax = (55 + w.rating * 6) * m.patience; c.patience = c.patienceMax; nextStep(w, c); }
       break;
     case 'queue': case 'toRegister': case 'atRegister':
       if (c.state === 'toRegister' && arrived) { c.state = 'atRegister'; c.yaw = Math.PI; }
       if (c.state === 'atRegister') c.yaw = Math.PI;
+      if (c.kind === 'custom' && !c.resolved && c.state === 'atRegister') {
+        c.life -= dt;
+        if (c.life <= 0) { failKaren(w, c, -0.25, 8, '🍳 客製魔人改到最後說「那我不要了」，整排客人等了個寂寞'); leave(w, c, true); break; }
+      }
       c.patience -= dt * drain;
       if (c.patience <= 0) angryLeave(w, c);
       break;
@@ -619,6 +633,18 @@ function updateCustomer(w: World, c: Customer, dt: number) {
       break;
     }
     case 'toCharge': if (arrived) { c.state = 'charge'; c.yaw = 0; } break;
+    case 'toTry': if (arrived) { c.state = 'tryon'; c.yaw = -Math.PI / 2; } break;
+    case 'tryon':
+      c.life -= dt; c.knockTimer -= dt;
+      if (c.knockTimer <= 0) {
+        // grabs more clothes off the racks and leaves the last pile on the floor
+        c.knockTimer = 6;
+        const stocked = PRODUCTS.filter(p => w.shelves[p] > 0);
+        if (stocked.length) w.shelves[pick(w, stocked)]--;
+        addSpill(w, c.x + (w.rng() - 0.5), c.z + (w.rng() - 0.5)); adjChaos(w, 1);
+      }
+      if (c.life <= 0) { failKaren(w, c, -0.25, 8, '👕 試穿狂試了一整輪，什麼都沒買，衣服丟滿地就走了'); leave(w, c, false); }
+      break;
     case 'charge': {
       // squats at the socket: every few seconds the electricity bill ticks up and the store gets messier
       if (w.power < 1) {
@@ -716,6 +742,7 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
       const id = w.registers[t.idx];
       const cc = id != null ? customer(w, id) : undefined;
       if (!cc || cc.state !== 'atRegister') return { ok: false, reason: '沒有顧客等待結帳' };
+      if (cc.kind === 'custom' && !cc.resolved) return { ok: false, reason: '他還在改單！先對他「複誦點單」' };
       if (p.held && !isFood(p.held)) return { ok: false, reason: '手上有東西' };
       return { ok: true, dur: checkoutTime(w.upgrades.scanner) * m.checkout };
     }
@@ -783,6 +810,16 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
     case 'checkBag':
       if (!c || c.kind !== 'hog' || c.resolved) return { ok: false, reason: '不需要' };
       return { ok: true, dur: 1.0 };
+    case 'repeatOrder':
+      if (!c || c.kind !== 'custom' || c.resolved) return { ok: false, reason: '不需要' };
+      return { ok: true, dur: 1.5 / m.calm };
+    case 'recommend':
+      if (!c || c.kind !== 'fickle' || c.resolved) return { ok: false, reason: '不需要' };
+      return { ok: true, dur: 1.2 / m.calm };
+    case 'limitTry':
+      if (!c || c.kind !== 'tryhard' || c.resolved) return { ok: false, reason: '不需要' };
+      if (c.state !== 'tryon') return { ok: false, reason: '他還沒進試衣間' };
+      return { ok: true, dur: 1.0 / m.calm };
     case 'unplug':
       if (!c || c.kind !== 'charger' || c.resolved) return { ok: false, reason: '不需要' };
       if (c.state !== 'charge') return { ok: false, reason: '他還沒插上插座' };
@@ -846,6 +883,16 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
     case 'heat': giveFood(p, { kind: 'meal' }); ev(w, { e: 'sfx', name: 'brew', x: p.x, z: p.z }); break;
     case 'deliver': {
       if (p.held?.kind === c!.want) { p.held = p.held2; p.held2 = null; } else p.held2 = null;
+      if (c!.kind === 'fickle' && !c!.resolved) {
+        c!.hits++;
+        if (c!.hits < 2) {
+          c!.timer = c!.patienceMax; // wants it again, differently
+          toast(w, `🧋 「啊我要改${['半糖少冰', '微糖去冰', '無糖常溫', '三分糖多冰'][c!.look % 4]}」……再做一杯吧`, 'info');
+          ev(w, { e: 'sfx', name: 'deliver', x: c!.x, z: c!.z });
+          break;
+        }
+        resolveKaren(w, c!, p, 0.12, `🧋 第二杯終於對了！改單達人滿意地去結帳（口碑 +0.12）`);
+      }
       c!.foodDone = true; c!.mood = Math.min(100, c!.mood + 10);
       ev(w, { e: 'sfx', name: 'deliver', x: c!.x, z: c!.z });
       nextStep(w, c!);
@@ -916,6 +963,17 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
     case 'stopLitter':
       resolveKaren(w, c!, p, 0.1, `🗑 ${p.name} 請亂丟客把垃圾帶走（口碑 +0.1）`);
       leave(w, c!, false);
+      break;
+    case 'repeatOrder':
+      resolveKaren(w, c!, p, 0.1, `🍳 ${p.name} 複誦了一遍點單，客製魔人終於點頭了（口碑 +0.1）`);
+      break;
+    case 'recommend':
+      resolveKaren(w, c!, p, 0.05, `🧋 ${p.name} 推薦招牌，改單達人說「好啦就這個」（口碑 +0.05）`);
+      break;
+    case 'limitTry':
+      c!.shopping = [pick(w, PRODUCTS)];
+      resolveKaren(w, c!, p, 0.1, `👕 ${p.name} 請試穿狂限穿 3 件，他挑了一件去結帳（口碑 +0.1）`);
+      nextStep(w, c!);
       break;
     case 'unplug':
       c!.hits++;
@@ -1384,7 +1442,7 @@ export function snapshot(w: World, now: number): Snapshot {
       anger: Math.round(c.anger), resolved: c.resolved, revealed: reveal(c), items: c.items.length,
       want: c.want && !c.foodDone && !c.foodFailed ? c.want : null, look: c.look, moving: c.moving,
       y: c.fly ? r2(c.fly.y) : c.state === 'held' ? 0.25 : 0, held: c.state === 'held', flying: !!c.fly, down: c.downT ? r2(c.downT) : 0,
-      heavy: !!c.heavy, vip: !!c.vip && near4(c), stun: c.stunT ? r2(c.stunT) : 0, violent: c.kind !== 'normal' && !c.resolved && isViolent(w, c), phase: c.kind === 'charger' ? c.hits : c.phase,
+      heavy: !!c.heavy, vip: !!c.vip && near4(c), stun: c.stunT ? r2(c.stunT) : 0, violent: c.kind !== 'normal' && !c.resolved && isViolent(w, c), phase: c.kind === 'charger' || c.kind === 'fickle' ? c.hits : c.phase,
     })),
     spills: w.spills.map(s => ({ id: s.id, x: r2(s.x), z: r2(s.z) })),
     items: w.items.map(i => ({ id: i.id, x: r2(i.x), z: r2(i.z), held: i.held })),

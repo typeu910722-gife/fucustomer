@@ -60,7 +60,7 @@ export const PREP_SECONDS = 60;
 export const CLOSING_MAX_SECONDS = 60;
 export const DAILY_RENT = 60;
 
-export type KarenKind = 'cutter' | 'rager' | 'streamer' | 'hog' | 'litterer' | 'charger' | 'boss';
+export type KarenKind = 'cutter' | 'rager' | 'streamer' | 'hog' | 'litterer' | 'charger' | 'custom' | 'fickle' | 'tryhard' | 'boss';
 export const KAREN_INFO: Record<KarenKind, { name: string; hint: string; how: string }> = {
   cutter: { name: '插隊奧客', hint: '有人插隊！其他顧客耐心快速下降', how: '靠近按互動「請排隊」' },
   rager: { name: '退貨大鬧', hint: '客訴怒氣上升中！滿了會砸店', how: '互動「安撫」（可多人同時），或次要鍵發折價券 $30' },
@@ -68,6 +68,9 @@ export const KAREN_INFO: Record<KarenKind, { name: string; hint: string; how: st
   hog: { name: '偷吃奧客', hint: '有人在貨架偷吃！（監視器可直接看見）', how: '靠近互動「請先結帳」' },
   litterer: { name: '亂丟客', hint: '有人邊走邊亂丟垃圾，髒污越來越多', how: '靠近互動「請勿亂丟」，或直接請出門' },
   charger: { name: '充電霸王', hint: '有人霸佔門口插座充電，電費一直跳、店裡越來越亂', how: '互動「拔插頭」（要拔兩次），或拿咖啡給他「請他喝咖啡」讓他開心離開' },
+  custom: { name: '客製魔人', hint: '到了收銀台還一直改單：不加蛋、換醬、改內用……後面的人都卡住了', how: '靠近互動「複誦點單」讓他確認一次，就能正常結帳' },
+  fickle: { name: '改單達人', hint: '飲料做好了又要改甜度冰塊，一杯接一杯', how: '再做一杯給他（第二杯就收），或互動「推薦招牌」讓他直接決定' },
+  tryhard: { name: '試穿狂', hint: '霸佔試衣間試穿一大堆，衣服丟得到處都是', how: '靠近互動「限試穿 3 件」，他就會挑一件去結帳' },
   boss: { name: '奧客之王', hint: '傳說中的奧客之王駕到！他會分階段鬧事', how: '依階段處理：請排隊→安撫→制止拍攝→清掉小弟→丟出門或全店退散' },
 };
 

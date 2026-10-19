@@ -48,6 +48,6 @@ if (!only || only === 'daily') {
     const cfg = buildDailyConfig(prof, date), plan = dailyPlan(prof, date);
     const rs = Array.from({ length: SEEDS }, (_, i) => play(cfg, prof, i + 1, cfg.length + 60));
     const avg = rs.reduce((a, r) => a + r.revenue, 0) / rs.length;
-    console.log(`daily ${date} ch${plan.difficulty} ${plan.mods.join('+').padEnd(18)} goal ${String(cfg.goal).padStart(4)} avg ${avg.toFixed(0).padStart(4)} (${(avg / cfg.goal).toFixed(2)}x) win ${rs.filter(r => r.won).length}/${rs.length}`);
+    console.log(`daily ${date} ${plan.map.padEnd(11)} ch${plan.difficulty} ${plan.mods.join('+').padEnd(18)} goal ${String(cfg.goal).padStart(4)} avg ${avg.toFixed(0).padStart(4)} (${(avg / cfg.goal).toFixed(2)}x) win ${rs.filter(r => r.won).length}/${rs.length}`);
   }
 }

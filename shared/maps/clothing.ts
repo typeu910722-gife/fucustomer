@@ -20,7 +20,7 @@ export const CLOTHING: MapDef = {
     { idx: 0, x: 16.5, z: 11.4, cashier: { x: 16.5, z: 10.3 }, customer: { x: 16.5, z: 12.5 } },
     { idx: 1, x: 19.2, z: 11.4, cashier: { x: 19.2, z: 10.3 }, customer: { x: 19.2, z: 12.5 } },
   ],
-  coffee: null, meal: null, foodChance: 0,
+  coffee: null, meal: null, foodChance: 0, goalScale: 2.7,
   pickup: { x: 14.2, z: 11.6 }, complaint: { x: 13.2, z: 13.2 },
   outlet: { x: 3.2, z: 16 }, chargeSpot: { x: 3.2, z: 15.2 },
   queue: [
@@ -34,6 +34,8 @@ export const CLOTHING: MapDef = {
     box(23.4, 13.5, 24, 15.5, 1.3, 'plant'),
   ],
   rope: { x0: 18.2, x1: 22.2, z: 13.85 },
+  karens: ['tryhard'],
+  tryOnSpots: [{ x: 3.7, z: 7.4 }, { x: 3.7, z: 9.8 }],
   playerSpawns: [{ x: 18, z: 9.5 }, { x: 12, z: 9.5 }, { x: 5, z: 7 }, { x: 18, z: 6 }, { x: 8, z: 11 }],
   wander: [{ x: 6, z: 10 }, { x: 18, z: 6 }, { x: 11.5, z: 10 }, { x: 12, z: 12 }],
 };

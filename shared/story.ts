@@ -73,6 +73,15 @@ export const SCENES: Record<string, Scene> = {
     { who: 'fen', text: '去吧。記得開店也會倒閉，別把錢一次花光。還有，下班前記得鎖門。' },
     { who: 'lin', text: '「便利商店打工人勇退奧客之王，自立門戶」——明天頭版就是你。' },
   ] },
+  'ch7-intro': { id: 'ch7-intro', title: '第 7 章・轉職之路', lines: [
+    { who: 'fen', text: '別急著開店。早餐店、手搖飲、服飾店、雞排店……每一種店的奧客都不一樣。先去見習。' },
+    { who: 'me', text: '改單、改甜度、試穿一百件……聽起來都很可怕。' },
+    { who: 'lin', text: '我正在做專題「全台奧客圖鑑」，你去哪我就跟去哪。' },
+  ] },
+  'ch7-outro': { id: 'ch7-outro', title: '決定了', lines: [
+    { who: 'me', text: '每種店都走過一輪了。我知道自己想開哪一種店了。' },
+    { who: 'fen', text: '去「我的店」分頁吧。記得：開店會倒閉，員工要照顧，下班要鎖門。' },
+  ] },
   'store-open': { id: 'store-open', title: '開幕', lines: [
     { who: 'me', text: '鐵門拉起來的聲音，從來沒有這麼好聽過。這是我的店。' },
     { who: 'fen', text: '恭喜！記得：現在付薪水的是你。對員工好一點，他們做事才會用心。' },

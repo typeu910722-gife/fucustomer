@@ -90,7 +90,7 @@ function chaptersHtml(p: CareerProfile) {
           const st = p.stars[s.id] ?? 0;
           const ks = s.karens.map(k => KAREN_INFO[k].name).join('、') || '無奧客';
           return `<button class="shiftbtn ${s.id === next ? 'next' : ''}" data-play="${s.id}" ${u.ok ? '' : 'disabled'}>
-            <span class="sid">${s.id}</span><b>${esc(s.title)}</b><span class="stars">${stars(st)}</span>
+            <span class="sid">${s.id}${s.map ? ` ${getMap(s.map).icon}` : ''}</span><b>${esc(s.title)}</b><span class="stars">${stars(st)}</span>
             <small>${s.length} 秒・目標 $${s.goal}・${esc(ks)}</small></button>`;
         }).join('')}</div>` : ''}
       </div>`;

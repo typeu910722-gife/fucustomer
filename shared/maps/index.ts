@@ -4,9 +4,10 @@ import { CONVENIENCE } from './convenience.ts';
 import { BREAKFAST } from './breakfast.ts';
 import { BOBA } from './boba.ts';
 import { CLOTHING } from './clothing.ts';
+import { CHICKEN } from './chicken.ts';
 import type { MapDef } from './types.ts';
 
-export const MAPS: MapDef[] = [CONVENIENCE, BREAKFAST, BOBA, CLOTHING];
+export const MAPS: MapDef[] = [CONVENIENCE, BREAKFAST, BOBA, CLOTHING, CHICKEN];
 export const DEFAULT_MAP = CONVENIENCE.id;
 export function getMap(id: string | undefined): MapDef { return MAPS.find(m => m.id === id) ?? CONVENIENCE; }
 export type { MapDef } from './types.ts';

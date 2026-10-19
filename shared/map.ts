@@ -57,6 +57,7 @@ export let DECOR: AABB[] = [];
 export let PLAYER_SPAWNS: { x: number; z: number }[] = [];
 export let QUEUE_SPOTS: { x: number; z: number }[] = [];
 export let WANDER_SPOTS: { x: number; z: number }[] = [];
+export let TRYON_SPOTS: { x: number; z: number }[] = [];
 export let SOLIDS: AABB[] = [];
 /** Original product names/prices of the default map, so switching back restores them. */
 const BASE_PRODUCTS = JSON.parse(JSON.stringify(PRODUCT_INFO)) as typeof PRODUCT_INFO;
@@ -73,7 +74,7 @@ export function applyMap(id?: string): MapDef {
   COFFEE_PICKUP = { ...m.pickup }; COMPLAINT_SPOT = { ...m.complaint };
   OUTLET = { ...m.outlet }; CHARGE_SPOT = { ...m.chargeSpot };
   DECOR = m.decor.map(d => ({ ...d }));
-  PLAYER_SPAWNS = m.playerSpawns; QUEUE_SPOTS = m.queue; WANDER_SPOTS = m.wander;
+  PLAYER_SPAWNS = m.playerSpawns; QUEUE_SPOTS = m.queue; WANDER_SPOTS = m.wander; TRYON_SPOTS = m.tryOnSpots ?? m.wander;
   SOLIDS = [
     ...WALLS, ...SHELVES.map(s => s.box), COUNTER, ...(m.coffee ? [COFFEE_MACHINE] : []), ...(m.meal ? [MICROWAVE] : []),
     MOP_RACK, ...CRATES.map(c => c.box), ...DECOR,

@@ -22,7 +22,7 @@ export const BOBA: MapDef = {
   ],
   coffee: { food: '手搖茶', station: '搖杯台', verb: '搖一杯', icon: '🧋', price: 12, box: box(10, 3.2, 12, 4.0, 1.0, 'coffee') },
   meal: { food: '熱珍奶', station: '鮮奶加熱機', verb: '煮熱珍奶', icon: '🥛', price: 16, uses: '鮮奶', box: box(14, 3.2, 15.6, 4.0, 1.0, 'microwave') },
-  foodChance: 0.75,
+  foodChance: 0.75, goalScale: 0.85,
   pickup: { x: 18.6, z: 7.6 }, complaint: { x: 9.6, z: 8.2 },
   outlet: { x: 3.2, z: 16 }, chargeSpot: { x: 3.2, z: 15.2 },
   queue: [
@@ -31,6 +31,7 @@ export const BOBA: MapDef = {
     { x: 21.2, z: 12.4 }, { x: 21.2, z: 13.4 },
   ],
   decor: [box(15, 15.2, 20.5, 15.7, 1.1, 'bar'), box(23.4, 13.5, 24, 15.5, 1.3, 'plant')],
+  karens: ['fickle'],
   playerSpawns: [{ x: 12, z: 5.0 }, { x: 16, z: 5.0 }, { x: 10, z: 5.0 }, { x: 18, z: 5.0 }, { x: 8, z: 8 }],
   wander: [{ x: 5, z: 12.5 }, { x: 9, z: 12 }, { x: 18, z: 10 }, { x: 4, z: 8 }],
 };

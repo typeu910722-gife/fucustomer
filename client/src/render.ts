@@ -398,6 +398,9 @@ function baseLook(c: CustomerSnap) {
   if (c.kind === 'boss') return { ...base, shirt: 0x5f3dc4, pants: 0x212529, hair: 0xf4d58d, hairStyle: 1, scale: 1.35, accessory: 1, build: 1.2, height: 1 };
   if (c.kind === 'litterer') return { ...base, shirt: 0x5c940d, accessory: 3 };
   if (c.kind === 'charger') return { ...base, shirt: 0x1098ad, pants: 0x343a40, hairStyle: 3, accessory: 4 };
+  if (c.kind === 'custom') return { ...base, shirt: 0xf59f00, hairStyle: 4, accessory: 1 };
+  if (c.kind === 'fickle') return { ...base, shirt: 0xf783ac, hair: 0x343a40, hairStyle: 5, accessory: 2 };
+  if (c.kind === 'tryhard') return { ...base, shirt: 0x9775fa, pants: 0xe64980, hairStyle: 1, accessory: 0 };
   return base;
 }
 
@@ -903,11 +906,14 @@ export class StoreView {
       else if (c.held || c.flying) { key = c.held ? 'held' : 'fly'; draw = () => textCanvas([{ text: c.held ? '😵 放開我！' : '😱 啊——', size: 50 }], 512, 128, 'rgba(15,16,26,0.7)'); }
       else if (c.kind !== 'normal' && !c.resolved && c.revealed) {
         const tag = (c.violent ? '🤬' : '') + (c.vip ? '💼' : '') + (c.heavy ? '🏋' : '');
-        if (tag && c.kind !== 'rager') { key = 'tag' + c.kind + tag + (c.kind === 'charger' ? Math.round(c.patience * 10) + '' + c.phase : ''); const name = { cutter: '⚠ 插隊！', streamer: '📱 直播亂拍', hog: '❓ 偷吃中', litterer: '🗑 亂丟垃圾', charger: c.phase ? '🔌 又插回去了！' : '🔌 霸佔插座' }[c.kind as string] ?? ''; draw = () => textCanvas([{ text: name, size: 44, color: '#ffe066' }, { text: `${c.vip ? '💼 好像有背景' : ''}${c.vip && c.heavy ? '・' : ''}${c.heavy ? '🏋 抓不動' : ''}`, size: 34, color: '#ffc9c9' }], 512, 170, 'rgba(60,20,40,0.9)'); }
+        if (tag && c.kind !== 'rager') { key = 'tag' + c.kind + tag + (c.kind === 'charger' ? Math.round(c.patience * 10) + '' + c.phase : ''); const name = { cutter: '⚠ 插隊！', streamer: '📱 直播亂拍', hog: '❓ 偷吃中', litterer: '🗑 亂丟垃圾', charger: c.phase ? '🔌 又插回去了！' : '🔌 霸佔插座', custom: '🍳 客製魔人', fickle: '🧋 改單達人', tryhard: '👕 試穿狂' }[c.kind as string] ?? ''; draw = () => textCanvas([{ text: name, size: 44, color: '#ffe066' }, { text: `${c.vip ? '💼 好像有背景' : ''}${c.vip && c.heavy ? '・' : ''}${c.heavy ? '🏋 抓不動' : ''}`, size: 34, color: '#ffc9c9' }], 512, 170, 'rgba(60,20,40,0.9)'); }
         else if (c.kind === 'rager') { const a = c.anger; key = 'r' + Math.round(a / 4) + tag; draw = () => textCanvas([{ text: c.violent ? '🤬 失控！可正當防衛' : '😡 退貨大鬧', size: 46, color: '#ffc9c9' }, ...(c.vip || c.heavy ? [{ text: `${c.vip ? '💼 好像有背景' : ''}${c.vip && c.heavy ? '・' : ''}${c.heavy ? '🏋 抓不動' : ''}`, size: 32, color: '#ffe066' }] : [])], 512, 150, 'rgba(120,10,30,0.88)', { v: a / 100, color: a > 70 ? '#ff3b3b' : '#ffa94d' }); }
         else if (c.kind === 'cutter') { key = 'cut'; draw = () => textCanvas([{ text: '⚠ 插隊！', size: 54, color: '#ffe066' }], 512, 128, 'rgba(120,60,0,0.88)'); }
         else if (c.kind === 'streamer') { key = 'str'; draw = () => textCanvas([{ text: '📱 直播亂拍', size: 50, color: '#d0bfff' }], 512, 128, 'rgba(60,20,120,0.88)'); }
         else if (c.kind === 'hog') { key = 'hog'; draw = () => textCanvas([{ text: '❓ 偷吃中', size: 52, color: '#ffe066' }], 512, 128, 'rgba(60,60,60,0.88)'); }
+        else if (c.kind === 'custom') { key = 'cus' + c.state; draw = () => textCanvas([{ text: c.state === 'atRegister' ? '🍳 我要改單…' : '🍳 客製魔人', size: 48, color: '#ffe066' }], 512, 128, 'rgba(120,70,0,0.9)'); }
+        else if (c.kind === 'fickle') { key = 'fic' + c.phase; draw = () => textCanvas([{ text: c.phase ? '🧋 我要改甜度！' : '🧋 改單達人', size: 48, color: '#fcc2d7' }], 512, 128, 'rgba(110,20,60,0.9)'); }
+        else if (c.kind === 'tryhard') { key = 'try'; draw = () => textCanvas([{ text: '👕 試穿中…', size: 50, color: '#e5dbff' }], 512, 128, 'rgba(60,30,110,0.9)'); }
         else if (c.kind === 'charger') { const v = c.patience; key = 'chg' + Math.round(v * 10) + c.phase; draw = () => textCanvas([{ text: c.phase ? '🔌 又插回去了！' : '🔌 霸佔插座', size: 46, color: '#99e9f2' }], 512, 150, 'rgba(10,60,80,0.9)', { v, color: '#3bc9db' }); }
         else if (c.kind === 'litterer') { key = 'lit'; draw = () => textCanvas([{ text: '🗑 亂丟垃圾', size: 50, color: '#d8f5a2' }], 512, 128, 'rgba(40,70,20,0.88)'); }
       } else if (c.want && (c.state === 'waitFood' || c.state === 'toFood')) {

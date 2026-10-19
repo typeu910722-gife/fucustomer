@@ -36,6 +36,7 @@ export const BREAKFAST: MapDef = {
     box(23.4, 13.5, 24, 15.5, 1.3, 'plant'),
   ],
   rope: { x0: 18.2, x1: 22.2, z: 13.85 },
+  karens: ['custom'],
   playerSpawns: [{ x: 18, z: 9.8 }, { x: 16, z: 9.8 }, { x: 11, z: 9 }, { x: 18, z: 6 }, { x: 9, z: 12 }],
   wander: [{ x: 5.4, z: 9.3 }, { x: 11, z: 9 }, { x: 18, z: 6 }, { x: 10, z: 12.5 }],
 };

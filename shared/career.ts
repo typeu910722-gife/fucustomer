@@ -186,6 +186,8 @@ export function modsFor(p: CareerProfile): ShiftMods {
 export interface ShiftDef {
   id: string; title: string; length: number; goal: number; karens: KarenKind[]; maxKarens?: number; karenEvery?: number; firstKaren?: number;
   foods?: Food[]; events?: ShiftEvent[]; spawnEvery?: number; hints?: string[]; boss?: boolean; expMul?: number;
+  /** Store type (shared/maps); omitted = 便利商店. */
+  map?: string;
 }
 export interface ChapterDef {
   n: number; title: string; place: string; minLevel: number; baseExp: number; story: string; coming?: boolean;
@@ -257,6 +259,18 @@ export const CHAPTERS: ChapterDef[] = [
       S({ id: '6-3', title: '奧客之王', length: 240, goal: 400, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'], maxKarens: 1, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.2, boss: true, expMul: 2, hints: ['奧客之王會分五個階段鬧事，看畫面下方的提示一關一關破！最後把他丟出門或全店退散。'] }),
     ],
   },
+  {
+    n: 7, title: '轉職之路', place: '早餐店・手搖飲・服飾店・雞排店', minLevel: 26, baseExp: 800, register2: true,
+    story: '辭職之後，阿芬姐建議你：開店前，先去不同的店見習。每種店都有它自己的奧客。',
+    shifts: [
+      S({ id: '7-1', title: '晨光早餐', map: 'breakfast', length: 150, goal: 260, karens: ['custom', 'cutter'], foods: ['coffee', 'meal'], spawnEvery: 5.6, hints: ['早餐店的「客製魔人」會在收銀台一直改單：先對他「複誦點單」才能結帳。'] }),
+      S({ id: '7-2', title: '週末早午餐', map: 'breakfast', length: 170, goal: 360, karens: ['custom', 'rager', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 5.2 }),
+      S({ id: '7-3', title: '午後一杯', map: 'boba', length: 150, goal: 285, karens: ['fickle', 'streamer'], foods: ['coffee', 'meal'], spawnEvery: 5.8, hints: ['手搖飲的「改單達人」第一杯一定要改：再做一杯給他，或「推薦招牌」讓他決定。'] }),
+      S({ id: '7-4', title: '下班尖峰', map: 'boba', length: 170, goal: 325, karens: ['fickle', 'cutter', 'charger'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 5.2 }),
+      S({ id: '7-5', title: '週年慶', map: 'clothing', length: 170, goal: 1000, karens: ['tryhard', 'hog', 'rager'], maxKarens: 3, events: ['rush'], spawnEvery: 5.2, hints: ['服飾店的「試穿狂」會霸佔試衣間把衣服丟滿地：請他「限試穿 3 件」。'] }),
+      S({ id: '7-6', title: '宵夜大雞排', map: 'chicken', length: 180, goal: 370, karens: ['custom', 'streamer', 'litterer', 'charger'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage'], spawnEvery: 5.2 }),
+    ],
+  },
 ];
 export function allShifts() { return CHAPTERS.flatMap(c => c.shifts.map(s => ({ ...s, chapter: c.n }))); }
 export function findShift(id: string) {
@@ -316,7 +330,7 @@ export function buildShiftConfig(p: CareerProfile, id: string): ShiftConfig {
       backstock: { drinks: Math.round(24 * stockScale), snacks: Math.round(24 * stockScale), bento: Math.round(18 * stockScale) },
       shelves: { drinks: 8, snacks: 8, bento: 6 },
     },
-    mods: modsFor(p), hints: s.hints ?? [], boss: !!s.boss, bossAt: 40, endless: false,
+    mods: modsFor(p), hints: s.hints ?? [], boss: !!s.boss, bossAt: 40, endless: false, map: s.map,
   };
 }
 
@@ -348,8 +362,10 @@ export function dailyPlan(p: CareerProfile, date: string) {
   const scene = 1 + Math.floor(rng() * CHAPTERS.length);
   // a different kind of store each day
   const map = MAPS[Math.floor(rng() * MAPS.length)].id;
-  const hasCoffee = !!MAPS.find(m => m.id === map)?.coffee;
-  const pool = DAILY_MOD_IDS.filter(m => m !== 'coffee' || hasCoffee);
+  const md = MAPS.find(m => m.id === map);
+  // a 'coffee rush' day only makes sense where drinks are made but are not already most of the orders
+  const coffeeDay = !!md?.coffee && (md?.foodChance ?? 0) < 0.6;
+  const pool = DAILY_MOD_IDS.filter(m => m !== 'coffee' || coffeeDay);
   const first = pool[Math.floor(rng() * pool.length)];
   const mods: DailyModId[] = [first];
   if (rng() < 0.6) {
@@ -379,8 +395,13 @@ export function buildDailyConfig(p: CareerProfile, date: string): ShiftConfig {
     if (m === 'lowstock') for (const k of Object.keys(cfg.start.backstock) as Product[]) cfg.start.backstock[k] = Math.ceil(cfg.start.backstock[k] / 2);
     if (m === 'tips') { cfg.mods = { ...cfg.mods, tips: cfg.mods.tips * 1.6 }; goal *= 1.12; }
   }
+  // store-specific karens only appear in their own store
+  const specific = new Set(MAPS.flatMap(m => m.karens ?? []));
+  cfg.karens = cfg.karens.filter(k => !specific.has(k) || (mapDef.karens ?? []).includes(k));
+  // the store's own karen joins in (unless today is a one-karen-type day)
+  if (!plan.mods.includes('streamers') && !plan.mods.includes('chargers')) cfg.karens = [...new Set([...cfg.karens, ...(mapDef.karens ?? [])])];
   if (!cfg.karens.length) { cfg.karens = ['cutter']; cfg.maxKarens = Math.max(1, cfg.maxKarens); }
-  cfg.goal = Math.round(goal / 5) * 5;
+  cfg.goal = Math.round(goal * (mapDef.goalScale ?? 1) / 5) * 5;
   cfg.hints = [`今日修飾：${plan.mods.map(m => DAILY_MODS[m].name).join('＋')}。每天第一次達標可領獎勵。`];
   cfg.daily = { date, mods: plan.mods, scene: plan.scene };
   return cfg;
