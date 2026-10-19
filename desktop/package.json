@@ -1,0 +1,29 @@
+{
+  "name": "fucustomer-desktop",
+  "productName": "奧客退散 FUCustomer",
+  "version": "0.6.0",
+  "description": "奧客退散 FUCustomer — desktop (Windows / Steam) shell",
+  "main": "main.cjs",
+  "private": true,
+  "author": "yzproject",
+  "scripts": {
+    "copy-web": "node -e \"const fs=require('fs');fs.rmSync('web',{recursive:true,force:true});fs.cpSync('../dist','web',{recursive:true});fs.rmSync('web/sw.js',{force:true})\"",
+    "start": "npm run copy-web && electron .",
+    "dist:win": "npm run copy-web && electron-builder --win zip --x64",
+    "dist:win-installer": "npm run copy-web && electron-builder --win nsis --x64"
+  },
+  "build": {
+    "appId": "tw.yzproject.fucustomer",
+    "productName": "FUCustomer",
+    "directories": { "output": "../release/desktop" },
+    "files": ["main.cjs", "preload.cjs", "steam.cjs", "web/**/*", "package.json"],
+    "asar": true,
+    "win": { "icon": "icon.png", "signAndEditExecutable": false, "artifactName": "FUCustomer-${version}-win-x64.${ext}" },
+    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.0"
+  },
+  "optionalDependencies": {}
+}

@@ -54,6 +54,8 @@ export function detectPlatform(): string {
 export function defaultServerUrl(): string {
   const env = (import.meta as unknown as { env?: Record<string, string> }).env ?? {};
   if (env.VITE_SERVER_URL) return env.VITE_SERVER_URL;
+  // Inside the iOS/Android app the page origin is the app itself, not a game server.
+  if ((window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.()) return 'ws://localhost:8787/ws';
   if (location.protocol === 'http:' || location.protocol === 'https:') {
     if (location.port === '5173') return `ws://${location.hostname}:8787/ws`; // vite dev server
     return `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;

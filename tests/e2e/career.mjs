@@ -31,12 +31,21 @@ const info = await page.evaluate(() => {
   const g = window.__game, room = g.conn.room, w = room.world;
   const me = [...w.players.values()][0];
   g.pos = { x: 12, z: 12.6 }; g.yaw = 0; g.pitch = 0.1; me.x = 12; me.z = 12.6; me.yaw = 0;
+  // keep the aim clean: other shoppers near the door could be picked as the closer target
+  w.customers = w.customers.filter(c => Math.hypot(c.x - 12, c.z - 13) > 3);
   w.customers.push({ id: 9999, kind: 'rager', x: 12, z: 13.6, yaw: 0, state: 'complain', path: [], speed: 0, shopping: [], items: [], want: null, foodDone: false, foodFailed: false, patience: 100, patienceMax: 100, mood: 80, timer: 0, register: -1, anger: 40, resolved: false, hits: 0, eaten: [], eatShelf: null, life: 999, look: 3, angry: false, moving: false, knockTimer: 99, gone: false, heldBy: null, fly: null });
   return { ok: true };
 });
+// the player must actually see the karen (in a received snapshot) before pressing, like a person would
+await page.waitForFunction(() => window.__game.snap.customers.some(c => c.id === 9999), null, { timeout: 20000 });
 await page.waitForTimeout(300);
+await page.evaluate(() => {
+  const g = window.__game; window.__dbg = { sent: [], toasts: [] };
+  const send = g.conn.send.bind(g.conn); g.conn.send = m => { if (m.type !== 'input' && m.type !== 'move') window.__dbg.sent.push(JSON.stringify(m).slice(0, 120)); send(m); };
+  new MutationObserver(() => window.__dbg.toasts.push(document.getElementById('toasts').innerText)).observe(document.getElementById('toasts'), { childList: true, subtree: true });
+});
 await page.keyboard.press('Space'); // grab
-await page.waitForFunction(() => window.__game.snap.players[0].grabbing === 9999, null, { timeout: 20000 });
+await page.waitForFunction(() => window.__game.snap.players[0].grabbing === 9999, null, { timeout: 20000 }).catch(async e => { console.log('grab debug', await page.evaluate(() => { const g = window.__game, k = g.snap.customers.find(c => c.id === 9999); return { yaw: g.yaw, pitch: g.pitch, dbg: JSON.stringify(window.__dbg).slice(0, 200), feed: document.getElementById('feed')?.innerText, held: g.snap.players[0].held, overlay: g.overlay, grabbing: g.snap.players[0].grabbing, pos: g.pos, k, paused: g.conn.room.paused }; })); throw e; });
 await page.screenshot({ path: `${OUT}/grab.png` });
 await page.keyboard.press('Space'); // throw toward the door
 await page.waitForFunction(() => window.__game.snap.dayStats.ejected >= 1, null, { timeout: 20000 });

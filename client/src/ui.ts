@@ -20,6 +20,7 @@ function val(id: string) { return (document.getElementById(id) as HTMLInputEleme
 export interface MainMenuHandlers {
   career(): void;
   solo(fresh: boolean): void; create(continueCoop: boolean): void; join(code: string): void; rejoin(): void; settings(): void;
+  quit?(): void;
   setName(n: string): void;
 }
 
@@ -45,6 +46,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: Sto
       </div>
       <div class="err" id="m-err">${esc(info.error ?? '')}</div>
       <button class="btn small" id="m-settings">⚙ 設定</button>
+      ${h.quit ? '<button class="btn small" id="m-quit">離開遊戲</button>' : ''}
       <div class="muted">伺服器：${esc(info.server)}・平台：${esc(info.platform)}</div>
     </div>`);
   const name = () => { const n = val('m-name').trim(); h.setName(n); return n; };
@@ -57,6 +59,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: Sto
   on('m-code', 'keydown', e => { if ((e as KeyboardEvent).key === 'Enter') document.getElementById('m-join')!.click(); });
   on('m-rejoin', 'click', () => { name(); h.rejoin(); });
   on('m-settings', 'click', () => h.settings());
+  on('m-quit', 'click', () => h.quit?.());
 }
 
 export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay = false) {

@@ -8,3 +8,9 @@ release/
 .env.*
 !.env.example
 FUCustomer-v0.4-site.zip
+desktop/web/
+*.jks
+*.keystore
+*.p12
+*.mobileprovision
+steam_appid.txt

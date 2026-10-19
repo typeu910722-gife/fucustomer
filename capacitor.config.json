@@ -1,0 +1,12 @@
+{
+  "appId": "tw.yzproject.fucustomer",
+  "appName": "奧客退散",
+  "webDir": "dist",
+  "backgroundColor": "#141821",
+  "android": { "allowMixedContent": false, "captureInput": true, "webContentsDebuggingEnabled": false },
+  "ios": { "contentInset": "never", "scrollEnabled": false },
+  "plugins": {
+    "SplashScreen": { "launchShowDuration": 1200, "launchAutoHide": true, "backgroundColor": "#141821", "showSpinner": false },
+    "StatusBar": { "overlaysWebView": true }
+  }
+}

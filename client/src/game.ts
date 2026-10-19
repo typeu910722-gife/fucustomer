@@ -16,6 +16,7 @@ import type { GameConnection, NetStatus } from './net.ts';
 import { StoreView } from './render.ts';
 import { Settings, saveCoopSave, saveLastSession, saveSettings, saveSoloSave } from './storage.ts';
 import * as UI from './ui.ts';
+import { desktop } from './platform.ts';
 
 type Overlay = 'none' | 'pause' | 'shop' | 'quick' | 'summary' | 'settings' | 'help';
 
@@ -95,6 +96,16 @@ export class Game {
     if (!this.touch && this.started && !this.input.locked && this.overlay === 'none' && !this.input.usingGamepad) this.openOverlay('pause');
   };
 
+  /** Android back button: open the pause menu, or step back out of a menu. */
+  back() {
+    if (!this.started) return;
+    if (this.overlay === 'none') this.openOverlay('pause');
+    else if (this.overlay === 'settings' || this.overlay === 'help') this.openOverlay('pause');
+    else if (this.overlay !== 'summary') this.closeOverlay();
+  }
+  /** App sent to the background: show the pause menu so play doesn't resume by surprise. */
+  appPaused() { if (this.started && this.overlay === 'none') this.openOverlay('pause'); }
+
   send(m: ClientMsg) { this.conn.send(m); }
 
   // ---------------- network ----------------
@@ -102,6 +113,7 @@ export class Game {
     switch (m.type) {
       case 'welcome':
         this.selfId = m.playerId; this.code = m.code;
+        if (!m.solo) desktop?.setPresence(m.code);
         if (!m.solo && 'url' in this.conn) {
           saveLastSession({ code: m.code, token: m.token, name: this.settings.name, url: (this.conn as unknown as { url: string }).url, at: Date.now() });
         }
@@ -681,6 +693,7 @@ export class Game {
   exit(reason?: string) {
     if (this.destroyed) return;
     this.destroyed = true;
+    desktop?.setPresence(null);
     cancelAnimationFrame(this.raf);
     window.removeEventListener('resize', this.onResize);
     document.removeEventListener('visibilitychange', this.onVis);

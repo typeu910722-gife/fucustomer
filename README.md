@@ -3,7 +3,8 @@
 第一人稱便利商店經營＋奧客事件處理。單人職涯模式：從試用期工讀生升到「終極打工人」（30 級、6 章主線）；另有自由營業與最多 5 人合作（測試中）。
 
 > **目前狀態（誠實標示）**：可在瀏覽器（電腦／手機）遊玩的單人與多人連線版本已完成並通過自動化測試。
-> **iOS／Android／Steam(Windows) 原生建置尚未產出**，見 [docs/ISSUES.md](docs/ISSUES.md)。
+> 已能建出 **Android 除錯版 APK** 與 **Windows 免安裝 zip**（Electron），iOS 專案已產生但需 Mac＋Xcode 建置。
+> **都還沒在實機上試玩、也沒有上架任何商店**。建置步驟、需要申請的帳號與費用見 [docs/PLATFORMS.md](docs/PLATFORMS.md)。
 
 ## 快速開始
 
@@ -22,8 +23,8 @@ npm start              # http://localhost:8787 （同時提供網頁與 WebSocke
 | 用戶端 | TypeScript + Three.js | 同一份程式跑在電腦、手機與桌面殼；此開發環境可直接以瀏覽器自動化實測 |
 | 連線 | 專用權威伺服器（Node + WebSocket） | 玩家不需設定路由器、跨網路與跨平台同房；交易在伺服器驗證 |
 | 單人 | 同一份 `Room`/模擬在瀏覽器內執行 | 單人與多人共用規則，單人可暫停 |
-| iOS / Android | Capacitor 原生殼（規劃中） | 直接包裝現有用戶端，連同一台伺服器 |
-| Steam (Windows) | Electron（規劃中）＋ steamworks.js | Steam 邀請轉成房間碼加入，手機用同一組碼 |
+| iOS / Android | Capacitor 7 原生殼（`android/`、`ios/`） | 直接包裝現有用戶端，連同一台伺服器 |
+| Steam (Windows) | Electron（`desktop/`）＋ steamworks.js（預留） | Steam 邀請轉成房間碼加入，手機用同一組碼 |
 
 ## 專案結構
 
@@ -37,7 +38,11 @@ shared/     遊戲規則（純邏輯，伺服器與用戶端共用）
 server/     專用伺服器（房間碼、心跳、限流、檢查點寫檔、SIGTERM 安全關閉）
 client/     Three.js 第一人稱用戶端（鍵鼠、手把、多點觸控、小地圖、HUD、選單、音效）
 tests/      sim.test.ts（規則）、net.test.ts（真實伺服器＋多個 WebSocket 客戶端）、e2e/（瀏覽器）
-docs/       伺服器設定、實測紀錄、剩餘問題
+docs/       伺服器設定、各平台建置、商店文字、隱私權政策、實測紀錄、剩餘問題
+android/ ios/  Capacitor 原生專案
+desktop/    Electron 桌面殼（Windows／Steam）
+store/      商店圖示、橫幅、截圖與產生腳本
+assets/     Capacitor 圖示／啟動畫面原始檔
 ```
 
 ## 測試

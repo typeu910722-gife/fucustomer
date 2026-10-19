@@ -5,9 +5,10 @@
 | 項目 | 需要什麼 | 影響 |
 |---|---|---|
 | 公開遊戲伺服器 | 選定主機商並建立帳號、網域（見 docs/SERVER.md 費用比較） | 不同網路連線、手機/Steam 正式連線無法實測 |
-| iOS 建置 | macOS + Xcode、Apple Developer Program 帳號（年費）、iPhone 實機 | 雲端容器是 Linux，無法產出 iOS 安裝檔 |
-| Android 簽章與上架 | Google Play Console 帳號、簽章金鑰（不可放進 repo） | 可先產出未簽章/除錯 APK 供測試 |
-| Steam | Steamworks 合作夥伴帳號、App ID、Steamworks SDK | Steam 邀請與 Steam 帳號整合 |
+| iOS 建置 | macOS + Xcode、Apple Developer Program 帳號（年費）、iPhone 實機 | `ios/` 專案已備好；雲端容器是 Linux，無法產出 iOS 安裝檔 |
+| Android 簽章與上架 | Google Play Console 帳號、簽章金鑰（不可放進 repo） | 除錯 APK 已可建出（`npm run android:debug`），尚未在手機上安裝測試 |
+| Steam | Steamworks 合作夥伴帳號、App ID | Windows zip 已可建出；成就／邀請程式碼已預留（`desktop/steam.cjs`），需 App ID 才能啟用與測試 |
+| 隱私權政策網址 | 一個公開網址放 docs/PRIVACY.md 的內容、聯絡信箱 | Google Play／App Store 上架必填 |
 | 實機 | Android 手機、iPhone、Windows 電腦 | 跨平台實機測試 |
 
 ## 已知限制（會在後續輪次處理）

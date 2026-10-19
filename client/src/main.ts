@@ -10,6 +10,8 @@ import * as UI from './ui.ts';
 import { careerScreen, loadProfile, resultScreen, saveProfile } from './career-ui.ts';
 import { ENDLESS_ID, applyResult, buildShiftConfig, endlessUnlocked, shiftUnlocked } from '../../shared/career.ts';
 import type { ShiftResult } from '../../shared/career.ts';
+import { unlockedAchievements } from '../../shared/achievements.ts';
+import { desktop, initPlatform, isApp, onAppPause, onBack, quitApp, reportAchievements } from './platform.ts';
 
 let settings = loadSettings();
 const platform = detectPlatform();
@@ -28,6 +30,7 @@ function freshCanvas() {
 }
 
 let current: Game | null = null;
+let screenDepth = 0; // 0 = main menu; anything else = a sub screen (Android back button returns to the menu)
 
 function startGame(make: () => GameConnection, onDone?: (reason?: string, result?: ShiftResult | null) => void) {
   audio.unlock();
@@ -57,6 +60,7 @@ async function online(url: string, intent: Intent) {
 
 // ---------------- career (single-player main story) ----------------
 function career() {
+  screenDepth = 1;
   const p = loadProfile();
   careerScreen(p, { back: () => menu(), play: id => playShift(id) });
 }
@@ -70,11 +74,13 @@ function playShift(id: string) {
     const prof = loadProfile();
     const reward = applyResult(prof, result);
     saveProfile(prof);
+    reportAchievements(unlockedAchievements(prof, result));
     resultScreen(result, reward, prof, { retry: () => playShift(id), next: n => (n ? playShift(n) : career()), career });
   });
 }
 
 function menu(error?: string) {
+  screenDepth = 0;
   const last = loadLastSession();
   const canRejoin = last && Date.now() - last.at < 125_000 ? last.code : null;
   UI.mainMenu(settings, {
@@ -91,7 +97,8 @@ function menu(error?: string) {
       const l = loadLastSession(); if (!l) return menu();
       online(l.url, { kind: 'join', code: l.code, name: playerName(), token: l.token });
     },
-    settings: () => UI.settingsMenu(settings, s => { settings = s; saveSettings(s); audio.setVolume(s.volume); audio.setMusicVolume(s.music); menu(); }),
+    quit: isApp ? () => quitApp() : undefined,
+    settings: () => { screenDepth = 1; return UI.settingsMenu(settings, s => { settings = s; saveSettings(s); audio.setVolume(s.volume); audio.setMusicVolume(s.music); menu(); }); },
   }, { soloSave: loadSoloSave(), coopSave: loadCoopSave(), canRejoin, server: serverUrl(), platform, error });
 }
 
@@ -108,7 +115,19 @@ window.addEventListener('pointerdown', () => audio.unlock(), { once: true });
 window.addEventListener('keydown', () => audio.unlock(), { once: true });
 
 // Offline support: cache the game files so solo play opens without a connection (web only).
-const isApp = !!(window as unknown as { Capacitor?: unknown }).Capacitor || navigator.userAgent.includes('Electron');
 if ('serviceWorker' in navigator && !isApp && (location.protocol === 'https:' || location.hostname === 'localhost')) {
   window.addEventListener('load', () => { navigator.serviceWorker.register('./sw.js').catch(() => { /* optional */ }); });
 }
+
+// Native shells: back button, background pause, Steam "join game" → room code.
+void initPlatform();
+onBack(() => {
+  if (current) { current.back(); return; }
+  if (screenDepth === 0) quitApp(); else menu();
+});
+onAppPause(() => current?.appPaused());
+desktop?.onJoinRequest(code => {
+  if (current || !/^[A-Z0-9]{5}$/i.test(code)) return;
+  online(serverUrl(), { kind: 'join', code: code.toUpperCase(), name: playerName() });
+});
+if (isApp) reportAchievements(unlockedAchievements(loadProfile()));

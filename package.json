@@ -1,6 +1,6 @@
 {
   "name": "fucustomer",
-  "version": "0.1.0",
+  "version": "0.6.0",
   "private": true,
   "description": "奧客退散 FUCustomer — first-person co-op store management (1-5 players)",
   "type": "module",
@@ -12,17 +12,30 @@
     "build": "npm run build:client && npm run build:server",
     "start": "node dist-server/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/sim.test.ts tests/career.test.ts",
+    "test": "node --import tsx --test tests/sim.test.ts tests/career.test.ts tests/achievements.test.ts",
     "test:net": "node --import tsx --test --test-concurrency=1 tests/net.test.ts",
     "test:e2e": "node tests/e2e/solo-smoke.mjs && node tests/e2e/multi-browser.mjs && node tests/e2e/career.mjs && node tests/e2e/round3.mjs && node tests/e2e/offline.mjs",
     "test:all": "npm run typecheck && npm test && npm run test:net",
-    "balance": "tsx scripts-balance.ts"
+    "balance": "tsx scripts-balance.ts",
+    "cap:sync": "npm run build:client && cap sync",
+    "android:debug": "npm run cap:sync && cd android && ./gradlew assembleDebug",
+    "desktop:win": "npm run build:client && cd desktop && npm install && npm run dist:win",
+    "store:assets": "node store/src/make.mjs",
+    "store:screens": "node store/src/screens.mjs"
   },
   "dependencies": {
+    "@capacitor/app": "^7.1.2",
+    "@capacitor/core": "^7.6.9",
+    "@capacitor/screen-orientation": "^7.0.4",
+    "@capacitor/splash-screen": "^7.0.5",
+    "@capacitor/status-bar": "^7.0.6",
     "three": "^0.186.1",
     "ws": "^8.22.0"
   },
   "devDependencies": {
+    "@capacitor/android": "^7.6.9",
+    "@capacitor/cli": "^7.6.9",
+    "@capacitor/ios": "^7.6.9",
     "@types/node": "^26.6.5",
     "@types/three": "^0.186.0",
     "@types/ws": "^8.18.2",

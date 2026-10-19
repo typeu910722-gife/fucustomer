@@ -1,0 +1,27 @@
+<g id="fg">
+  <!-- store front -->
+  <rect x="262" y="330" width="500" height="420" rx="28" fill="#fffaf0"/>
+  <rect x="262" y="330" width="500" height="70" fill="#2b8a3e"/>
+  <rect x="262" y="400" width="500" height="22" fill="#ffd43b"/>
+  <g fill="#ffffff"><rect x="300" y="350" width="60" height="30" rx="6"/><rect x="390" y="350" width="60" height="30" rx="6"/><rect x="480" y="350" width="60" height="30" rx="6"/><rect x="570" y="350" width="60" height="30" rx="6"/><rect x="660" y="350" width="60" height="30" rx="6"/></g>
+  <!-- door, open -->
+  <rect x="420" y="500" width="184" height="250" fill="#1c2a3a"/>
+  <rect x="420" y="500" width="184" height="250" fill="none" stroke="#adb5bd" stroke-width="10"/>
+  <polygon points="604,500 690,470 690,780 604,750" fill="#a5d8ff" stroke="#adb5bd" stroke-width="8"/>
+  <!-- shelves in windows -->
+  <rect x="290" y="460" width="104" height="150" rx="10" fill="#d0ebff"/>
+  <g fill="#ff8787"><rect x="302" y="480" width="18" height="30"/><rect x="326" y="484" width="18" height="26"/><rect x="350" y="478" width="18" height="32"/></g>
+  <g fill="#69db7c"><rect x="302" y="540" width="18" height="30"/><rect x="326" y="536" width="18" height="34"/><rect x="350" y="542" width="18" height="28"/></g>
+  <!-- the karen flying out the door -->
+  <g transform="translate(560 640) rotate(-24)">
+    <path d="M-150 -20 h-120 M-150 30 h-150 M-150 80 h-110" stroke="#ffffff" stroke-width="18" stroke-linecap="round" opacity=".85"/>
+    <rect x="-70" y="-10" width="150" height="150" rx="44" fill="#e64980"/>
+    <circle cx="5" cy="-90" r="92" fill="#ffd8a8"/>
+    <path d="M-95 -120 q100 -110 200 0 q-20 -60 -100 -64 q-80 4 -100 64z" fill="#f08c00"/>
+    <path d="M-55 -112 l40 18 M65 -112 l-40 18" stroke="#212529" stroke-width="14" stroke-linecap="round"/>
+    <circle cx="-30" cy="-80" r="11" fill="#212529"/><circle cx="40" cy="-80" r="11" fill="#212529"/>
+    <ellipse cx="5" cy="-38" rx="30" ry="22" fill="#c92a2a"/>
+    <rect x="70" y="0" width="90" height="34" rx="17" fill="#e64980" transform="rotate(-30 70 17)"/>
+    <rect x="-150" y="20" width="90" height="34" rx="17" fill="#e64980" transform="rotate(25 -60 37)"/>
+  </g>
+</g>
