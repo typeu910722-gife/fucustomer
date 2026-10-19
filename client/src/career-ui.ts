@@ -2,6 +2,7 @@
 import {
   ABILITY_INFO, ABILITY_LEVEL, Ability, CHAPTERS, CareerProfile, GEAR, GEAR_IDS, GEAR_MAX, GearId, MAX_LEVEL, RANKS, Reward, SKILLS,
   SKILL_MAX, ShiftResult, SkillTree, buyGear, chapterUnlocked, expToNext, findShift, gearPrice, rankOf, sanitizeProfile, shiftUnlocked,
+  ENDLESS_ID, endlessUnlocked,
   spendSkill,
 } from '../../shared/career.ts';
 import { KAREN_INFO } from '../../shared/constants.ts';
@@ -54,6 +55,11 @@ function chaptersHtml(p: CareerProfile) {
   // the first playable, not-yet-cleared shift is highlighted as "next"
   let next = '';
   for (const c of CHAPTERS) for (const s of c.shifts) if (!next && !p.stars[s.id] && shiftUnlocked(p, s.id).ok) next = s.id;
+  const endless = endlessUnlocked(p)
+    ? `<div class="chapter endless"><div class="chhead"><b>🌙 無限夜班</b><span class="muted">通關後的挑戰模式</span><span class="tag ok">最高分 ${p.endlessBest}</span></div>
+        <div class="muted story">客人和奧客越來越多，撐越久分數越高。隨時可以從選單「下班結算」。</div>
+        <button class="btn primary" data-play="${ENDLESS_ID}">開始無限夜班</button></div>`
+    : `<div class="chapter locked"><div class="chhead"><b>🌙 無限夜班</b></div><div class="muted story">🔒 擊敗第 6 章「奧客之王」後解鎖</div></div>`;
   return CHAPTERS.map(c => {
     const open = chapterUnlocked(p, c.n);
     const got = c.shifts.reduce((n, s) => n + (p.stars[s.id] ?? 0), 0);
@@ -70,7 +76,7 @@ function chaptersHtml(p: CareerProfile) {
             <small>${s.length} 秒・目標 $${s.goal}・${esc(ks)}</small></button>`;
         }).join('')}</div>` : ''}
       </div>`;
-  }).join('');
+  }).join('') + endless;
 }
 
 function skillsHtml(p: CareerProfile) {
@@ -106,6 +112,7 @@ function statsHtml(p: CareerProfile) {
 }
 
 export function resultScreen(r: ShiftResult, reward: Reward, p: CareerProfile, h: { retry(): void; next(id: string | null): void; career(): void }) {
+  if (r.shiftId === ENDLESS_ID) return endlessResult(r, reward, p, h);
   const f = findShift(r.shiftId)!;
   const idx = f.chapter.shifts.findIndex(s => s.id === r.shiftId);
   let nextId: string | null = f.chapter.shifts[idx + 1]?.id ?? CHAPTERS.find(c => c.n === f.chapter.n + 1)?.shifts[0]?.id ?? null;
@@ -145,4 +152,26 @@ export function resultScreen(r: ShiftResult, reward: Reward, p: CareerProfile, h
   document.getElementById('r-retry')!.onclick = () => h.retry();
   document.getElementById('r-career')!.onclick = () => h.career();
   const nb = document.getElementById('r-next'); if (nb) nb.onclick = () => h.next(nextId);
+}
+
+function endlessResult(r: ShiftResult, reward: Reward, p: CareerProfile, h: { retry(): void; career(): void }) {
+  const lvl = reward.levels.length ? `<div class="levelup">🎉 升級！Lv.${reward.levels[reward.levels.length - 1]}「${rankOf(reward.levels[reward.levels.length - 1])}」</div>` : '';
+  show(`
+    <div class="card wide result won">
+      <div class="muted">🌙 無限夜班</div>
+      <h1 class="title">${reward.newBest ? '新紀錄！' : '下班了'}</h1>
+      <div class="bigstars">${[1, 2, 3].map(i => `<span class="${i <= reward.stars ? 'on' : ''}" style="animation-delay:${i * 0.25}s">★</span>`).join('')}</div>
+      <div class="reward" style="font-size:34px">分數 ${r.score ?? 0}</div>
+      <p class="muted" style="text-align:center">${esc(r.failReason)}・最高分 ${p.endlessBest}</p>
+      <div class="grid2">
+        <div><div class="stat"><span>營業額</span><b>$${r.revenue}</b></div><div class="stat"><span>服務顧客</span><b>${r.served}</b></div></div>
+        <div><div class="stat"><span>請出門 / 最高連送</span><b>${r.ejected} / ${r.maxCombo}</b></div><div class="stat"><span>處理奧客</span><b>${r.karensResolved}</b></div></div>
+      </div>
+      <div class="reward">EXP +${reward.exp}　💰 +${reward.wallet}</div>
+      ${lvl}
+      <p class="muted" style="text-align:center">★1 800 分・★2 1600 分・★3 3000 分</p>
+      <div class="row"><button class="btn primary" id="r-retry">🔁 再來一夜</button><button class="btn" id="r-career">回職涯</button></div>
+    </div>`);
+  document.getElementById('r-retry')!.onclick = () => h.retry();
+  document.getElementById('r-career')!.onclick = () => h.career();
 }

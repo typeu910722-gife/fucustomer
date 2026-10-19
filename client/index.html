@@ -83,7 +83,7 @@
     @keyframes fadein { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; } }
     #feed { position: absolute; left: calc(10px + var(--safe-l)); top: calc(150px + var(--safe-t)); width: 240px; display: flex; flex-direction: column; gap: 4px; }
     .feedline { background: rgba(15,16,26,.7); padding: 4px 8px; border-radius: 8px; font-size: 13px; }
-    #alert { position: absolute; left: 50%; bottom: calc(110px + var(--safe-b)); transform: translateX(-50%); background: rgba(120,20,20,.85); border: 2px solid #ff8787; padding: 8px 16px; border-radius: 12px; font-weight: 800; text-align: center; max-width: 80vw; }
+    #alert { position: absolute; left: 50%; bottom: calc(124px + var(--safe-b)); transform: translateX(-50%); background: rgba(120,20,20,.85); border: 2px solid #ff8787; padding: 8px 16px; border-radius: 12px; font-weight: 800; text-align: center; max-width: 80vw; }
     #netstatus { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); background: rgba(0,0,0,.8); padding: 14px 22px; border-radius: 12px; font-weight: 800; font-size: 18px; text-align: center; }
     #phasebanner { position: absolute; left: 50%; bottom: calc(24px + var(--safe-b)); transform: translateX(-50%); display: flex; gap: 8px; pointer-events: auto; }
     #fps { position: absolute; right: 6px; bottom: 4px; font-size: 11px; color: #aaa; }
@@ -125,7 +125,7 @@
     #stamina { position: absolute; left: 50%; bottom: calc(52px + var(--safe-b)); transform: translateX(-50%); width: 160px; height: 5px; background: rgba(255,255,255,.15); border-radius: 3px; overflow: hidden; }
     #stamina > i { display: block; height: 100%; width: 100%; background: #69db7c; }
     #combo { position: absolute; right: 18%; top: 34%; font-size: 40px; font-weight: 900; color: #ffd43b; text-shadow: 0 3px 0 #c92a2a, 0 0 18px rgba(255,146,43,.8); transform: rotate(-6deg); }
-    #hintbar { position: absolute; left: 50%; bottom: calc(150px + var(--safe-b)); transform: translateX(-50%); max-width: min(620px, 80vw); background: rgba(25,113,194,.88); border-radius: 12px; padding: 8px 14px; font-weight: 700; font-size: 15px; text-align: center; }
+    #hintbar { position: absolute; left: 50%; bottom: calc(196px + var(--safe-b)); transform: translateX(-50%); max-width: min(620px, 80vw); background: rgba(25,113,194,.88); border-radius: 12px; padding: 8px 14px; font-weight: 700; font-size: 15px; text-align: center; }
     #eventstrip { position: absolute; left: 50%; top: calc(132px + var(--safe-t)); transform: translateX(-50%); background: rgba(230,119,0,.9); padding: 4px 14px; border-radius: 99px; font-weight: 800; }
     #flash { position: fixed; inset: 0; pointer-events: none; z-index: 11; opacity: 0; background: #fff3bf; transition: opacity .15s; }
     #flash.red { background: #ff6b6b; }
@@ -155,6 +155,7 @@
     .tab.on { background: var(--accent); border-color: transparent; }
     .chapter { border: 1px solid var(--line); border-radius: 14px; padding: 10px 12px; margin: 10px 0; background: rgba(255,255,255,.03); }
     .chapter.locked { opacity: .55; }
+    .chapter.endless { border-color: #845ef7; background: linear-gradient(135deg, rgba(132,94,247,.18), rgba(255,255,255,.02)); }
     .chhead { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
     .story { margin: 4px 0 8px; }
     .shifts { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }

@@ -1,7 +1,7 @@
 // Authoritative game simulation. Runs on the dedicated server for multiplayer and inside the
 // browser for solo/career play. All transactions (money, stock, items, karen outcomes) happen here.
 import {
-  BOX_SIZE, BURST_MAX, CHAOS_MAX, CLOSE_MINUTE, CLOSING_MAX_SECONDS, COFFEE_PRICE, DAILY_RENT, DAY_OPEN_SECONDS, KAREN_INFO,
+  BOSS_PHASES, BOX_SIZE, BURST_MAX, CHAOS_MAX, CLOSE_MINUTE, CLOSING_MAX_SECONDS, COFFEE_PRICE, DAILY_RENT, DAY_OPEN_SECONDS, KAREN_INFO,
   KarenKind, MEAL_PRICE, OPEN_MINUTE, PREP_SECONDS, PRODUCTS, PRODUCT_INFO, Product, RUN_SPEED, SERVER_INTERACT_RANGE,
   UPGRADES, UPGRADE_IDS, UpgradeId, brewTime, checkoutTime, heatTime, shelfCapacity,
 } from './constants.ts';
@@ -37,7 +37,7 @@ export interface PlayerState {
 
 type CState =
   | 'enter' | 'toShelf' | 'browse' | 'toFood' | 'waitFood' | 'queue' | 'toRegister' | 'atRegister'
-  | 'leaving' | 'toComplain' | 'complain' | 'wander' | 'flee' | 'toEat' | 'eat' | 'held' | 'flying';
+  | 'leaving' | 'toComplain' | 'complain' | 'wander' | 'flee' | 'toEat' | 'eat' | 'held' | 'flying' | 'toSummon' | 'summon';
 
 export interface Flight { vx: number; vy: number; vz: number; y: number; t: number; thrown: boolean; by: string }
 
@@ -49,6 +49,7 @@ export interface Customer {
   resolved: boolean; hits: number; eaten: Product[]; eatShelf: Product | null; life: number; look: number;
   angry: boolean; moving: boolean; knockTimer: number; gone: boolean;
   heldBy: string | null; fly: Flight | null;
+  phase: number; minions: number[];
 }
 
 export interface World {
@@ -67,6 +68,7 @@ export interface World {
   chaos: number; chaosTimer: number; burst: number; combo: number; comboUntil: number;
   power: number; event: { kind: 'rush' | 'outage'; left: number; pulse: number } | null; nextEvent: number;
   guardTimer: number; hintQueue: { at: number; text: string }[]; result: ShiftResult | null;
+  bossSpawned: boolean; bossDefeated: boolean; bossTimer: number; rampTimer: number; openTime: number;
 }
 
 /** Default multiplayer "business day" configuration: every mechanic enabled. */
@@ -77,7 +79,7 @@ export function dayConfig(): ShiftConfig {
     spawnEvery: 9, maxCustomers: 6, foods: ['coffee', 'meal'], foodChance: 0.35, events: ['rush', 'outage'], firstEvent: 70,
     register2: false, abilities: ['grab', 'spin', 'ultimate'],
     start: { money: 200, rating: 3, backstock: { drinks: 24, snacks: 24, bento: 18 }, shelves: { drinks: 8, snacks: 8, bento: 6 } },
-    mods: { ...BASE_MODS }, hints: [],
+    mods: { ...BASE_MODS }, hints: [], boss: false, bossAt: 0, endless: false,
   };
 }
 
@@ -129,7 +131,10 @@ export function createWorld(save: StoreSave = defaultSave(), seed = Date.now(), 
     emptyShelfToastAt: -99, saveOut: null, difficultyPlayers: 1,
     chaos: 0, chaosTimer: 0, burst: 0, combo: 0, comboUntil: 0, power: 1, event: null, nextEvent: cfg.firstEvent,
     guardTimer: guardInterval(cfg.mods.guard), hintQueue: cfg.hints.map((text, i) => ({ at: 1 + i * 16, text })), result: null,
+    bossSpawned: false, bossDefeated: false, bossTimer: 0, rampTimer: 0, openTime: 0,
   };
+  // shifts start with one visible spill so cleaning is discoverable (as in v0.4)
+  if (shift && cfg.chapter === 1) w.spills.push({ id: w.nextId++, x: 11.4, z: 9.2, born: 0 });
   return w;
 }
 function guardInterval(level: number) { return Math.max(12, 36 - level * 6); }
@@ -263,7 +268,7 @@ function spawnCustomer(w: World, kind: CustomerKind) {
     speed: 1.5 + w.rng() * 0.5, shopping: [], items: [], want: null, foodDone: false, foodFailed: false,
     patience: 1, patienceMax: 1, mood: 80, timer: 0, register: -1, anger: 0, resolved: false, hits: 0, eaten: [],
     eatShelf: null, life: 0, look: Math.floor(w.rng() * 1000), angry: false, moving: true, knockTimer: 7, gone: false,
-    heldBy: null, fly: null,
+    heldBy: null, fly: null, phase: 0, minions: [],
   };
   if (kind === 'normal') {
     const count = 1 + Math.floor(w.rng() * 3);
@@ -281,18 +286,28 @@ function spawnCustomer(w: World, kind: CustomerKind) {
     c.speed = 1.6; c.patienceMax = 200;
   } else if (kind === 'litterer') {
     c.speed = 1.8; c.life = 80; c.knockTimer = 4;
+  } else if (kind === 'boss') {
+    c.speed = 1.9; c.phase = 1; c.patienceMax = 1e9; c.life = 1e9; c.anger = 0;
   }
   c.patience = c.patienceMax;
   w.customers.push(c);
   if (kind !== 'normal') {
     ev(w, { e: 'karen', kind, id: c.id });
-    if (kind !== 'hog' || w.upgrades.camera > 0) toast(w, `⚠ ${KAREN_INFO[kind].name}：${KAREN_INFO[kind].hint}`, 'bad');
+    if (kind === 'boss') toast(w, '👑 奧客之王駕到！第 1 階段「插隊霸王」：請他排隊或直接丟出門', 'bad');
+    else if (kind !== 'hog' || w.upgrades.camera > 0) toast(w, `⚠ ${KAREN_INFO[kind].name}：${KAREN_INFO[kind].hint}`, 'bad');
   }
   ev(w, { e: 'sfx', name: 'door', x: SPAWN_OUTSIDE.x, z: SPAWN_OUTSIDE.z });
   nextStep(w, c);
 }
 
 function nextStep(w: World, c: Customer) {
+  if (c.kind === 'boss' && !c.resolved) {
+    c.speed = c.phase === 5 ? 1.1 : 1.9;
+    if (c.phase === 1) { detachFromLines(w, c); joinQueue(w, c, true); return; }
+    if (c.phase === 2) { c.state = 'toComplain'; c.anger = 55; setGoal(c, COMPLAINT_SPOT); return; }
+    if (c.phase === 4) { c.state = 'toSummon'; setGoal(c, { x: 12, z: 9.6 }); return; }
+    c.state = 'wander'; c.knockTimer = c.phase === 3 ? 6 : 1e9; c.hits = 0; setGoal(c, randomWanderSpot(w)); return;
+  }
   if (c.kind === 'rager' && !c.resolved) { c.state = 'toComplain'; setGoal(c, COMPLAINT_SPOT); return; }
   if ((c.kind === 'streamer' || c.kind === 'litterer') && !c.resolved) { c.state = 'wander'; c.speed = c.kind === 'streamer' ? 2.0 : 1.7; setGoal(c, randomWanderSpot(w)); return; }
   if (c.kind === 'hog' && !c.resolved) { goEat(w, c); return; }
@@ -344,7 +359,7 @@ function angryLeave(w: World, c: Customer) {
 }
 
 function cutterActive(w: World) {
-  return w.customers.some(c => c.kind === 'cutter' && !c.resolved && (c.state === 'queue' || c.state === 'toRegister' || c.state === 'atRegister'));
+  return w.customers.some(c => (c.kind === 'cutter' || (c.kind === 'boss' && c.phase === 1)) && !c.resolved && (c.state === 'queue' || c.state === 'toRegister' || c.state === 'atRegister'));
 }
 
 function updateQueue(w: World) {
@@ -368,14 +383,44 @@ function updateQueue(w: World) {
   });
 }
 
+/** The boss moves to its next phase (handled by talking, throwing or the ultimate). */
+function bossAdvance(w: World, c: Customer, p: PlayerState | null, how: string) {
+  if (c.phase >= 5) return;
+  c.phase++; c.hits = 0; c.anger = 0;
+  detachFromLines(w, c);
+  adjRating(w, 0.05); adjChaos(w, -5); adjBurst(w, 15);
+  if (p) p.stats.karens++;
+  toast(w, `👑 ${how}！奧客之王進入第 ${c.phase} 階段「${BOSS_PHASES[c.phase]}」`, 'good');
+  ev(w, { e: 'fx', name: 'eject', x: c.x, z: c.z, combo: 0, by: p?.name });
+  if (!c.fly && c.state !== 'held') nextStep(w, c);
+}
+
+function bossDefeat(w: World, c: Customer, by: PlayerState | null) {
+  w.bossDefeated = true; c.resolved = true;
+  adjRating(w, 0.5); adjChaos(w, -30);
+  w.dayStats.karensResolved++; w.totals.karens++;
+  toast(w, `🏆 ${by?.name ?? '你'} 讓奧客之王退散了！你就是終極打工人！`, 'good');
+  for (const id of c.minions) { const m = customer(w, id); if (m && !m.resolved) { m.resolved = true; leave(w, m, false); } }
+}
+
 /** Eject a customer through the front door (thrown, guard or ultimate). */
 function eject(w: World, c: Customer, by: PlayerState | null, how: 'throw' | 'guard' | 'ultimate') {
   if (c.gone) return;
+  if (c.kind === 'boss' && c.phase < 5) {
+    // the boss can't be thrown out before the final phase: he storms back in
+    c.heldBy = null; c.fly = null; c.x = 12; c.z = STORE_D - 0.6;
+    if (by && by.grabbing === c.id) by.grabbing = null;
+    toast(w, '👑 奧客之王硬闖回來了！', 'bad');
+    if (c.phase <= 3 || how === 'ultimate') bossAdvance(w, c, by, how === 'ultimate' ? '全店退散' : '丟出門');
+    else { c.state = 'enter'; nextStep(w, c); }
+    return;
+  }
   c.gone = true; c.heldBy = null; c.fly = null;
   detachFromLines(w, c);
   if (by && by.grabbing === c.id) by.grabbing = null;
   const x = Math.min(DOOR_X1, Math.max(DOOR_X0, c.x)), z = STORE_D;
-  if (c.kind !== 'normal') {
+  if (c.kind === 'boss') { w.dayStats.ejected++; if (by) by.stats.ejected++; bossDefeat(w, c, by); ev(w, { e: 'fx', name: 'ultimate', x, z, by: by?.name }); }
+  if (c.kind !== 'normal' && c.kind !== 'boss') {
     const was = c.resolved;
     w.dayStats.ejected++; if (by) by.stats.ejected++;
     if (!was) { w.dayStats.karensResolved++; w.totals.karens++; if (by) by.stats.karens++; }
@@ -386,7 +431,10 @@ function eject(w: World, c: Customer, by: PlayerState | null, how: 'throw' | 'gu
     w.dayStats.maxCombo = Math.max(w.dayStats.maxCombo, w.combo);
     ev(w, { e: 'fx', name: 'eject', x, z, combo: w.combo, by: by?.name });
     ev(w, { e: 'sfx', name: 'eject', x, z });
-    if (how === 'guard') toast(w, `🛡 保全請走了${KAREN_INFO[c.kind as KarenKind].name}`, 'good');
+  }
+  if (c.kind !== 'normal') {
+    if (c.kind === 'boss') { /* announced by bossDefeat */ }
+    else if (how === 'guard') toast(w, `🛡 保全請走了${KAREN_INFO[c.kind as KarenKind].name}`, 'good');
     else if (how === 'throw') toast(w, w.combo > 1 ? `🚪 ${w.combo} 連送！奧客退散！` : `🚪 ${by?.name ?? ''} 把${KAREN_INFO[c.kind as KarenKind].name}請出門了！`, 'good');
   } else {
     w.dayStats.angryLeft++;
@@ -423,6 +471,7 @@ function updateFlight(w: World, c: Customer, dt: number) {
     c.fly = null;
     if (c.kind === 'normal') c.mood -= 30;
     else if (c.kind === 'rager') c.anger = Math.min(99, c.anger + 12);
+    if (c.kind === 'boss' && c.phase <= 3 && f.thrown) { c.state = 'enter'; bossAdvance(w, c, w.players.get(f.by) ?? null, '摔了個四腳朝天'); return; }
     if (c.state === 'flying') { c.state = 'enter'; nextStep(w, c); }
   }
 }
@@ -472,11 +521,28 @@ function updateCustomer(w: World, c: Customer, dt: number) {
     case 'leaving':
       if (arrived) c.gone = true;
       break;
+    case 'toSummon':
+      if (arrived) {
+        c.state = 'summon'; c.yaw = Math.PI;
+        if (c.minions.length) break; // already summoned (e.g. thrown back in)
+        const kinds = (['cutter', 'rager', 'streamer', 'hog', 'litterer'] as KarenKind[]);
+        for (let i = 0; i < 3; i++) { spawnCustomer(w, kinds[(c.look + i * 2) % kinds.length]); c.minions.push(w.customers[w.customers.length - 1].id); }
+        toast(w, '👑 奧客之王叫來三個小弟！先把小弟處理掉', 'bad');
+      }
+      break;
+    case 'summon':
+      if (c.minions.every(id => { const m = customer(w, id); return !m || m.resolved || m.gone; })) bossAdvance(w, c, null, '小弟全滅');
+      break;
     case 'toComplain': if (arrived) { c.state = 'complain'; c.yaw = 0; } // fallthrough to anger
     // eslint-disable-next-line no-fallthrough
     case 'complain': {
       const rate = (1.4 + 0.45 * n) * (w.upgrades.camera > 0 ? 0.7 : 1) * m.angerRate * (w.power < 1 ? 1.25 : 1);
-      c.anger += rate * dt;
+      c.anger += rate * dt * (c.kind === 'boss' ? 1.4 : 1);
+      if (c.anger >= 100 && c.kind === 'boss') {
+        c.anger = 45; addSpill(w, c.x, c.z); addSpill(w, c.x, c.z); adjChaos(w, 10); adjRating(w, -0.15);
+        toast(w, '👑 奧客之王暴怒砸店！混亂 +10', 'bad'); ev(w, { e: 'sfx', name: 'crash', x: c.x, z: c.z });
+        break;
+      }
       if (c.anger >= 100) {
         c.anger = 100;
         addSpill(w, c.x, c.z); addSpill(w, c.x, c.z);
@@ -504,7 +570,7 @@ function updateCustomer(w: World, c: Customer, dt: number) {
         else failKaren(w, c, -0.3, 10, '📱 直播客拍完就走，店家形象受損（口碑 -0.3）');
         leave(w, c, false); break;
       }
-      if (c.kind === 'streamer') {
+      if (c.kind === 'streamer' || (c.kind === 'boss' && c.phase === 3)) {
         const near = nearestPlayer(w, c);
         if (near && near.d < 3.2 && c.state !== 'flee') {
           c.state = 'flee'; c.speed = 3.0;
@@ -512,7 +578,7 @@ function updateCustomer(w: World, c: Customer, dt: number) {
           break;
         }
       }
-      if (arrived) { c.state = 'wander'; c.speed = c.kind === 'streamer' ? 2.0 : 1.7; setGoal(c, randomWanderSpot(w)); }
+      if (arrived) { c.state = 'wander'; c.speed = c.kind === 'boss' ? (c.phase === 5 ? 1.1 : 2.0) : c.kind === 'streamer' ? 2.0 : 1.7; setGoal(c, randomWanderSpot(w)); }
       break;
     }
     case 'toEat': if (arrived) { c.state = 'eat'; c.timer = 3.5; c.yaw = faceShelf(c); } break;
@@ -641,17 +707,21 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
       if (p.held?.kind !== 'mop') return { ok: false, reason: '需要拖把（在西側牆邊）' };
       return { ok: true, dur: 1.5 * m.clean };
     case 'calm':
+      if (c?.kind === 'boss' && c.phase === 2 && c.state === 'complain') return { ok: true, dur: 1.2 };
       if (!c || c.kind !== 'rager' || c.resolved) return { ok: false, reason: '不需要安撫' };
       return { ok: true, dur: 1.2 };
     case 'coupon':
+      if (c?.kind === 'boss') return { ok: false, reason: '奧客之王不吃這套' };
       if (!c || c.kind !== 'rager' || c.resolved) return { ok: false, reason: '不需要' };
       if (w.money < 30) return { ok: false, reason: '錢不夠' };
       return { ok: true, dur: 0.3 };
     case 'askQueue':
+      if (c?.kind === 'boss' && c.phase === 1 && ['queue', 'toRegister', 'atRegister'].includes(c.state)) return { ok: true, dur: 1.2 };
       if (!c || c.kind !== 'cutter' || c.resolved) return { ok: false, reason: '不需要' };
       if (!['queue', 'toRegister', 'atRegister'].includes(c.state)) return { ok: false, reason: '還沒插隊' };
       return { ok: true, dur: 0.8 };
     case 'stopFilm':
+      if (c?.kind === 'boss' && c.phase === 3) return { ok: true, dur: 0.6 };
       if (!c || c.kind !== 'streamer' || c.resolved) return { ok: false, reason: '不需要' };
       return { ok: true, dur: 0.6 };
     case 'stopLitter':
@@ -694,6 +764,11 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
       w.money += total; w.dayStats.revenue += total; w.dayStats.tips += tip; w.dayStats.served++; w.totals.revenue += total; w.totals.served++;
       p.stats.served++;
       adjChaos(w, -2);
+      if (cc.kind === 'boss') {
+        adjChaos(w, 8); toast(w, '👑 奧客之王結完帳還不滿意！', 'bad'); bossAdvance(w, cc, p, '插隊得逞');
+        ev(w, { e: 'money', amount: total, x: cc.x, z: cc.z });
+        break;
+      }
       if (cc.kind === 'cutter' && !cc.resolved) {
         for (const id of w.queue) { const o = customer(w, id); if (o) o.mood -= 20; }
         failKaren(w, cc, -Math.min(0.4, 0.08 * w.queue.length), 6, '😤 插隊奧客先結帳了，排隊的客人很不滿');
@@ -742,6 +817,7 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
       ev(w, { e: 'sfx', name: 'clean', x: p.x, z: p.z });
       break;
     case 'calm':
+      if (c!.kind === 'boss') { c!.anger -= 18 * m.calm; ev(w, { e: 'sfx', name: 'calm', x: c!.x, z: c!.z }); if (c!.anger <= 0) bossAdvance(w, c!, p, `${p.name} 安撫成功`); break; }
       c!.anger -= 26 * m.calm;
       ev(w, { e: 'sfx', name: 'calm', x: c!.x, z: c!.z });
       if (c!.anger <= 0) {
@@ -756,12 +832,14 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
       leave(w, c!, false);
       break;
     case 'askQueue': {
+      if (c!.kind === 'boss') { bossAdvance(w, c!, p, `${p.name} 請他排隊`); break; }
       resolveKaren(w, c!, p, 0.1, `👉 ${p.name} 請插隊奧客到隊伍最後面（口碑 +0.1）`);
       detachFromLines(w, c!);
       joinQueue(w, c!, false);
       break;
     }
     case 'stopFilm': {
+      if (c!.kind === 'boss') { c!.hits++; if (c!.hits >= 2) bossAdvance(w, c!, p, `${p.name} 制止直播`); else { toast(w, '👑 還要再制止 1 次！', 'info'); c!.state = 'flee'; c!.speed = 3.0; setGoal(c!, fleeSpot(w, c!, p)); } break; }
       c!.hits++;
       const need = 1 + Math.floor((n - 1) / 2);
       if (c!.hits >= need) {
@@ -989,16 +1067,21 @@ function settleDay(w: World) {
   w.saveOut = { ...toSave(w), day: w.day + 1 };
 }
 
-function finishShift(w: World, failReason: string) {
+export function finishShift(w: World, failReason: string) {
   if (w.result) return;
   const d = w.dayStats;
-  const won = !failReason && d.revenue >= w.cfg.goal;
+  if (!failReason && w.cfg.boss && !w.bossDefeated) failReason = '奧客之王還在店裡，沒能讓他退散';
+  const survived = Math.round(w.time - w.openTime);
+  const score = d.revenue + d.ejected * 10 + d.karensResolved * 15 + survived;
+  const won = w.cfg.endless ? true : !failReason && d.revenue >= w.cfg.goal;
   w.result = {
     shiftId: w.cfg.id, won, failReason: failReason || (won ? '' : `營業額未達目標 $${w.cfg.goal}`),
     revenue: d.revenue, goal: w.cfg.goal, rating: Math.round(w.rating * 100) / 100, chaos: Math.round(w.chaos),
     served: d.served, angryLeft: d.angryLeft, karensResolved: d.karensResolved, karensFailed: d.karensFailed,
     ejected: d.ejected, cleaned: d.spillsCleaned, maxCombo: d.maxCombo,
+    score: w.cfg.endless ? score : undefined, survived, bossDefeated: w.cfg.boss ? w.bossDefeated : undefined,
   };
+  if (w.cfg.endless) w.result.failReason = failReason ? `${failReason}・撐了 ${survived} 秒` : `主動下班・撐了 ${survived} 秒`;
   clearFloor(w);
   setPhase(w, 'summary'); w.phaseLeft = 0;
   ev(w, { e: 'sfx', name: won ? 'open' : 'angry' });
@@ -1052,6 +1135,7 @@ export function tick(w: World, dt: number) {
       if (w.phaseLeft <= 0 || allReady(w)) {
         setPhase(w, 'open'); w.clock = OPEN_MINUTE; w.phaseLeft = w.cfg.length;
         w.dayStats = emptyStats(w.rating); w.spawnTimer = 2; w.karenTimer = w.cfg.firstKaren; w.saveOut = null; w.nextEvent = w.cfg.firstEvent;
+        w.openTime = w.time; w.bossTimer = w.cfg.bossAt; w.rampTimer = 0;
         toast(w, shift ? `🏪 ${w.cfg.title}：開始上班！目標營業額 $${w.cfg.goal}` : `🏪 第 ${w.day} 天開始營業！`, 'good');
         ev(w, { e: 'sfx', name: 'open' });
       }
@@ -1072,14 +1156,23 @@ export function tick(w: World, dt: number) {
         w.karenTimer -= dt * (0.8 + 0.2 * n);
         if (w.karenTimer <= 0) {
           w.karenTimer = w.cfg.karenEvery * (0.85 + w.rng() * 0.4);
-          const active = w.customers.filter(c => c.kind !== 'normal' && !c.resolved && !c.gone);
-          if (active.length < w.cfg.maxKarens + Math.floor((n - 1) / 2)) {
+          const active = w.customers.filter(c => c.kind !== 'normal' && c.kind !== 'boss' && !c.resolved && !c.gone);
+          if (active.length < Math.floor(w.cfg.maxKarens) + Math.floor((n - 1) / 2)) {
             const avail = w.cfg.karens.filter(k => !active.some(a => a.kind === k));
             spawnCustomer(w, pick(w, avail.length ? avail : w.cfg.karens));
           }
         }
       }
       updateEvents(w, dt);
+      if (w.cfg.boss && !w.bossSpawned) { w.bossTimer -= dt; if (w.bossTimer <= 0) { w.bossSpawned = true; spawnCustomer(w, 'boss'); } }
+      if (w.cfg.endless) {
+        w.rampTimer += dt;
+        if (w.rampTimer >= 45) {
+          w.rampTimer = 0;
+          w.cfg = { ...w.cfg, spawnEvery: Math.max(3.2, w.cfg.spawnEvery * 0.9), maxKarens: Math.min(5, w.cfg.maxKarens + 0.5), karenEvery: Math.max(18, w.cfg.karenEvery * 0.9) };
+          toast(w, '🌙 夜更深了，客人越來越多……', 'info');
+        }
+      }
       if (w.phaseLeft <= 0) {
         setPhase(w, 'closing'); w.phaseLeft = shift ? 10 : CLOSING_MAX_SECONDS; w.clock = CLOSE_MINUTE;
         w.event = null; w.power = 1;
@@ -1090,9 +1183,9 @@ export function tick(w: World, dt: number) {
     case 'closing':
       w.phaseLeft -= dt;
       for (const c of w.customers) {
-        if (c.kind !== 'normal' && !c.resolved && c.state !== 'leaving' && c.kind !== 'cutter' && !c.heldBy && !c.fly) { c.resolved = true; leave(w, c, false); }
+        if (c.kind !== 'normal' && c.kind !== 'boss' && !c.resolved && c.state !== 'leaving' && c.kind !== 'cutter' && !c.heldBy && !c.fly) { c.resolved = true; leave(w, c, false); }
       }
-      if (w.customers.length === 0 || w.phaseLeft <= 0) {
+      if (w.customers.filter(c => !(c.kind === 'boss' && !c.resolved)).length === 0 || w.phaseLeft <= 0) {
         if (shift) finishShift(w, '');
         else { settleDay(w); setPhase(w, 'summary'); w.phaseLeft = 0; }
       }
@@ -1108,7 +1201,10 @@ export function tick(w: World, dt: number) {
   if (w.phase === 'open' || w.phase === 'closing') {
     adjRating(w, -0.0008 * Math.min(6, w.spills.length) * dt);
     w.chaosTimer += dt;
-    if (w.chaosTimer >= 8) { w.chaosTimer = 0; adjChaos(w, w.spills.length * 0.8); }
+    if (w.chaosTimer >= 8) {
+      w.chaosTimer = 0; adjChaos(w, w.spills.length * 0.8);
+      if (w.customers.some(c => c.kind === 'boss' && !c.resolved)) adjChaos(w, 2);
+    }
     if (w.upgrades.mopbot > 0 && w.spills.length) {
       w.mopbotTimer -= dt;
       if (w.mopbotTimer <= 0) { w.mopbotTimer = 20; const s = w.spills.shift()!; ev(w, { e: 'sfx', name: 'clean', x: s.x, z: s.z }); }
@@ -1117,7 +1213,7 @@ export function tick(w: World, dt: number) {
       w.guardTimer -= dt;
       if (w.guardTimer <= 0) {
         w.guardTimer = guardInterval(w.cfg.mods.guard);
-        const k = w.customers.filter(c => c.kind !== 'normal' && !c.resolved && !c.gone && !c.heldBy && !c.fly && Math.hypot(c.x - ENTRANCE.x, c.z - ENTRANCE.z) < 5.5)[0];
+        const k = w.customers.filter(c => c.kind !== 'normal' && c.kind !== 'boss' && !c.resolved && !c.gone && !c.heldBy && !c.fly && Math.hypot(c.x - ENTRANCE.x, c.z - ENTRANCE.z) < 5.5)[0];
         if (k) eject(w, k, null, 'guard');
       }
     }
@@ -1153,7 +1249,7 @@ export function snapshot(w: World, now: number): Snapshot {
       patience: Math.max(0, Math.min(1, c.state === 'waitFood' ? c.timer / c.patienceMax : c.patience / c.patienceMax)),
       anger: Math.round(c.anger), resolved: c.resolved, revealed: reveal(c), items: c.items.length,
       want: c.want && !c.foodDone && !c.foodFailed ? c.want : null, look: c.look, moving: c.moving,
-      y: c.fly ? r2(c.fly.y) : c.state === 'held' ? 0.25 : 0, held: c.state === 'held', flying: !!c.fly,
+      y: c.fly ? r2(c.fly.y) : c.state === 'held' ? 0.25 : 0, held: c.state === 'held', flying: !!c.fly, phase: c.phase,
     })),
     spills: w.spills.map(s => ({ id: s.id, x: r2(s.x), z: r2(s.z) })),
     items: w.items.map(i => ({ id: i.id, x: r2(i.x), z: r2(i.z), held: i.held })),
@@ -1162,7 +1258,7 @@ export function snapshot(w: World, now: number): Snapshot {
     chaos: Math.round(w.chaos), burst: Math.floor(w.burst), combo: w.time < w.comboUntil ? w.combo : 0, power: w.power,
     event: w.event ? { kind: w.event.kind, left: r2(w.event.left) } : null,
     shift: {
-      mode: w.cfg.mode, id: w.cfg.id, title: w.cfg.title, chapter: w.cfg.chapter, goal: w.cfg.goal, length: w.cfg.length, abilities: w.cfg.abilities, foods: w.cfg.foods,
+      mode: w.cfg.mode, id: w.cfg.id, title: w.cfg.title, chapter: w.cfg.chapter, goal: w.cfg.goal, length: w.cfg.length, abilities: w.cfg.abilities, foods: w.cfg.foods, endless: w.cfg.endless, boss: w.cfg.boss,
       staminaMax: w.cfg.mods.staminaMax, staminaRegen: w.cfg.mods.staminaRegen, speed: w.cfg.mods.speed,
     },
     result: w.result,

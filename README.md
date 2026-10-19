@@ -46,7 +46,8 @@ docs/       伺服器設定、實測紀錄、剩餘問題
 npm run typecheck
 npm test            # 規則/房間測試（模擬玩家，不經網路）
 npm run test:net    # 啟動真實伺服器，多個 WebSocket 客戶端（同一台機器）
-npm run test:e2e    # 需先 npm run build && npm start：瀏覽器單人＋雙瀏覽器多人
+npm run test:e2e    # 需先 npm run build && npm start：瀏覽器單人＋雙瀏覽器多人＋職涯＋教學／魔王／無限夜班
+npm run balance     # 模擬玩家跑完每個班次，輸出難度平衡表
 ```
 
 測試分類與結果見 [docs/TEST-LOG.md](docs/TEST-LOG.md)。

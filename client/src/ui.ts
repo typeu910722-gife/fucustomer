@@ -118,17 +118,19 @@ export function message(title: string, body: string, btn = '確定', onOk?: () =
   on('msg-ok', 'click', () => { hide(); onOk?.(); });
 }
 
-export function pauseMenu(solo: boolean, code: string, h: { resume(): void; settings(): void; leave(): void; help(): void }) {
+export function pauseMenu(solo: boolean, code: string, h: { resume(): void; settings(): void; leave(): void; help(): void; endShift?: () => void }) {
   show(`
     <div class="card">
       <h2>選單</h2>
       ${solo ? '<p class="muted">單人遊戲已暫停。</p>' : `<p class="muted">⚠ 多人營業中：開選單<b>不會暫停</b>，隊友與顧客持續行動。房間碼 <b>${esc(code)}</b></p>`}
       <button class="btn primary" id="p-resume">回到遊戲</button>
+      ${h.endShift ? '<button class="btn good" id="p-end">🌙 下班結算分數</button>' : ''}
       <button class="btn" id="p-help">玩法說明</button>
       <button class="btn" id="p-settings">設定</button>
-      <button class="btn" id="p-leave">${solo ? '存檔並回主選單' : '離開房間'}</button>
+      <button class="btn" id="p-leave">${solo ? '離開（本班不結算）' : '離開房間'}</button>
     </div>`, 'screen overlay');
   on('p-resume', 'click', () => h.resume());
+  if (h.endShift) on('p-end', 'click', () => h.endShift!());
   on('p-settings', 'click', () => h.settings());
   on('p-leave', 'click', () => h.leave());
   on('p-help', 'click', () => h.help());

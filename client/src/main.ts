@@ -7,7 +7,7 @@ import {
 } from './storage.ts';
 import * as UI from './ui.ts';
 import { careerScreen, loadProfile, resultScreen, saveProfile } from './career-ui.ts';
-import { applyResult, buildShiftConfig, shiftUnlocked } from '../../shared/career.ts';
+import { ENDLESS_ID, applyResult, buildShiftConfig, endlessUnlocked, shiftUnlocked } from '../../shared/career.ts';
 import type { ShiftResult } from '../../shared/career.ts';
 
 let settings = loadSettings();
@@ -52,7 +52,7 @@ function career() {
 
 function playShift(id: string) {
   const p = loadProfile();
-  if (!shiftUnlocked(p, id).ok) return career();
+  if (id === ENDLESS_ID ? !endlessUnlocked(p) : !shiftUnlocked(p, id).ok) return career();
   const cfg = buildShiftConfig(p, id);
   startGame(() => new LocalConnection(playerName(), null, cfg), (reason, result) => {
     if (!result) { if (reason) UI.message('提示', reason, '回職涯', career); else career(); return; }

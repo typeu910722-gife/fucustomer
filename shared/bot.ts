@@ -2,13 +2,29 @@
 // snapshot a real client sees and sends the same messages, so it exercises the real protocol.
 import { PRODUCTS, Product, SERVER_INTERACT_RANGE, WALK_SPEED, shelfCapacity } from './constants.ts';
 import { COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, findPath, shelfBrowseSpots } from './map.ts';
-import type { ActKind, CustomerSnap, PlayerSnap, Snapshot, Target } from './protocol.ts';
+import type { ActKind, ClientMsg, CustomerSnap, PlayerSnap, Snapshot, Target } from './protocol.ts';
 
 export interface BotOutput {
   x: number; z: number; yaw: number;
   act?: { kind: ActKind; target: Target };
   drop?: boolean; buy?: string; ready?: boolean;
+  throw?: { yaw: number; pitch: number }; spin?: boolean; ultimate?: boolean;
 }
+
+/** Turn a bot decision into the same protocol messages a real client sends. */
+export function botMessages(o: BotOutput, rid: () => string): ClientMsg[] {
+  const out: ClientMsg[] = [{ type: 'input', x: o.x, z: o.z, yaw: o.yaw, pitch: 0, seq: 0 }];
+  if (o.act) out.push({ type: 'act', rid: rid(), kind: o.act.kind, target: o.act.target });
+  if (o.drop) out.push({ type: 'drop', rid: rid() });
+  if (o.buy) out.push({ type: 'buy', rid: rid(), item: o.buy });
+  if (o.ready) out.push({ type: 'ready', ready: true });
+  if (o.throw) out.push({ type: 'throw', rid: rid(), yaw: o.throw.yaw, pitch: o.throw.pitch });
+  if (o.spin) out.push({ type: 'spin', rid: rid() });
+  if (o.ultimate) out.push({ type: 'ultimate', rid: rid() });
+  return out;
+}
+
+const THROW_SPOT = { x: 12, z: 13.1 };
 
 interface Goal { pos: { x: number; z: number }; kind: ActKind; target: Target; key: string }
 
@@ -17,6 +33,9 @@ export class Bot {
   private goalKey = '';
   private cooldown = 0;
   private stuck = 0;
+  private lastPos = { x: 0, z: 0 };
+  private still = 0;
+  private direct = 0;
   constructor(public role: 'any' | 'cashier' | 'stocker' | 'cleaner' = 'any', private seed = Math.random()) {}
 
   update(s: Snapshot, me: PlayerSnap, dt: number): BotOutput {
@@ -29,6 +48,26 @@ export class Bot {
     if (low && this.cooldown <= 0 && (this.role !== 'cashier' || s.phase === 'prep')) { out.buy = 'stock_' + low; this.cooldown = s.phase === 'prep' ? 0.5 : 4; return out; }
     if (s.phase === 'prep' && !me.ready && this.cooldown <= 0) { out.ready = true; this.cooldown = 1; }
     if (me.busy) return out;
+    const ab = s.shift?.abilities ?? [];
+    const open = s.phase === 'open' || s.phase === 'closing';
+    const karens = s.customers.filter(c => c.kind !== 'normal' && !c.resolved && c.revealed && c.state !== 'leaving' && !c.flying);
+    // full burst: clear the store
+    if (open && ab.includes('ultimate') && s.burst >= 100 && this.cooldown <= 0 && (karens.length >= 2 || karens.some(k => k.kind === 'boss' && k.phase === 5))) {
+      out.ultimate = true; this.cooldown = 0.5; return out;
+    }
+    // mop spin when a karen is close and no regular customer would get hit
+    if (open && ab.includes('spin') && me.spinCd <= 0 && me.grabbing == null && this.cooldown <= 0) {
+      const near = (r: number) => s.customers.filter(c => !c.flying && !c.held && Math.hypot(c.x - me.x, c.z - me.z) < r);
+      const hit = near(3.2);
+      if (hit.length && hit.every(c => c.kind !== 'normal' && c.kind !== 'boss') && hit.some(c => !c.resolved)) { out.spin = true; this.cooldown = 0.5; return out; }
+    }
+    // carrying someone: walk to the door and throw them out
+    if (me.grabbing != null) {
+      const d = Math.hypot(me.x - THROW_SPOT.x, me.z - THROW_SPOT.z);
+      if (d < 0.35) { out.yaw = 0; if (this.cooldown <= 0) { out.throw = { yaw: 0, pitch: 0.12 }; this.cooldown = 0.5; } return out; }
+      if (this.goalKey !== 'throw') { this.goalKey = 'throw'; this.path = findPath(me, THROW_SPOT); }
+      return this.walk(me, out, dt, THROW_SPOT);
+    }
     const goal = this.pickGoal(s, me);
     if (!goal) {
       if (me.held && me.held.kind !== 'mop' && this.cooldown <= 0) { out.drop = true; this.cooldown = 1; }
@@ -41,9 +80,27 @@ export class Bot {
       out.yaw = Math.atan2(goal.pos.x - me.x, goal.pos.z - me.z);
       return out;
     }
+    return this.walk(me, out, dt, goal.pos);
+  }
+
+  private walk(me: PlayerSnap, out: BotOutput, dt: number, pos: { x: number; z: number }): BotOutput {
+    // no progress for a while (wedged on a corner): walk straight at the goal briefly, then re-path
+    if (Math.hypot(me.x - this.lastPos.x, me.z - this.lastPos.z) < 0.02) this.still += dt; else this.still = 0;
+    this.lastPos = { x: me.x, z: me.z };
+    if (this.still > 0.6) { this.still = 0; this.direct = 0.6; this.path = []; }
+    if (this.direct > 0) {
+      this.direct -= dt;
+      const dx = pos.x - me.x, dz = pos.z - me.z, d = Math.hypot(dx, dz) || 1;
+      const side = Math.sin(performance.now() / 300) * 0.6;
+      const step = WALK_SPEED * dt;
+      out.x = me.x + (dx / d) * step + (-dz / d) * side * step; out.z = me.z + (dz / d) * step + (dx / d) * side * step;
+      out.yaw = Math.atan2(dx, dz);
+      if (this.direct <= 0) this.path = findPath(out, pos);
+      return out;
+    }
     // re-path toward moving targets
     const last = this.path[this.path.length - 1];
-    if (!last || Math.hypot(last.x - goal.pos.x, last.z - goal.pos.z) > 1.0 || ++this.stuck > 200) { this.path = findPath(me, goal.pos); this.stuck = 0; }
+    if (!last || Math.hypot(last.x - pos.x, last.z - pos.z) > 1.0 || ++this.stuck > 200) { this.path = findPath(me, pos); this.stuck = 0; }
     let step = WALK_SPEED * 1.2 * dt;
     let x = me.x, z = me.z;
     while (step > 0 && this.path.length) {
@@ -81,8 +138,19 @@ export class Bot {
     }
     if (s.phase === 'summary') return null;
     // karens first
-    const karens = C.filter(c => c.kind !== 'normal' && !c.resolved && c.revealed && c.state !== 'leaving');
+    const canGrab = !!s.shift?.abilities.includes('grab') && !me.held && !me.held2;
+    const karens = C.filter(c => c.kind !== 'normal' && !c.resolved && c.revealed && c.state !== 'leaving' && !c.flying && !c.held);
     for (const k of karens) {
+      if (k.kind === 'boss') {
+        if (k.phase === 1 && ['queue', 'toRegister', 'atRegister'].includes(k.state)) return cust(k, 'askQueue');
+        if (k.phase === 4) continue; // deal with the minions first
+        if (canGrab && k.phase !== 1) return cust(k, 'grab');
+        if (k.phase === 2 && k.state === 'complain') return cust(k, 'calm');
+        if (k.phase === 3) return cust(k, 'stopFilm');
+        continue;
+      }
+      if (k.kind === 'cutter' && ['queue', 'toRegister', 'atRegister'].includes(k.state)) return cust(k, 'askQueue');
+      if (canGrab && k.kind !== 'cutter') return cust(k, 'grab');
       if (k.kind === 'rager' && k.state === 'complain') return cust(k, 'calm');
       if (k.kind === 'cutter' && ['queue', 'toRegister', 'atRegister'].includes(k.state)) return cust(k, 'askQueue');
       if (k.kind === 'streamer' && this.role !== 'cashier') return cust(k, 'stopFilm');
@@ -130,6 +198,8 @@ function goalDistance(s: Snapshot, me: PlayerSnap, g: Goal) {
     return Math.hypot(dx, dz);
   }
   if (t.t === 'customer') { const c = s.customers.find(c => c.id === t.id); if (c) return Math.hypot(c.x - me.x, c.z - me.z); }
+  // registers: the server measures to the till itself, so stand at the cashier spot before acting
+  if (t.t === 'register') return Math.max(Math.hypot(g.pos.x - me.x, g.pos.z - me.z) * 2.5, Math.hypot(REGISTERS[t.idx].x - me.x, REGISTERS[t.idx].z - me.z) - 0.6);
   return Math.hypot(g.pos.x - me.x, g.pos.z - me.z);
 }
 

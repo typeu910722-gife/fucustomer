@@ -14,8 +14,9 @@
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test tests/sim.test.ts tests/career.test.ts",
     "test:net": "node --import tsx --test --test-concurrency=1 tests/net.test.ts",
-    "test:e2e": "node tests/e2e/solo-smoke.mjs && node tests/e2e/multi-browser.mjs && node tests/e2e/career.mjs",
-    "test:all": "npm run typecheck && npm test && npm run test:net"
+    "test:e2e": "node tests/e2e/solo-smoke.mjs && node tests/e2e/multi-browser.mjs && node tests/e2e/career.mjs && node tests/e2e/round3.mjs",
+    "test:all": "npm run typecheck && npm test && npm run test:net",
+    "balance": "tsx scripts-balance.ts"
   },
   "dependencies": {
     "three": "^0.186.1",

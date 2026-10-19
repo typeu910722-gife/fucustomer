@@ -8,7 +8,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
 import type { ClientMsg, ServerMsg, Snapshot, LobbyState } from '../shared/protocol.ts';
-import { Bot } from '../shared/bot.ts';
+import { Bot, botMessages } from '../shared/bot.ts';
 
 const PORT = 18000 + Math.floor(Math.random() * 2000);
 const URL = `ws://127.0.0.1:${PORT}/ws`;
@@ -197,11 +197,8 @@ test('five simulated players over the network run a full co-op day (time x6)', {
       const c = cs[i]; const s = c.snap; const me = c.me(); if (!s || !me) continue;
       if (s.phase === 'open') sawOpen = true;
       const o = bots[i].update(s, me, 0.1 * 6);
-      c.send({ type: 'input', x: o.x, z: o.z, yaw: o.yaw, pitch: 0, seq: rid++ });
-      if (o.act) c.send({ type: 'act', rid: 'n' + rid++, kind: o.act.kind, target: o.act.target });
-      if (o.drop) c.send({ type: 'drop', rid: 'd' + rid++ });
-      if (o.buy) c.send({ type: 'buy', rid: 'y' + rid++, item: o.buy });
-      if (o.ready && !me.ready) c.send({ type: 'ready', ready: true });
+      if (me.ready) o.ready = false;
+      for (const m of botMessages(o, () => 'n' + rid++)) c.send(m);
     }
     if (sawOpen && cs[0].snap?.phase === 'summary') break;
     await sleep(100);

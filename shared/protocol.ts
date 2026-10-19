@@ -56,7 +56,7 @@ export interface CustomerSnap {
   patience: number; // 0..1
   anger: number; // 0..100 (rager)
   resolved: boolean; revealed: boolean; items: number; want: Food | null; look: number; moving: boolean;
-  y: number; held: boolean; flying: boolean;
+  y: number; held: boolean; flying: boolean; phase: number;
 }
 export interface Snapshot {
   t: number; // server time ms
@@ -70,7 +70,7 @@ export interface Snapshot {
   dayStats: DayStats; playerCount: number;
   chaos: number; burst: number; combo: number; power: number;
   event: { kind: 'rush' | 'outage'; left: number } | null;
-  shift: { mode: 'day' | 'shift'; id: string; title: string; chapter: number; goal: number; length: number; abilities: Ability[]; foods: Food[]; staminaMax: number; staminaRegen: number; speed: number } ;
+  shift: { mode: 'day' | 'shift'; id: string; title: string; chapter: number; goal: number; length: number; abilities: Ability[]; foods: Food[]; endless: boolean; boss: boolean; staminaMax: number; staminaRegen: number; speed: number } ;
   result: ShiftResult | null;
 }
 
@@ -92,6 +92,7 @@ export type ClientMsg =
   | { type: 'throw'; rid: string; yaw: number; pitch: number }
   | { type: 'spin'; rid: string }
   | { type: 'ultimate'; rid: string }
+  | { type: 'endShift' }
   | { type: 'buy'; rid: string; item: string; level?: number }
   | { type: 'ping'; x: number; z: number }
   | { type: 'quick'; msg: number }

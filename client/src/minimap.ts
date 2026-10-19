@@ -33,7 +33,7 @@ export class Minimap {
     g.fillStyle = '#51cf66'; g.fillRect(this.X(DOOR_X0), this.Z(STORE_D) - 2, (DOOR_X1 - DOOR_X0) * this.scale, 4);
   }
 
-  draw(s: Snapshot, selfId: string, self: { x: number; z: number; yaw: number }, time: number) {
+  draw(s: Snapshot, selfId: string, self: { x: number; z: number; yaw: number }, time: number, guide: { x: number; z: number } | null = null) {
     const g = this.g;
     g.clearRect(0, 0, this.canvas.width, this.canvas.height);
     g.drawImage(this.bg, 0, 0);
@@ -66,6 +66,10 @@ export class Minimap {
       g.globalAlpha = p.connected ? 1 : 0.4;
       this.arrow(p.x, p.z, p.yaw, hex(p.color), 4.5);
       g.globalAlpha = 1;
+    }
+    if (guide) {
+      g.strokeStyle = '#ffd43b'; g.lineWidth = 2.5;
+      g.beginPath(); g.arc(this.X(guide.x), this.Z(guide.z), 5 + Math.abs(Math.sin(time * 4)) * 4, 0, Math.PI * 2); g.stroke();
     }
     this.arrow(self.x, self.z, self.yaw, '#ffffff', 6, true);
   }

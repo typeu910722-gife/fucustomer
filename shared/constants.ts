@@ -55,14 +55,18 @@ export const PREP_SECONDS = 60;
 export const CLOSING_MAX_SECONDS = 60;
 export const DAILY_RENT = 60;
 
-export type KarenKind = 'cutter' | 'rager' | 'streamer' | 'hog' | 'litterer';
+export type KarenKind = 'cutter' | 'rager' | 'streamer' | 'hog' | 'litterer' | 'boss';
 export const KAREN_INFO: Record<KarenKind, { name: string; hint: string; how: string }> = {
   cutter: { name: '插隊奧客', hint: '有人插隊！其他顧客耐心快速下降', how: '靠近按互動「請排隊」' },
   rager: { name: '退貨大鬧', hint: '客訴怒氣上升中！滿了會砸店', how: '互動「安撫」（可多人同時），或次要鍵發折價券 $30' },
   streamer: { name: '直播亂拍', hint: '直播客到處拍片撞翻商品，會躲人', how: '追上並互動「請停止拍攝」' },
   hog: { name: '偷吃奧客', hint: '有人在貨架偷吃！（監視器可直接看見）', how: '靠近互動「請先結帳」' },
   litterer: { name: '亂丟客', hint: '有人邊走邊亂丟垃圾，髒污越來越多', how: '靠近互動「請勿亂丟」，或直接請出門' },
+  boss: { name: '奧客之王', hint: '傳說中的奧客之王駕到！他會分階段鬧事', how: '依階段處理：請排隊→安撫→制止拍攝→清掉小弟→丟出門或全店退散' },
 };
+
+export const BOSS_PHASES = ['', '插隊霸王', '退貨暴君', '直播帝王', '召喚小弟', '強弩之末'];
+export const BOSS_HOW = ['', '靠近按互動「請排隊」（或丟出門）', '持續安撫到怒氣歸零（或丟出門）', '追上制止拍攝 2 次（或丟出門）', '先處理掉他叫來的小弟', '抓起丟出門，或全店退散收尾！'];
 
 export const PLAYER_COLORS = [0xff6b6b, 0x4dabf7, 0x51cf66, 0xfcc419, 0xcc5de8];
 

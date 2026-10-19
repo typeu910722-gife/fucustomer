@@ -167,6 +167,7 @@ function customerLook(c: CustomerSnap) {
   if (c.kind === 'cutter') return { ...base, shirt: 0xfd7e14, hairStyle: 0 };
   if (c.kind === 'streamer') return { ...base, shirt: 0x7048e8, hair: 0x15aabf, hairStyle: 3 };
   if (c.kind === 'hog') return { ...base, shirt: 0x495057, pants: 0x212529, hairStyle: 2 };
+  if (c.kind === 'boss') return { ...base, shirt: 0x5f3dc4, pants: 0x212529, hair: 0xf4d58d, hairStyle: 1, scale: 1.35 };
   return base;
 }
 
@@ -177,6 +178,12 @@ function karenAccessory(q: Quality, h: Human, kind: string) {
     const stick = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.7, 6), mat(0x222222, q)); stick.position.set(0, -0.6, 0.35); stick.rotation.x = 1.1; h.armR.add(stick);
     const phone = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.15, 0.015), new THREE.MeshBasicMaterial({ color: 0x99e9f2 })); phone.position.set(0, -0.45, 0.68); h.armR.add(phone);
     const ring = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.015, 6, 16), new THREE.MeshBasicMaterial({ color: 0xffffff })); ring.position.set(0, -0.45, 0.7); h.armR.add(ring);
+  }
+  if (kind === 'boss') {
+    const gold = new THREE.MeshBasicMaterial({ color: 0xfcc419 });
+    const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.17, 0.12, 10, 1, true), gold); crown.position.y = 0.2; h.head.add(crown);
+    for (let i = 0; i < 5; i++) { const spike = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.1, 6), gold); const a = (i / 5) * Math.PI * 2; spike.position.set(Math.sin(a) * 0.15, 0.3, Math.cos(a) * 0.15); h.head.add(spike); }
+    const cape = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.9, 0.04), mat(0xc92a2a, q)); cape.position.set(0, 1.0, -0.17); h.group.add(cape);
   }
   if (kind === 'hog') { const hood = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.62), mat(0x343a40, q)); hood.position.y = 0.02; hood.rotation.x = -0.2; h.head.add(hood); }
 }
@@ -215,6 +222,7 @@ export class StoreView {
   private power = 1;
   shake = 0;
   flash = 0;
+  private guide!: THREE.Group;
 
   constructor(canvas: HTMLCanvasElement, quality: Quality, fov: number) {
     this.q = quality;
@@ -228,6 +236,12 @@ export class StoreView {
     this.scene.add(this.camera);
     this.camera.add(this.viewHeld);
     this.viewHeld.position.set(0.32, -0.28, -0.55);
+    this.guide = new THREE.Group();
+    const cone = new THREE.Mesh(new THREE.ConeGeometry(0.22, 0.45, 12), new THREE.MeshBasicMaterial({ color: 0xffd43b }));
+    cone.rotation.x = Math.PI; cone.position.y = 0.2;
+    const ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.6, 28), new THREE.MeshBasicMaterial({ color: 0xffd43b, side: THREE.DoubleSide, transparent: true, opacity: 0.7 }));
+    ring.rotation.x = -Math.PI / 2; ring.position.y = -2.2;
+    this.guide.add(cone, ring); this.guide.visible = false; this.scene.add(this.guide);
     this.highlight = new THREE.Box3Helper(new THREE.Box3(), new THREE.Color(0xffe066));
     this.highlight.visible = false;
     this.scene.add(this.highlight);
@@ -459,7 +473,11 @@ export class StoreView {
       if (Math.abs(c.x - 12) < 2.2 && Math.abs(c.z - 16) < 2.2) doorNear = true;
       // icons
       let key = '', draw: (() => HTMLCanvasElement) | null = null;
-      if (c.held || c.flying) { key = c.held ? 'held' : 'fly'; draw = () => textCanvas([{ text: c.held ? '😵 放開我！' : '😱 啊——', size: 50 }], 512, 128, 'rgba(15,16,26,0.7)'); }
+      if (c.kind === 'boss' && !c.resolved && !c.held && !c.flying) {
+        const ph = ['', '插隊霸王', '退貨暴君', '直播帝王', '召喚小弟', '強弩之末'][c.phase] ?? '';
+        key = 'boss' + c.phase + (c.phase === 2 ? Math.round(c.anger / 5) : '');
+        draw = () => textCanvas([{ text: `👑 奧客之王・${ph}`, size: 44, color: '#ffe066' }], 512, 150, 'rgba(80,20,120,0.92)', c.phase === 2 ? { v: c.anger / 100, color: '#ff6b6b' } : { v: (c.phase - 1) / 4, color: '#ffd43b' });
+      } else if (c.held || c.flying) { key = c.held ? 'held' : 'fly'; draw = () => textCanvas([{ text: c.held ? '😵 放開我！' : '😱 啊——', size: 50 }], 512, 128, 'rgba(15,16,26,0.7)'); }
       else if (c.kind !== 'normal' && !c.resolved && c.revealed) {
         if (c.kind === 'rager') { const a = c.anger; key = 'r' + Math.round(a / 4); draw = () => textCanvas([{ text: '😡 退貨大鬧', size: 46, color: '#ffc9c9' }], 512, 150, 'rgba(120,10,30,0.88)', { v: a / 100, color: a > 70 ? '#ff3b3b' : '#ffa94d' }); }
         else if (c.kind === 'cutter') { key = 'cut'; draw = () => textCanvas([{ text: '⚠ 插隊！', size: 54, color: '#ffe066' }], 512, 128, 'rgba(120,60,0,0.88)'); }
@@ -475,6 +493,9 @@ export class StoreView {
         key = 'angry'; draw = () => textCanvas([{ text: '💢', size: 80 }], 256, 128, '');
       }
       e.h.icon.set(key, draw ?? (() => document.createElement('canvas')));
+      // fade overhead labels that are right in front of the camera so they don't cover the view
+      const camD = Math.hypot(this.camera.position.x - e.s.x, this.camera.position.z - e.s.z);
+      (e.h.icon.sprite.material as THREE.SpriteMaterial).opacity = Math.max(0.12, Math.min(1, (camD - 1.0) / 1.6));
       e.h.icon.sprite.scale.set(key === 'angry' ? 0.7 : 1.7, key === 'angry' ? 0.35 : (key.startsWith('r') || key.startsWith('q') || key.startsWith('cf') ? 0.5 : 0.42), 1);
       if (c.kind === 'rager' && !c.resolved && c.state === 'complain') e.h.group.position.x += Math.sin(this.time * 40) * 0.02 * (c.anger / 100);
     }
@@ -597,6 +618,11 @@ export class StoreView {
       if (held) { const m = heldModel(this.q, held); if (held.kind === 'mop') { m.rotation.set(0.3, 0, 0); m.position.set(0, 0.1, 0); } this.viewHeld.add(m); m.traverse(o => { o.renderOrder = 5; }); }
     }
     this.viewHeld.position.set(0.32 + Math.cos(bob * 0.5) * 0.01, -0.3 + Math.abs(Math.sin(bob)) * 0.015, -0.55);
+  }
+
+  setGuide(p: { x: number; z: number } | null) {
+    this.guide.visible = !!p;
+    if (p) { this.guide.position.set(p.x, 2.3 + Math.sin(this.time * 4) * 0.12, p.z); this.guide.rotation.y += 0.04; }
   }
 
   setHighlight(box: THREE.Box3 | null) {

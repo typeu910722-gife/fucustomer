@@ -2,7 +2,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { Room, Conn } from '../shared/room.ts';
-import { Bot } from '../shared/bot.ts';
+import { Bot, botMessages } from '../shared/bot.ts';
 import { createWorld, addPlayer, requestAct, requestBuy, tick, snapshot, defaultSave, requestDrop } from '../shared/sim.ts';
 import type { ServerMsg, Snapshot } from '../shared/protocol.ts';
 import { MAX_PLAYERS } from '../shared/constants.ts';
@@ -129,7 +129,7 @@ test('checkout requires a waiting customer and pays once', () => {
   const a = addPlayer(w, 'a', 'A', 1);
   w.phase = 'open'; w.phaseLeft = 300;
   // put a customer straight at register 0
-  w.customers.push({ id: 99, kind: 'normal', x: 16.5, z: 12.5, yaw: 0, state: 'atRegister', path: [], speed: 1, shopping: [], items: ['bento', 'drinks'], want: null, foodDone: false, foodFailed: false, heldBy: null, fly: null, patience: 50, patienceMax: 50, mood: 80, timer: 0, register: 0, anger: 0, resolved: false, hits: 0, eaten: [], eatShelf: null, life: 0, look: 0, angry: false, moving: false, knockTimer: 9, gone: false });
+  w.customers.push({ id: 99, kind: 'normal', x: 16.5, z: 12.5, yaw: 0, state: 'atRegister', path: [], speed: 1, shopping: [], items: ['bento', 'drinks'], want: null, foodDone: false, foodFailed: false, heldBy: null, fly: null, phase: 0, minions: [], patience: 50, patienceMax: 50, mood: 80, timer: 0, register: 0, anger: 0, resolved: false, hits: 0, eaten: [], eatShelf: null, life: 0, look: 0, angry: false, moving: false, knockTimer: 9, gone: false });
   w.registers[0] = 99;
   a.x = 16.5; a.z = 10.3;
   const m0 = w.money;
@@ -160,11 +160,7 @@ function runBots(n: number, seconds: number, seed = 7) {
       phases.add(s.phase);
       const me = s.players.find(p => p.id === c.playerId); if (!me) return;
       const o = bots[i].update(s, me, dt);
-      room.handle(c.playerId, { type: 'input', x: o.x, z: o.z, yaw: o.yaw, pitch: 0, seq: 0 });
-      if (o.act) room.handle(c.playerId, { type: 'act', rid: 'b' + rid++, kind: o.act.kind, target: o.act.target });
-      if (o.drop) room.handle(c.playerId, { type: 'drop', rid: 'd' + rid++ });
-      if (o.buy) room.handle(c.playerId, { type: 'buy', rid: 'y' + rid++, item: o.buy });
-      if (o.ready) room.handle(c.playerId, { type: 'ready', ready: true });
+      for (const m of botMessages(o, () => 'b' + rid++)) room.handle(c.playerId, m);
     });
   }
   return { room, phases, conns };

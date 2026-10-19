@@ -6,7 +6,7 @@ import {
 import type { ClientMsg, GameEvent, LobbyState, ServerMsg, StoreSave, Target } from './protocol.ts';
 import {
   World, addPing, addPlayer, applyInput, createWorld, playerDisconnected, removePlayer, requestAct, requestBuy, requestDrop,
-  requestSpin, requestThrow, requestUltimate, sanitizeSave, setReady, snapshot, tick,
+  finishShift, requestSpin, requestThrow, requestUltimate, sanitizeSave, setReady, snapshot, tick,
 } from './sim.ts';
 import type { ShiftConfig } from './career.ts';
 
@@ -257,6 +257,9 @@ export class Room {
         if (wp) wp.away = !!msg.away;
         break;
       }
+      case 'endShift':
+        if (this.solo && w && w.cfg.endless && w.phase !== 'summary') finishShift(w, '');
+        break;
       case 'pause':
         if (this.solo) this.paused = !!msg.paused; // multiplayer menus never pause the shared world
         break;

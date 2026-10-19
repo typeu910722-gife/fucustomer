@@ -20,7 +20,7 @@ function karen(w: World, kind: Customer['kind'], x: number, z: number): Customer
   const c: Customer = {
     id: w.nextId++, kind, x, z, yaw: 0, state: 'wander', path: [], speed: 0, shopping: [], items: [], want: null, foodDone: false,
     foodFailed: false, patience: 100, patienceMax: 100, mood: 80, timer: 0, register: -1, anger: 40, resolved: false, hits: 0,
-    eaten: [], eatShelf: null, life: 999, look: 1, angry: false, moving: false, knockTimer: 999, gone: false, heldBy: null, fly: null,
+    eaten: [], eatShelf: null, life: 999, look: 1, angry: false, moving: false, knockTimer: 999, gone: false, heldBy: null, fly: null, phase: kind === 'boss' ? 1 : 0, minions: [],
   };
   w.customers.push(c);
   return c;
@@ -155,4 +155,31 @@ test('shift ends with a result: chaos 100 fails immediately', () => {
   addPlayer(w, 'a', 'A', 1);
   w.chaos = 100; tick(w, 0.05);
   assert.equal(w.phase, 'summary'); assert.equal(w.result?.won, false); assert.match(w.result!.failReason, /混亂/);
+});
+
+test('boss 奧客之王: five phases, cannot be ejected early, defeat required to win 6-3', () => {
+  const w = createWorld(defaultSave(), 9, buildShiftConfig(profileAt(30), '6-3'));
+  w.phase = 'open'; w.phaseLeft = 999;
+  const p = addPlayer(w, 'a', 'A', 1);
+  const b = karen(w, 'boss', 12, 13); b.state = 'queue'; w.queue.push(b.id);
+  p.x = 12; p.z = 12;
+  // phase 1 → askQueue
+  requestAct(w, 'a', 'q', 'askQueue', { t: 'customer', id: b.id }); run(w, 1.4);
+  assert.equal(b.phase, 2);
+  // throwing him out before the final phase only bounces him back (and advances phases 1-3)
+  b.x = 12; b.z = 14.5; b.fly = null; b.state = 'complain'; p.x = 12; p.z = 13.6; p.yaw = 0;
+  requestAct(w, 'a', 'g', 'grab', { t: 'customer', id: b.id }); requestThrow(w, 'a', 't', 0, 0.1); run(w, 2);
+  assert.equal(w.customers.includes(b), true); assert.equal(b.phase, 3); assert.equal(w.bossDefeated, false);
+  // phase 3 → stop filming twice
+  for (let i = 0; i < 2; i++) { p.x = b.x; p.z = b.z; requestAct(w, 'a', 'f' + i, 'stopFilm', { t: 'customer', id: b.id }); run(w, 0.8); }
+  assert.equal(b.phase, 4);
+  // phase 4 → summons three minions; clearing them moves to phase 5
+  b.x = 12; b.z = 9.6; b.path = []; run(w, 0.2);
+  assert.equal(b.minions.length, 3);
+  for (const id of b.minions) { const m = w.customers.find(c => c.id === id); if (m) { m.resolved = true; m.gone = true; } }
+  run(w, 0.2);
+  assert.equal(b.phase, 5);
+  // final: ultimate ends it
+  w.burst = 100; requestUltimate(w, 'a', 'u');
+  assert.equal(w.bossDefeated, true);
 });

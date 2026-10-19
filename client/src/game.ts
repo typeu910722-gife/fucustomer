@@ -6,6 +6,8 @@ import {
 } from '../../shared/constants.ts';
 import { COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, AABB, clampToStore, resolveCollision } from '../../shared/map.ts';
 import type { ShiftResult } from '../../shared/career.ts';
+import { BOSS_HOW, BOSS_PHASES } from '../../shared/constants.ts';
+import { Tutorial, TutorialView } from './tutorial.ts';
 import type { ActKind, ClientMsg, CustomerSnap, GameEvent, LobbyState, ServerMsg, Snapshot, Target } from '../../shared/protocol.ts';
 import { audio } from './audio.ts';
 import { Input } from './input.ts';
@@ -63,6 +65,8 @@ export class Game {
   private hintUntil = 0;
   private resultSeen = false;
   finalResult: ShiftResult | null = null;
+  private tutorial: Tutorial | null = null;
+  private tut: TutorialView | null = null;
 
   constructor(private conn: GameConnection, private settings: Settings, private touch: boolean, private onExit: (reason?: string, result?: ShiftResult | null) => void) {
     const canvas = $('view') as HTMLCanvasElement;
@@ -198,11 +202,11 @@ export class Game {
   }
 
   // ---------------- UI helpers ----------------
-  toast(text: string, tone: 'good' | 'bad' | 'info' = 'info', ms = 3200) {
+  toast(text: string, tone: 'good' | 'bad' | 'info' = 'info', ms = 2800) {
     const box = $('toasts');
     const d = document.createElement('div'); d.className = `toast ${tone}`; d.textContent = text;
     box.appendChild(d);
-    while (box.childElementCount > 4) box.firstElementChild!.remove();
+    while (box.childElementCount > 3) box.firstElementChild!.remove();
     setTimeout(() => d.remove(), ms);
   }
   private showHint(text: string) {
@@ -228,6 +232,7 @@ export class Game {
     this.shopKey = ''; this.summaryKey = '';
     switch (o) {
       case 'pause': UI.pauseMenu(this.conn.solo, this.code, {
+        endShift: this.snap?.shift.endless ? () => { this.send({ type: 'endShift' }); this.closeOverlay(); } : undefined,
         resume: () => this.closeOverlay(),
         settings: () => this.openOverlay('settings'),
         help: () => this.openOverlay('help'),
@@ -311,11 +316,9 @@ export class Game {
     }
     const foodSlot = me.grabbing == null && (!held || ((held.kind === 'coffee' || held.kind === 'meal') && !me.held2));
     const sells = (f: 'coffee' | 'meal') => s.shift.foods.includes(f);
-    out.push(!sells('coffee') ? { label: '咖啡機', reason: '這間店還沒賣咖啡', target: { t: 'coffee' }, box: COFFEE_MACHINE }
-      : !foodSlot ? { label: '咖啡機', reason: '雙手已滿（最多兩份餐點）', target: { t: 'coffee' }, box: COFFEE_MACHINE }
+    if (sells('coffee')) out.push(!foodSlot ? { label: '咖啡機', reason: '雙手已滿（最多兩份餐點）', target: { t: 'coffee' }, box: COFFEE_MACHINE }
       : { label: '煮咖啡', primary: 'brew', target: { t: 'coffee' }, box: COFFEE_MACHINE });
-    out.push(!sells('meal') ? { label: '微波爐', reason: '這間店還沒賣熱便當', target: { t: 'microwave' }, box: MICROWAVE }
-      : !foodSlot ? { label: '微波爐', reason: '雙手已滿（最多兩份餐點）', target: { t: 'microwave' }, box: MICROWAVE }
+    if (sells('meal')) out.push(!foodSlot ? { label: '微波爐', reason: '雙手已滿（最多兩份餐點）', target: { t: 'microwave' }, box: MICROWAVE }
       : s.backstock.bento <= 0 ? { label: '微波爐', reason: '便當缺貨，按 B 採購', target: { t: 'microwave' }, box: MICROWAVE }
       : { label: `加熱便當（倉庫 ${s.backstock.bento}）`, primary: 'heat', target: { t: 'microwave' }, box: MICROWAVE });
     for (const c of CRATES) {
@@ -356,6 +359,14 @@ export class Game {
     const point = { x: pos.x, z: pos.z, r: 0.45, h: 1.8 };
     const t: Target = { t: 'customer', id: c.id };
     if (c.state === 'leaving' || c.flying || c.held) return null;
+    if (c.kind === 'boss' && !c.resolved) {
+      const ph = `奧客之王・${BOSS_PHASES[c.phase]}`;
+      if (c.phase === 1) return ['queue', 'toRegister', 'atRegister'].includes(c.state) ? { label: `請${ph}排隊`, primary: 'askQueue', target: t, point } : { label: ph, reason: '他正衝向隊伍最前面', target: t, point };
+      if (c.phase === 2) return c.state === 'complain' ? { label: `安撫${ph}（怒氣 ${c.anger}）`, primary: 'calm', target: t, point } : { label: ph, reason: '正走向服務台', target: t, point };
+      if (c.phase === 3) return { label: `制止${ph}`, primary: 'stopFilm', target: t, point };
+      if (c.phase === 4) return { label: ph, reason: '先處理他叫來的小弟！', target: t, point };
+      return { label: ph, reason: '抓起來丟出門，或全店退散！', target: t, point };
+    }
     if (c.kind !== 'normal' && !c.resolved && c.revealed) {
       const name = KAREN_INFO[c.kind].name;
       if (c.kind === 'rager') return c.state === 'complain' ? { label: `安撫${name}（怒氣 ${c.anger}）`, primary: 'calm', alt: 'coupon', altLabel: money >= 30 ? '發折價券 $30' : undefined, target: t, point } : { label: name, reason: '正走向服務台', target: t, point };
@@ -506,8 +517,11 @@ export class Game {
     const tb = this.target?.box ? new THREE.Box3(new THREE.Vector3(this.target.box.x0, 0, this.target.box.z0), new THREE.Vector3(this.target.box.x1, this.target.box.h ?? 1.5, this.target.box.z1))
       : this.target?.point ? new THREE.Box3(new THREE.Vector3(this.target.point.x - 0.35, 0, this.target.point.z - 0.35), new THREE.Vector3(this.target.point.x + 0.35, Math.max(0.15, this.target.point.h), this.target.point.z + 0.35)) : null;
     this.view.setHighlight(tb);
+    if (!this.tutorial && s.shift.id === '1-1') this.tutorial = new Tutorial(this.touch);
+    this.tut = this.tutorial ? this.tutorial.update(s, me, this.pos, now) : null;
+    this.view.setGuide(this.tut?.target ?? null);
     this.view.render();
-    this.minimap.draw(s, this.selfId, { x: this.pos.x, z: this.pos.z, yaw: this.yaw }, now / 1000);
+    this.minimap.draw(s, this.selfId, { x: this.pos.x, z: this.pos.z, yaw: this.yaw }, now / 1000, this.tut?.target ?? null);
 
     this.hudT -= dt;
     if (this.hudT <= 0) { this.hudT = 0.1; this.updateHud(s, me); }
@@ -566,7 +580,11 @@ export class Game {
     // karen alert
     const karens = s.customers.filter(c => c.kind !== 'normal' && !c.resolved && c.revealed && c.state !== 'leaving');
     const al = $('alert');
-    if (karens.length) {
+    const boss = karens.find(k => k.kind === 'boss');
+    if (boss) {
+      al.classList.remove('hidden');
+      al.innerHTML = `👑 奧客之王 第 ${boss.phase}/5 階段「${BOSS_PHASES[boss.phase]}」${boss.phase === 2 ? `（怒氣 ${boss.anger}）` : ''}<div style="font-size:13px;font-weight:600">${BOSS_HOW[boss.phase]}</div>`;
+    } else if (karens.length) {
       const k = karens[0];
       const info = KAREN_INFO[k.kind as keyof typeof KAREN_INFO];
       al.classList.remove('hidden');
@@ -597,15 +615,15 @@ export class Game {
     if (shiftMode) {
       $('sb-title').textContent = `${s.shift.id}・${s.shift.title}`;
       $('sb-extra').textContent = `口碑 ★${s.rating.toFixed(1)}・現金 $${s.money}`;
-      $('sb-time').textContent = s.phase === 'prep' ? `準備 ${Math.ceil(s.phaseLeft)}` : s.phase === 'open' ? `⏱ ${Math.ceil(s.phaseLeft)} 秒` : '收尾中';
+      const elapsed = Math.round(s.shift.length - s.phaseLeft);
+      $('sb-time').textContent = s.phase === 'prep' ? `準備 ${Math.ceil(s.phaseLeft)}` : s.phase !== 'open' ? '收尾中' : s.shift.endless ? `🌙 已撐 ${elapsed} 秒` : `⏱ ${Math.ceil(s.phaseLeft)} 秒`;
       const rev = s.dayStats.revenue;
-      $('sb-money').textContent = `$${rev} / $${s.shift.goal}`;
-      ($('sb-moneybar') as HTMLElement).style.width = `${Math.min(100, rev / s.shift.goal * 100)}%`;
+      $('sb-money').textContent = s.shift.endless ? `$${rev}・分數約 ${rev + s.dayStats.ejected * 10 + s.dayStats.karensResolved * 15 + Math.max(0, elapsed)}` : `$${rev} / $${s.shift.goal}`;
+      ($('sb-moneybar') as HTMLElement).style.width = s.shift.endless ? '100%' : `${Math.min(100, rev / s.shift.goal * 100)}%`;
       ($('sb-moneybar') as HTMLElement).style.background = rev >= s.shift.goal ? '#51cf66' : '#4dabf7';
       $('sb-chaos').textContent = `${s.chaos}%`;
       ($('sb-chaosbar') as HTMLElement).style.width = `${s.chaos}%`;
-      $('h-clock').textContent = s.phase === 'open' ? `⏱ ${Math.ceil(s.phaseLeft)}s` : $('h-clock').textContent;
-      $('h-day').textContent = `第 ${s.shift.chapter} 章`;
+      $('h-day').textContent = s.shift.endless ? '無限夜班' : `第 ${s.shift.chapter} 章`;
     }
     const hasUlt = s.shift.abilities.includes('ultimate');
     $('burst').classList.toggle('hidden', !hasUlt);
@@ -619,7 +637,10 @@ export class Game {
     (($('stamina').firstElementChild) as HTMLElement).style.background = this.stamina < 25 ? '#ff6b6b' : '#69db7c';
     const es = $('eventstrip');
     if (s.event) { es.classList.remove('hidden'); es.textContent = s.event.kind === 'outage' ? `⚡ 停電中 ${Math.ceil(s.event.left)}s` : `🚶 尖峰人潮 ${Math.ceil(s.event.left)}s`; } else es.classList.add('hidden');
-    if (performance.now() > this.hintUntil) $('hintbar').classList.add('hidden');
+    if (this.tut) {
+      const hb = $('hintbar'); hb.classList.remove('hidden');
+      hb.textContent = `📘 教學 ${Math.min(this.tut.step, this.tut.total)}/${this.tut.total}：${this.tut.text}`;
+    } else if (performance.now() > this.hintUntil) $('hintbar').classList.add('hidden');
     if (this.touch) {
       const ab = s.shift.abilities;
       $('t-grab').classList.toggle('hidden', !ab.includes('grab'));

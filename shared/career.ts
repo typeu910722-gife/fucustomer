@@ -28,6 +28,7 @@ export interface ShiftConfig {
   register2: boolean; abilities: Ability[];
   start: { money: number; rating: number; backstock: Record<Product, number>; shelves: Record<Product, number> };
   mods: ShiftMods; hints: string[];
+  boss: boolean; bossAt: number; endless: boolean;
 }
 
 // ---------------- ranks & levels ----------------
@@ -141,7 +142,7 @@ export function modsFor(p: CareerProfile): ShiftMods {
 // ---------------- chapters ----------------
 export interface ShiftDef {
   id: string; title: string; length: number; goal: number; karens: KarenKind[]; maxKarens?: number; karenEvery?: number; firstKaren?: number;
-  foods?: Food[]; events?: ShiftEvent[]; spawnEvery?: number; hints?: string[];
+  foods?: Food[]; events?: ShiftEvent[]; spawnEvery?: number; hints?: string[]; boss?: boolean; expMul?: number;
 }
 export interface ChapterDef {
   n: number; title: string; place: string; minLevel: number; baseExp: number; story: string; coming?: boolean;
@@ -168,7 +169,7 @@ export const CHAPTERS: ChapterDef[] = [
       S({ id: '2-1', title: '咖啡香', length: 130, goal: 160, karens: ['cutter'], foods: ['coffee'], hints: ['客人站在取餐區等咖啡：到咖啡機煮好後拿給他。'] }),
       S({ id: '2-2', title: '微波便當', length: 140, goal: 200, karens: ['cutter'], foods: ['coffee', 'meal'], hints: ['熱便當要在微波爐加熱。手上最多可以拿兩份餐點。'] }),
       S({ id: '2-3', title: '退貨大嬸', length: 150, goal: 230, karens: ['rager', 'cutter'], foods: ['coffee', 'meal'], firstKaren: 30, hints: ['退貨大鬧：怒氣滿了會砸店。持續按互動安撫，或按次要鍵發折價券。'] }),
-      S({ id: '2-4', title: '突然停電', length: 150, goal: 250, karens: ['rager', 'cutter'], foods: ['coffee', 'meal'], events: ['outage'], hints: ['停電時燈光變暗、顧客比較不耐煩，撐到恢復供電！'] }),
+      S({ id: '2-4', title: '突然停電', length: 150, goal: 220, karens: ['rager', 'cutter'], foods: ['coffee', 'meal'], events: ['outage'], hints: ['停電時燈光變暗、顧客比較不耐煩，撐到恢復供電！'] }),
       S({ id: '2-5', title: '午夜考驗', length: 170, goal: 300, karens: ['rager', 'cutter'], maxKarens: 2, foods: ['coffee', 'meal'], events: ['outage'], spawnEvery: 7 }),
     ],
   },
@@ -176,41 +177,41 @@ export const CHAPTERS: ChapterDef[] = [
     n: 3, title: '車站店', place: '車站前門市・通勤尖峰', minLevel: 11, baseExp: 360,
     story: '調到車站店，人潮一波接一波，還有拿著自拍棒的直播主。你學會了一招：直接請出門。',
     shifts: [
-      S({ id: '3-1', title: '請出門的藝術', length: 140, goal: 240, karens: ['cutter', 'rager'], foods: ['coffee'], hints: ['新能力：抓起奧客（空白鍵／抓丟），轉向發光出口再按一次丟出去！誤丟一般顧客會被扣分。'] }),
-      S({ id: '3-2', title: '直播主來了', length: 150, goal: 270, karens: ['streamer', 'cutter'], foods: ['coffee', 'meal'], hints: ['直播客會躲人又撞翻商品，追上去勸阻或直接請出門。'] }),
-      S({ id: '3-3', title: '早高峰', length: 150, goal: 300, karens: ['streamer', 'rager'], foods: ['coffee', 'meal'], events: ['rush'], hints: ['尖峰時段客人暴增，先顧收銀！'] }),
-      S({ id: '3-4', title: '誤點的列車', length: 160, goal: 330, karens: ['streamer', 'rager', 'cutter'], foods: ['coffee', 'meal'], events: ['rush', 'outage'] }),
-      S({ id: '3-5', title: '末班車', length: 180, goal: 380, karens: ['streamer', 'rager', 'cutter'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 6.5 }),
+      S({ id: '3-1', title: '請出門的藝術', length: 140, goal: 250, karens: ['cutter', 'rager'], foods: ['coffee'], hints: ['新能力：抓起奧客（空白鍵／抓丟），轉向發光出口再按一次丟出去！誤丟一般顧客會被扣分。'] }),
+      S({ id: '3-2', title: '直播主來了', length: 150, goal: 260, karens: ['streamer', 'cutter'], foods: ['coffee', 'meal'], hints: ['直播客會躲人又撞翻商品，追上去勸阻或直接請出門。'] }),
+      S({ id: '3-3', title: '早高峰', length: 150, goal: 270, karens: ['streamer', 'rager'], foods: ['coffee', 'meal'], events: ['rush'], hints: ['尖峰時段客人暴增，先顧收銀！'] }),
+      S({ id: '3-4', title: '誤點的列車', length: 160, goal: 280, karens: ['streamer', 'rager', 'cutter'], foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 6.8 }),
+      S({ id: '3-5', title: '末班車', length: 180, goal: 350, karens: ['streamer', 'rager', 'cutter'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 6.5 }),
     ],
   },
   {
     n: 4, title: '觀光旗艦店', place: '老街旗艦店・觀光客滿', minLevel: 16, baseExp: 485, register2: true,
     story: '升上副店長，負責觀光旗艦店。兩台收銀機、偷吃的、亂丟的，全部都要顧。',
     shifts: [
-      S({ id: '4-1', title: '雙收銀', length: 150, goal: 320, karens: ['cutter', 'hog'], foods: ['coffee', 'meal'], spawnEvery: 6.5, hints: ['旗艦店有兩台收銀機。新能力：拖把旋風（Q）擊退身邊的人。'] }),
-      S({ id: '4-2', title: '試吃不是吃到飽', length: 160, goal: 360, karens: ['hog', 'litterer'], foods: ['coffee', 'meal'], spawnEvery: 6.5, hints: ['亂丟客會一路製造髒污；偷吃客要靠近才看得到。'] }),
-      S({ id: '4-3', title: '旅遊團', length: 160, goal: 400, karens: ['hog', 'litterer', 'streamer'], foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 6 }),
-      S({ id: '4-4', title: '颱風夜', length: 170, goal: 420, karens: ['rager', 'litterer', 'hog'], foods: ['coffee', 'meal'], events: ['outage', 'rush'], spawnEvery: 6 }),
-      S({ id: '4-5', title: '旗艦店評鑑', length: 180, goal: 470, karens: ['rager', 'litterer', 'hog', 'streamer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage', 'rush'], spawnEvery: 5.8 }),
+      S({ id: '4-1', title: '雙收銀', length: 150, goal: 280, karens: ['cutter', 'hog'], foods: ['coffee', 'meal'], spawnEvery: 6.5, hints: ['旗艦店有兩台收銀機。新能力：拖把旋風（Q）擊退身邊的人。'] }),
+      S({ id: '4-2', title: '試吃不是吃到飽', length: 160, goal: 310, karens: ['hog', 'litterer'], foods: ['coffee', 'meal'], spawnEvery: 6.5, hints: ['亂丟客會一路製造髒污；偷吃客要靠近才看得到。'] }),
+      S({ id: '4-3', title: '旅遊團', length: 160, goal: 335, karens: ['hog', 'litterer', 'streamer'], foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 6 }),
+      S({ id: '4-4', title: '颱風夜', length: 170, goal: 355, karens: ['rager', 'litterer', 'hog'], foods: ['coffee', 'meal'], events: ['outage', 'rush'], spawnEvery: 6 }),
+      S({ id: '4-5', title: '旗艦店評鑑', length: 180, goal: 420, karens: ['rager', 'litterer', 'hog', 'streamer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage', 'rush'], spawnEvery: 5.8 }),
     ],
   },
   {
-    n: 5, title: '跨年夜美食街', place: '百貨美食街・跨年夜', minLevel: 21, baseExp: 610, register2: true,
+    n: 5, title: '跨年夜美食街', place: '百貨美食街・跨年夜', minLevel: 21, baseExp: 760, register2: true,
     story: '店長的升職考核：跨年夜的美食街，所有奧客一次到齊。',
     shifts: [
-      S({ id: '5-1', title: '倒數 6 小時', length: 170, goal: 480, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 5.8 }),
-      S({ id: '5-2', title: '煙火前', length: 180, goal: 520, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.5 }),
-      S({ id: '5-3', title: '人擠人', length: 180, goal: 560, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.2 }),
-      S({ id: '5-4', title: '跨年倒數', length: 200, goal: 620, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 4, karenEvery: 30, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5 }),
+      S({ id: '5-1', title: '倒數 6 小時', length: 170, goal: 385, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 5.8 }),
+      S({ id: '5-2', title: '煙火前', length: 180, goal: 405, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.5 }),
+      S({ id: '5-3', title: '人擠人', length: 180, goal: 400, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.2 }),
+      S({ id: '5-4', title: '跨年倒數', length: 200, goal: 460, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 4, karenEvery: 30, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5 }),
     ],
   },
   {
-    n: 6, title: '奧客之王', place: '總公司旗艦店・最終班', minLevel: 26, baseExp: 750, register2: true, coming: true,
+    n: 6, title: '奧客之王', place: '總公司旗艦店・最終班', minLevel: 26, baseExp: 750, register2: true,
     story: '傳說中的「奧客之王」要來了。只有終極打工人能讓他退散。',
     shifts: [
-      S({ id: '6-1', title: '前哨戰', length: 180, goal: 600, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 4, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5 }),
-      S({ id: '6-2', title: '總部視察', length: 190, goal: 650, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 4, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 4.8 }),
-      S({ id: '6-3', title: '奧客之王', length: 240, goal: 700, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 5, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 4.8 }),
+      S({ id: '6-1', title: '前哨戰', length: 180, goal: 400, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5, expMul: 2, hints: ['新能力：全店退散（R）。請出門、旋風、投擲都會累積爆發值，滿 100 一次清場！'] }),
+      S({ id: '6-2', title: '總部視察', length: 190, goal: 440, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 4.8, expMul: 2 }),
+      S({ id: '6-3', title: '奧客之王', length: 240, goal: 400, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 1, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.2, boss: true, expMul: 2, hints: ['奧客之王會分五個階段鬧事，看畫面下方的提示一關一關破！最後把他丟出門或全店退散。'] }),
     ],
   },
 ];
@@ -243,7 +244,20 @@ export function shiftUnlocked(p: CareerProfile, id: string): { ok: boolean; why?
   return { ok: true };
 }
 
+export const ENDLESS_ID = 'endless';
+export function endlessUnlocked(p: CareerProfile) { return (p.stars['6-3'] ?? 0) > 0; }
+
 export function buildShiftConfig(p: CareerProfile, id: string): ShiftConfig {
+  if (id === ENDLESS_ID) {
+    return {
+      mode: 'shift', id, title: '無限夜班', chapter: 7, length: 1e6, goal: 0,
+      karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], firstKaren: 25, karenEvery: 40, maxKarens: 2,
+      spawnEvery: 6.5, maxCustomers: 20, foods: ['coffee', 'meal'], foodChance: 0.35, events: ['rush', 'outage'], firstEvent: 50,
+      register2: true, abilities: abilitiesAt(p.level),
+      start: { money: 120, rating: 3, backstock: { drinks: 40, snacks: 40, bento: 30 }, shelves: { drinks: 10, snacks: 10, bento: 8 } },
+      mods: modsFor(p), hints: ['無限夜班：撐越久分數越高，客人和奧客會越來越多。混亂爆表或口碑歸零就下班。'], boss: false, bossAt: 0, endless: true,
+    };
+  }
   const f = findShift(id);
   if (!f) throw new Error('unknown shift ' + id);
   const { chapter: c, shift: s } = f;
@@ -259,7 +273,7 @@ export function buildShiftConfig(p: CareerProfile, id: string): ShiftConfig {
       backstock: { drinks: Math.round(24 * stockScale), snacks: Math.round(24 * stockScale), bento: Math.round(18 * stockScale) },
       shelves: { drinks: 8, snacks: 8, bento: 6 },
     },
-    mods: modsFor(p), hints: s.hints ?? [],
+    mods: modsFor(p), hints: s.hints ?? [], boss: !!s.boss, bossAt: 40, endless: false,
   };
 }
 
@@ -267,8 +281,10 @@ export function buildShiftConfig(p: CareerProfile, id: string): ShiftConfig {
 export interface ShiftResult {
   shiftId: string; won: boolean; failReason: string; revenue: number; goal: number; rating: number; chaos: number;
   served: number; angryLeft: number; karensResolved: number; karensFailed: number; ejected: number; cleaned: number; maxCombo: number;
+  score?: number; survived?: number; bossDefeated?: boolean;
 }
 export function starsFor(r: ShiftResult) {
+  if (r.shiftId === ENDLESS_ID) { const sc = r.score ?? 0; return sc >= 3000 ? 3 : sc >= 1600 ? 2 : sc >= 800 ? 1 : 0; }
   if (!r.won) return 0;
   let s = 1;
   if (r.rating >= 3.5 && r.chaos < 60) s++;
@@ -279,12 +295,23 @@ export function starsFor(r: ShiftResult) {
 export interface Reward { stars: number; exp: number; wallet: number; levels: number[]; firstClear: boolean; newBest: boolean }
 /** Applies a finished shift to the profile. EXP: full on first clear, 60% on replays, 35% on a failed attempt. */
 export function applyResult(p: CareerProfile, r: ShiftResult): Reward {
+  if (r.shiftId === ENDLESS_ID) {
+    const score = r.score ?? 0;
+    const prevBest = p.endlessBest;
+    const exp = Math.round(Math.min(2500, score * 0.4));
+    const wallet = Math.round(score * 0.15 + r.ejected * 4);
+    p.wallet += wallet; p.stats.shifts++; p.stats.served += r.served; p.stats.ejected += r.ejected; p.stats.karens += r.karensResolved; p.stats.revenue += r.revenue;
+    p.endlessBest = Math.max(prevBest, score);
+    const levels = addExp(p, exp);
+    return { stars: starsFor(r), exp, wallet, levels, firstClear: false, newBest: score > prevBest };
+  }
   const f = findShift(r.shiftId);
   const base = f?.chapter.baseExp ?? 100;
   const stars = starsFor(r);
   const prevStars = p.stars[r.shiftId] ?? 0;
   const firstClear = stars > 0 && prevStars === 0;
-  let exp = r.won ? base * (0.7 + 0.15 * stars) * (firstClear || stars > prevStars ? 1 : 0.6) : base * 0.35;
+  const mul = f?.shift.expMul ?? 1;
+  let exp = (r.won ? base * (0.7 + 0.15 * stars) * (firstClear || stars > prevStars ? 1 : 0.6) : base * 0.35) * mul;
   exp = Math.round(exp);
   const wallet = Math.round(r.revenue * 0.18 + (r.won ? 60 : 15) + stars * 20 + r.ejected * 4 + r.cleaned * 2);
   p.wallet += wallet;
@@ -292,6 +319,7 @@ export function applyResult(p: CareerProfile, r: ShiftResult): Reward {
   p.stats.served += r.served; p.stats.ejected += r.ejected; p.stats.karens += r.karensResolved; p.stats.revenue += r.revenue;
   if (stars > prevStars) p.stars[r.shiftId] = stars;
   if (r.won) p.clears[r.shiftId] = (p.clears[r.shiftId] ?? 0) + 1;
+  if (r.shiftId === '6-3' && r.won && p.title !== '終極打工人') p.title = '奧客剋星';
   const levels = addExp(p, exp);
   return { stars, exp, wallet, levels, firstClear, newBest: stars > prevStars };
 }
