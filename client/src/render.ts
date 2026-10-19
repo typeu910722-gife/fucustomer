@@ -2,7 +2,7 @@
 import * as THREE from 'three';
 import { PRODUCT_INFO, PRODUCTS, Product, shelfCapacity, EYE_HEIGHT } from '../../shared/constants.ts';
 import {
-  AABB, COFFEE_MACHINE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DECOR, DOOR_X0, DOOR_X1, MOP_RACK, REGISTERS, SHELVES,
+  AABB, COFFEE_MACHINE, MICROWAVE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DECOR, DOOR_X0, DOOR_X1, MOP_RACK, REGISTERS, SHELVES,
   STORE_D, STORE_W, WALLS,
 } from '../../shared/map.ts';
 import type { CustomerSnap, Held, PlayerSnap, Snapshot } from '../../shared/protocol.ts';
@@ -142,6 +142,11 @@ export function heldModel(q: Quality, held: Held): THREE.Object3D {
     const b = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.3, 0.32), mat(0xc49a6c, q));
     const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.08, 0.33), mat(PRODUCT_INFO[held.product].color, q));
     g.add(b, stripe);
+  } else if (held.kind === 'meal') {
+    const tray = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.07, 0.22), mat(0xf8f9fa, q));
+    const food = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.04, 0.18), mat(0xe8590c, q)); food.position.y = 0.05;
+    const steam = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5 })); steam.position.y = 0.14;
+    g.add(tray, food, steam);
   } else if (held.kind === 'coffee') {
     const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.055, 0.17, 12), mat(0xffffff, q));
     const sl = new THREE.Mesh(new THREE.CylinderGeometry(0.072, 0.072, 0.05, 12), mat(0x8b5a2b, q)); sl.position.y = 0.02;
@@ -204,6 +209,12 @@ export class StoreView {
   private spillGeo = new THREE.CircleGeometry(0.45, 20);
   private spillMat = new THREE.MeshBasicMaterial({ color: 0x8a6d3b, transparent: true, opacity: 0.85 });
   highlight: THREE.Box3Helper;
+  private microwaveGlow!: THREE.Mesh;
+  private lights: { l: THREE.Light; base: number }[] = [];
+  private exitGlow!: THREE.Mesh;
+  private power = 1;
+  shake = 0;
+  flash = 0;
 
   constructor(canvas: HTMLCanvasElement, quality: Quality, fov: number) {
     this.q = quality;
@@ -245,12 +256,12 @@ export class StoreView {
     S.background = new THREE.Color(0x9ec9ef);
     S.fog = new THREE.Fog(0x9ec9ef, 30, 90);
     // lights
-    S.add(new THREE.HemisphereLight(0xffffff, 0x8a7f6a, q === 'low' ? 1.6 : 1.1));
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x8a7f6a, q === 'low' ? 1.6 : 1.1); S.add(hemi); this.lights.push({ l: hemi, base: hemi.intensity });
     if (q !== 'low') {
       for (const [x, z] of [[6, 4], [12, 8], [18, 4], [18, 12], [6, 12]]) {
-        const l = new THREE.PointLight(0xfff1d6, 9, 14, 1.6); l.position.set(x, 2.9, z); S.add(l);
+        const l = new THREE.PointLight(0xfff1d6, 9, 14, 1.6); l.position.set(x, 2.6, z); S.add(l); this.lights.push({ l, base: l.intensity });
       }
-    } else S.add(new THREE.AmbientLight(0xffffff, 0.6));
+    } else { const a = new THREE.AmbientLight(0xffffff, 0.6); S.add(a); this.lights.push({ l: a, base: a.intensity }); }
     if (q === 'high') {
       const d = new THREE.DirectionalLight(0xffffff, 0.9); d.position.set(16, 12, 22); d.target.position.set(12, 0, 8);
       d.castShadow = true; d.shadow.mapSize.set(2048, 2048);
@@ -290,6 +301,8 @@ export class StoreView {
     this.doorL = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.55, 0.06), doorM); this.doorL.position.set(DOOR_X0 + 0.75, 1.3, STORE_D + 0.15);
     this.doorR = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.55, 0.06), doorM); this.doorR.position.set(DOOR_X1 - 0.75, 1.3, STORE_D + 0.15);
     S.add(this.doorL, this.doorR);
+    this.exitGlow = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_X1 - DOOR_X0, 2.6), new THREE.MeshBasicMaterial({ color: 0xff922b, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
+    this.exitGlow.position.set(12, 1.3, STORE_D + 0.05); S.add(this.exitGlow);
     // sign
     const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 0.9), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '奧客退散 FUCustomer', size: 70, color: '#fff' }], 1024, 200, '#ff6b6b')) }));
     sign.position.set(12, 2.7, STORE_D - 0.02); sign.rotation.y = Math.PI; S.add(sign);
@@ -352,6 +365,11 @@ export class StoreView {
     const cm = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.55, 0.45), mat(0xadb5bd, q, { metal: 0.6, rough: 0.3 })); cm.position.set((COFFEE_MACHINE.x0 + COFFEE_MACHINE.x1) / 2, 1.2, (COFFEE_MACHINE.z0 + COFFEE_MACHINE.z1) / 2); S.add(cm);
     for (let i = 0; i < 3; i++) { const st = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4 })); st.position.copy(cm.position).add(new THREE.Vector3(0, 0.35, 0)); S.add(st); this.coffeeSteam.push(st); }
     const cl = new Label(1.2, 0.3); cl.set('coffee', () => textCanvas([{ text: '☕ 咖啡機', size: 56 }], 512, 128)); cl.sprite.position.set(cm.position.x, 2.0, cm.position.z); S.add(cl.sprite);
+    S.add(boxMesh(MICROWAVE, 0.9, mat(0x343a40, q)));
+    const mw = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.42, 0.5), mat(0xf1f3f5, q, { rough: 0.4 })); mw.position.set((MICROWAVE.x0 + MICROWAVE.x1) / 2, 1.12, (MICROWAVE.z0 + MICROWAVE.z1) / 2); S.add(mw);
+    const mwDoor = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.3), new THREE.MeshBasicMaterial({ color: 0x212529 })); mwDoor.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.14); mwDoor.rotation.y = 0; S.add(mwDoor);
+    this.microwaveGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.28), new THREE.MeshBasicMaterial({ color: 0xffa94d, transparent: true, opacity: 0 })); this.microwaveGlow.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.135); S.add(this.microwaveGlow);
+    const ml2 = new Label(1.2, 0.3); ml2.set('mw', () => textCanvas([{ text: '🍱 微波爐', size: 56 }], 512, 128)); ml2.sprite.position.set(mw.position.x, 2.0, mw.position.z); S.add(ml2.sprite);
     const pickupMark = new THREE.Mesh(new THREE.CircleGeometry(0.5, 20), new THREE.MeshBasicMaterial({ color: 0xffd43b, transparent: true, opacity: 0.35 })); pickupMark.rotation.x = -Math.PI / 2; pickupMark.position.set(COFFEE_PICKUP.x, 0.01, COFFEE_PICKUP.z); S.add(pickupMark);
     const pl = new Label(1.2, 0.3); pl.set('pick', () => textCanvas([{ text: '取餐區', size: 56 }], 512, 128)); pl.sprite.position.set(COFFEE_PICKUP.x, 2.3, COFFEE_PICKUP.z); S.add(pl.sprite);
     const compMark = new THREE.Mesh(new THREE.CircleGeometry(0.5, 20), new THREE.MeshBasicMaterial({ color: 0xff6b6b, transparent: true, opacity: 0.3 })); compMark.rotation.x = -Math.PI / 2; compMark.position.set(COMPLAINT_SPOT.x, 0.01, COMPLAINT_SPOT.z); S.add(compMark);
@@ -432,19 +450,25 @@ export class StoreView {
         e = { h, s: { x: c.x, z: c.z, yaw: c.yaw }, kind: c.kind };
         this.customers.set(c.id, e); this.scene.add(h.group);
       }
-      this.smooth(e.s, c.x, c.z, c.yaw, dt);
-      e.h.group.position.set(e.s.x, 0, e.s.z); e.h.group.rotation.y = e.s.yaw;
-      e.h.animate(dt, c.moving, c.kind === 'streamer' ? 1.4 : 1);
+      if (c.flying || c.held) { e.s.x = c.x; e.s.z = c.z; } else this.smooth(e.s, c.x, c.z, c.yaw, dt);
+      // held: carried sideways at chest height so the view stays clear; flying: tumbling
+      e.h.group.position.set(e.s.x, c.held ? 0.95 : c.y, e.s.z); e.h.group.rotation.y = e.s.yaw;
+      e.h.group.rotation.x = c.flying ? e.h.group.rotation.x + dt * 9 : 0;
+      e.h.group.rotation.z = c.held ? Math.PI / 2 + Math.sin(this.time * 12) * 0.15 : 0;
+      e.h.animate(dt, c.moving || c.held || c.flying, c.held || c.flying ? 3 : c.kind === 'streamer' ? 1.4 : 1);
       if (Math.abs(c.x - 12) < 2.2 && Math.abs(c.z - 16) < 2.2) doorNear = true;
       // icons
       let key = '', draw: (() => HTMLCanvasElement) | null = null;
-      if (c.kind !== 'normal' && !c.resolved && c.revealed) {
+      if (c.held || c.flying) { key = c.held ? 'held' : 'fly'; draw = () => textCanvas([{ text: c.held ? '😵 放開我！' : '😱 啊——', size: 50 }], 512, 128, 'rgba(15,16,26,0.7)'); }
+      else if (c.kind !== 'normal' && !c.resolved && c.revealed) {
         if (c.kind === 'rager') { const a = c.anger; key = 'r' + Math.round(a / 4); draw = () => textCanvas([{ text: '😡 退貨大鬧', size: 46, color: '#ffc9c9' }], 512, 150, 'rgba(120,10,30,0.88)', { v: a / 100, color: a > 70 ? '#ff3b3b' : '#ffa94d' }); }
         else if (c.kind === 'cutter') { key = 'cut'; draw = () => textCanvas([{ text: '⚠ 插隊！', size: 54, color: '#ffe066' }], 512, 128, 'rgba(120,60,0,0.88)'); }
         else if (c.kind === 'streamer') { key = 'str'; draw = () => textCanvas([{ text: '📱 直播亂拍', size: 50, color: '#d0bfff' }], 512, 128, 'rgba(60,20,120,0.88)'); }
         else if (c.kind === 'hog') { key = 'hog'; draw = () => textCanvas([{ text: '❓ 偷吃中', size: 52, color: '#ffe066' }], 512, 128, 'rgba(60,60,60,0.88)'); }
-      } else if (c.state === 'waitCoffee' || (c.wantsCoffee && c.state === 'toCoffee')) {
-        key = 'cf' + Math.round(c.patience * 10); draw = () => textCanvas([{ text: '☕ 等咖啡', size: 46 }], 512, 150, 'rgba(15,16,26,0.82)', { v: c.patience, color: c.patience < 0.3 ? '#ff6b6b' : '#ffd43b' });
+        else if (c.kind === 'litterer') { key = 'lit'; draw = () => textCanvas([{ text: '🗑 亂丟垃圾', size: 50, color: '#d8f5a2' }], 512, 128, 'rgba(40,70,20,0.88)'); }
+      } else if (c.want && (c.state === 'waitFood' || c.state === 'toFood')) {
+        const label = c.want === 'meal' ? '🍱 等熱便當' : '☕ 等咖啡';
+        key = 'cf' + c.want + Math.round(c.patience * 10); draw = () => textCanvas([{ text: label, size: 46 }], 512, 150, 'rgba(15,16,26,0.82)', { v: c.patience, color: c.patience < 0.3 ? '#ff6b6b' : '#ffd43b' });
       } else if (c.state === 'queue' || c.state === 'atRegister' || c.state === 'toRegister') {
         key = 'q' + Math.round(c.patience * 10) + c.state; draw = () => textCanvas([{ text: c.state === 'atRegister' ? '💳 等結帳' : '⏳ 排隊', size: 44 }], 512, 150, 'rgba(15,16,26,0.82)', { v: c.patience, color: c.patience < 0.3 ? '#ff6b6b' : '#51cf66' });
       } else if (c.state === 'leaving' && c.kind === 'normal' && c.patience <= 0.01) {
@@ -481,6 +505,14 @@ export class StoreView {
     }
     for (const [id, e] of this.players) if (!seenP.has(id)) { this.scene.remove(e.h.group); this.players.delete(id); }
 
+    // outage dims the lights, microwave glows while someone heats food
+    this.power += (snap.power - this.power) * Math.min(1, dt * 4);
+    const flicker = snap.power < 1 ? 0.85 + Math.random() * 0.15 : 1;
+    for (const { l, base } of this.lights) l.intensity = base * this.power * flicker;
+    (this.microwaveGlow.material as THREE.MeshBasicMaterial).opacity = snap.players.some(p => p.busy?.kind === 'heat') ? 0.6 + Math.sin(this.time * 8) * 0.2 : 0;
+    const me = snap.players.find(p => p.id === selfId);
+    (this.exitGlow.material as THREE.MeshBasicMaterial).opacity = me?.grabbing != null ? 0.35 + Math.sin(this.time * 6) * 0.15 : 0;
+    this.shake = Math.max(0, this.shake - dt); this.flash = Math.max(0, this.flash - dt);
     // door
     this.doorOpen += ((doorNear ? 1 : 0) - this.doorOpen) * Math.min(1, dt * 5);
     this.doorL.position.x = DOOR_X0 + 0.75 - this.doorOpen * 1.3;
@@ -545,8 +577,19 @@ export class StoreView {
   }
 
   /** First-person camera + held item view model. */
+  private viewHeld2 = new THREE.Group();
+  private viewHeld2Key = '';
+  setSecondHand(held: Held | null) {
+    if (!this.viewHeld2.parent) { this.camera.add(this.viewHeld2); this.viewHeld2.position.set(-0.34, -0.3, -0.55); }
+    const key = held ? held.kind : '';
+    if (key === this.viewHeld2Key) return;
+    this.viewHeld2Key = key; this.viewHeld2.clear();
+    if (held) this.viewHeld2.add(heldModel(this.q, held));
+  }
+
   setCamera(x: number, z: number, yaw: number, pitch: number, bob: number, held: Held | null) {
-    this.camera.position.set(x, EYE_HEIGHT + Math.sin(bob) * 0.035, z);
+    const sh = this.shake * 0.12;
+    this.camera.position.set(x + (Math.random() - 0.5) * sh, EYE_HEIGHT + Math.sin(bob) * 0.035 + (Math.random() - 0.5) * sh, z);
     this.camera.rotation.set(pitch, yaw + Math.PI, 0);
     const key = held ? (held.kind === 'box' ? 'box' + held.product : held.kind) : '';
     if (key !== this.viewHeldKey) {

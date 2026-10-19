@@ -129,7 +129,7 @@ test('checkout requires a waiting customer and pays once', () => {
   const a = addPlayer(w, 'a', 'A', 1);
   w.phase = 'open'; w.phaseLeft = 300;
   // put a customer straight at register 0
-  w.customers.push({ id: 99, kind: 'normal', x: 16.5, z: 12.5, yaw: 0, state: 'atRegister', path: [], speed: 1, shopping: [], items: ['bento', 'drinks'], wantsCoffee: false, coffeeDone: false, coffeeFailed: false, patience: 50, patienceMax: 50, mood: 80, timer: 0, register: 0, anger: 0, resolved: false, hits: 0, eaten: [], eatShelf: null, life: 0, look: 0, angry: false, moving: false, knockTimer: 9, gone: false });
+  w.customers.push({ id: 99, kind: 'normal', x: 16.5, z: 12.5, yaw: 0, state: 'atRegister', path: [], speed: 1, shopping: [], items: ['bento', 'drinks'], want: null, foodDone: false, foodFailed: false, heldBy: null, fly: null, patience: 50, patienceMax: 50, mood: 80, timer: 0, register: 0, anger: 0, resolved: false, hits: 0, eaten: [], eatShelf: null, life: 0, look: 0, angry: false, moving: false, knockTimer: 9, gone: false });
   w.registers[0] = 99;
   a.x = 16.5; a.z = 10.3;
   const m0 = w.money;

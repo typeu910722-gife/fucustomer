@@ -1,7 +1,7 @@
 // Simulated player ("模擬玩家") used by automated tests and load tests. It only sees the same
 // snapshot a real client sees and sends the same messages, so it exercises the real protocol.
 import { PRODUCTS, Product, SERVER_INTERACT_RANGE, WALK_SPEED, shelfCapacity } from './constants.ts';
-import { COFFEE_MACHINE, CRATES, MOP_RACK, REGISTERS, SHELVES, findPath, shelfBrowseSpots } from './map.ts';
+import { COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, findPath, shelfBrowseSpots } from './map.ts';
 import type { ActKind, CustomerSnap, PlayerSnap, Snapshot, Target } from './protocol.ts';
 
 export interface BotOutput {
@@ -66,9 +66,13 @@ export class Bot {
       const cr = CRATES.find(c => c.product === p)!;
       return { pos: { x: (cr.box.x0 + cr.box.x1) / 2, z: cr.box.z1 + 0.7 }, kind: 'returnBox', target: { t: 'crate', product: p }, key: 'rb' + p };
     }
-    if (held?.kind === 'coffee') {
-      const w = C.find(c => c.state === 'waitCoffee');
-      return w ? cust(w, 'deliver') : null;
+    if (held?.kind === 'coffee' || held?.kind === 'meal') {
+      const kinds = [held.kind, me.held2?.kind];
+      const w = C.find(c => c.state === 'waitFood' && c.want && kinds.includes(c.want));
+      if (w) return cust(w, 'deliver');
+      const more = C.find(c => c.state === 'waitFood' && c.want && !kinds.includes(c.want));
+      if (more && !me.held2) return foodGoal(more.want!);
+      return null;
     }
     if (held?.kind === 'mop') {
       const sp = nearest(me, s.spills);
@@ -83,6 +87,7 @@ export class Bot {
       if (k.kind === 'cutter' && ['queue', 'toRegister', 'atRegister'].includes(k.state)) return cust(k, 'askQueue');
       if (k.kind === 'streamer' && this.role !== 'cashier') return cust(k, 'stopFilm');
       if (k.kind === 'hog') return cust(k, 'checkBag');
+      if (k.kind === 'litterer') return cust(k, 'stopLitter');
     }
     const regs = s.upgrades.register2 > 0 ? REGISTERS : [REGISTERS[0]];
     const tasks: Goal[] = [];
@@ -90,8 +95,9 @@ export class Bot {
       const waiting = C.find(c => c.state === 'atRegister' && Math.abs(c.x - r.customer.x) < 0.6 && Math.abs(c.z - r.customer.z) < 0.6);
       if (waiting) tasks.push({ pos: r.cashier, kind: 'checkout', target: { t: 'register', idx: r.idx }, key: 'co' + r.idx });
     }
-    const coffeeWaiting = C.some(c => c.state === 'waitCoffee');
-    const coffeeGoal: Goal = { pos: { x: (COFFEE_MACHINE.x0 + COFFEE_MACHINE.x1) / 2, z: COFFEE_MACHINE.z1 + 0.6 }, kind: 'brew', target: { t: 'coffee' }, key: 'brew' };
+    const waitingFood = C.find(c => c.state === 'waitFood' && c.want);
+    const coffeeWaiting = !!waitingFood;
+    const coffeeGoal: Goal = waitingFood ? foodGoal(waitingFood.want!) : foodGoal('coffee');
     const lowShelf = PRODUCTS.filter(p => s.shelves[p] < shelfCapacity(s.upgrades.shelves) * 0.5 && s.backstock[p] > 0);
     const restock: Goal[] = lowShelf.map(p => { const cr = CRATES.find(c => c.product === p)!; return { pos: { x: (cr.box.x0 + cr.box.x1) / 2, z: cr.box.z1 + 0.7 }, kind: 'takeBox' as ActKind, target: { t: 'crate', product: p } as Target, key: 'tb' + p }; });
     const item = nearest(me, s.items.filter(i => i.held.kind === 'box'));
@@ -106,6 +112,11 @@ export class Bot {
   }
 }
 
+function foodGoal(f: 'coffee' | 'meal'): Goal {
+  const b = f === 'coffee' ? COFFEE_MACHINE : MICROWAVE;
+  return { pos: { x: (b.x0 + b.x1) / 2, z: b.z1 + 0.6 }, kind: f === 'coffee' ? 'brew' : 'heat', target: { t: f === 'coffee' ? 'coffee' : 'microwave' }, key: 'food' + f };
+}
+
 function shelfGoal(me: { x: number; z: number }, p: Product, kind: ActKind): Goal {
   const spot = nearest(me, shelfBrowseSpots(p))!;
   return { pos: spot, kind, target: { t: 'shelf', product: p }, key: kind + p };
@@ -113,7 +124,7 @@ function shelfGoal(me: { x: number; z: number }, p: Product, kind: ActKind): Goa
 
 function goalDistance(s: Snapshot, me: PlayerSnap, g: Goal) {
   const t = g.target;
-  const box = t.t === 'shelf' ? SHELVES.find(x => x.product === t.product)!.box : t.t === 'crate' ? CRATES.find(x => x.product === t.product)!.box : t.t === 'coffee' ? COFFEE_MACHINE : t.t === 'mop' ? MOP_RACK : null;
+  const box = t.t === 'shelf' ? SHELVES.find(x => x.product === t.product)!.box : t.t === 'crate' ? CRATES.find(x => x.product === t.product)!.box : t.t === 'coffee' ? COFFEE_MACHINE : t.t === 'microwave' ? MICROWAVE : t.t === 'mop' ? MOP_RACK : null;
   if (box) {
     const dx = Math.max(box.x0 - me.x, 0, me.x - box.x1), dz = Math.max(box.z0 - me.z, 0, me.z - box.z1);
     return Math.hypot(dx, dz);

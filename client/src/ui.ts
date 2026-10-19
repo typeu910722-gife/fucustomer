@@ -18,6 +18,7 @@ function on(id: string, ev: string, fn: (e: Event) => void) { document.getElemen
 function val(id: string) { return (document.getElementById(id) as HTMLInputElement).value; }
 
 export interface MainMenuHandlers {
+  career(): void;
   solo(fresh: boolean): void; create(continueCoop: boolean): void; join(code: string): void; rejoin(): void; settings(): void;
   setName(n: string): void;
 }
@@ -26,15 +27,16 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: Sto
   show(`
     <div class="card">
       <h1 class="title">奧客<span>退散</span></h1>
-      <div class="subtitle">FUCustomer・第一人稱店面經營・1～${MAX_PLAYERS} 人合作</div>
+      <div class="subtitle">FUCustomer・第一人稱便利商店經營＋奧客退散</div>
       <label class="field">你的名字<input type="text" id="m-name" maxlength="16" placeholder="店員名字" value="${esc(s.name)}"></label>
       ${info.canRejoin ? `<button class="btn good" id="m-rejoin">🔌 重新連線到房間 ${esc(info.canRejoin)}</button>` : ''}
-      <h3>單人</h3>
+      <button class="btn primary" id="m-career" style="font-size:20px;padding:16px">🧑‍💼 職涯模式：從工讀生到終極打工人</button>
+      <h3>自由營業（單人）</h3>
       <div class="row">
-        ${info.soloSave ? `<button class="btn primary" id="m-solo-cont">繼續經營（第 ${info.soloSave.day} 天）</button>` : ''}
-        <button class="btn ${info.soloSave ? '' : 'primary'}" id="m-solo-new">${info.soloSave ? '開新店面' : '開始單人遊戲'}</button>
+        ${info.soloSave ? `<button class="btn" id="m-solo-cont">繼續經營（第 ${info.soloSave.day} 天）</button>` : ''}
+        <button class="btn" id="m-solo-new">${info.soloSave ? '開新店面' : '開始自由營業'}</button>
       </div>
-      <h3>多人合作（最多 ${MAX_PLAYERS} 人，跨平台）</h3>
+      <h3>多人合作（最多 ${MAX_PLAYERS} 人，測試中）</h3>
       <button class="btn" id="m-create">建立房間</button>
       ${info.coopSave ? `<label class="muted"><input type="checkbox" id="m-coop-cont" checked> 延續上次合作店面（第 ${info.coopSave.day} 天）</label>` : ''}
       <div class="row" style="margin-top:8px">
@@ -47,6 +49,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: Sto
     </div>`);
   const name = () => { const n = val('m-name').trim(); h.setName(n); return n; };
   on('m-name', 'change', name);
+  on('m-career', 'click', () => { name(); h.career(); });
   on('m-solo-cont', 'click', () => { name(); h.solo(false); });
   on('m-solo-new', 'click', () => { name(); if (!info.soloSave || confirm('開新店面會覆蓋單人進度，確定嗎？')) h.solo(true); });
   on('m-create', 'click', () => { name(); h.create(!!(document.getElementById('m-coop-cont') as HTMLInputElement | null)?.checked); });
@@ -147,9 +150,10 @@ export function helpScreen(onBack: () => void) {
         ${Object.values(KAREN_INFO).map(k => `<div class="shopitem"><b>${k.name}</b>${k.hint}<br><span class="muted">處理：${k.how}</span></div>`).join('')}
       </div>
       <h3>操作</h3>
-      <p class="muted">電腦：WASD 移動、Shift 跑、滑鼠視角、左鍵/E 互動、右鍵/F 次要、Q 放下、G 標記、T 快捷訊息、B 採購/升級、R 準備、Esc 選單。<br>
-      手把：左搖桿移動、右搖桿視角、A 互動、X 次要、B 放下、Y 標記、RB 採購、LB 準備、Start 選單、L3/LT 跑。<br>
-      手機：左半邊拖曳＝搖桿、右半邊拖曳＝視角，右下按鈕互動／放下／次要／標記。</p>
+      <p class="muted">電腦：WASD 移動、Shift 跑（耗體力）、滑鼠視角、左鍵/E 互動、右鍵/F 次要、G 放下、空白鍵 抓起/丟出、Q 拖把旋風、R 全店退散、V 標記、T 快捷訊息、B 採購、Enter 準備、Esc/P 選單。<br>
+      手把：左搖桿移動、右搖桿視角、A 互動、X 次要、B 放下、Y 抓/丟、RB 旋風、LB 全店退散、L3/LT 跑、十字上 標記、十字下 採購、十字右 準備、Start 選單。<br>
+      手機：左半邊拖曳＝搖桿、右半邊拖曳＝視角，右側按鈕互動／放下／抓丟／旋風／退散。</p>
+      <p class="muted">抓起奧客後轉向發光出口丟出去，飛過門線才算送走；誤丟一般顧客會大扣分。混亂度滿 100% 或口碑歸零就提早下班。</p>
       <button class="btn primary" id="h-back">返回</button>
     </div>`, 'screen overlay');
   on('h-back', 'click', onBack);

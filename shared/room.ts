@@ -5,9 +5,10 @@ import {
 } from './constants.ts';
 import type { ClientMsg, GameEvent, LobbyState, ServerMsg, StoreSave, Target } from './protocol.ts';
 import {
-  World, addPing, addPlayer, applyInput, createWorld, removePlayer, requestAct, requestBuy, requestDrop, sanitizeSave,
-  setReady, snapshot, tick,
+  World, addPing, addPlayer, applyInput, createWorld, playerDisconnected, removePlayer, requestAct, requestBuy, requestDrop,
+  requestSpin, requestThrow, requestUltimate, sanitizeSave, setReady, snapshot, tick,
 } from './sim.ts';
+import type { ShiftConfig } from './career.ts';
 
 export interface Conn { send(msg: ServerMsg): void; close(reason: string): void }
 
@@ -27,10 +28,13 @@ export interface RoomOptions {
   randomId?: (len: number) => string;
   onCheckpoint?: (cp: RoomCheckpoint) => void;
   log?: (msg: string) => void;
+  /** Career shift config (solo). Omit for the multiplayer business-day loop. */
+  shift?: ShiftConfig;
+  seed?: number;
 }
 
-const ACT_KINDS = new Set(['checkout', 'brew', 'deliver', 'takeBox', 'stock', 'returnBox', 'takeMop', 'returnMop', 'clean', 'calm', 'coupon', 'askQueue', 'stopFilm', 'checkBag', 'pickup']);
-const TARGET_KINDS = new Set(['register', 'coffee', 'crate', 'shelf', 'mop', 'customer', 'spill', 'item']);
+const ACT_KINDS = new Set(['checkout', 'brew', 'deliver', 'takeBox', 'stock', 'returnBox', 'takeMop', 'returnMop', 'clean', 'calm', 'coupon', 'askQueue', 'stopFilm', 'checkBag', 'pickup', 'heat', 'grab', 'stopLitter']);
+const TARGET_KINDS = new Set(['register', 'coffee', 'microwave', 'crate', 'shelf', 'mop', 'customer', 'spill', 'item']);
 
 function defaultRandomId(len: number) {
   const a = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -159,8 +163,7 @@ export class Room {
     for (const m of this.members.values()) {
       if (m.conn !== conn) continue;
       m.conn = null; m.connected = false; m.disconnectedAt = this.now(); m.ready = false;
-      const wp = this.world?.players.get(m.playerId);
-      if (wp) { wp.connected = false; wp.busy = null; wp.ready = false; }
+      if (this.world) playerDisconnected(this.world, m.playerId);
       this.log(`${this.code}: ${m.name} disconnected`);
       this.transferHostIfNeeded();
       this.broadcastLobby();
@@ -219,6 +222,15 @@ export class Room {
       case 'drop':
         if (w && typeof msg.rid === 'string') requestDrop(w, playerId, msg.rid.slice(0, 40));
         break;
+      case 'throw':
+        if (w && typeof msg.rid === 'string' && !this.paused) requestThrow(w, playerId, msg.rid.slice(0, 40), Number(msg.yaw), Number(msg.pitch));
+        break;
+      case 'spin':
+        if (w && typeof msg.rid === 'string' && !this.paused) { requestSpin(w, playerId, msg.rid.slice(0, 40)); this.flushResults(); }
+        break;
+      case 'ultimate':
+        if (w && typeof msg.rid === 'string' && !this.paused) { requestUltimate(w, playerId, msg.rid.slice(0, 40)); this.flushResults(); }
+        break;
       case 'buy':
         if (!w || typeof msg.rid !== 'string' || typeof msg.item !== 'string') return;
         requestBuy(w, playerId, msg.rid.slice(0, 40), msg.item, typeof msg.level === 'number' ? msg.level : undefined);
@@ -259,7 +271,7 @@ export class Room {
 
   startGame() {
     this.started = true;
-    this.world = createWorld(this.save);
+    this.world = createWorld(this.save, this.opts.seed ?? Date.now(), this.opts.shift);
     for (const m of [...this.members.values()].sort((a, b) => a.joinOrder - b.joinOrder)) {
       const p = addPlayer(this.world, m.playerId, m.name, m.color);
       p.connected = m.connected;

@@ -1,17 +1,19 @@
 // Authoritative game simulation. Runs on the dedicated server for multiplayer and inside the
-// browser for solo play. All transactions (money, stock, items, karen outcomes) happen here.
+// browser for solo/career play. All transactions (money, stock, items, karen outcomes) happen here.
 import {
-  BOX_SIZE, CLOSE_MINUTE, CLOSING_MAX_SECONDS, COFFEE_PRICE, DAILY_RENT, DAY_OPEN_SECONDS, KAREN_INFO, KarenKind,
-  OPEN_MINUTE, PREP_SECONDS, PRODUCTS, PRODUCT_INFO, Product, RUN_SPEED, SERVER_INTERACT_RANGE, UPGRADES, UPGRADE_IDS,
-  UpgradeId, brewTime, checkoutTime, shelfCapacity,
+  BOX_SIZE, BURST_MAX, CHAOS_MAX, CLOSE_MINUTE, CLOSING_MAX_SECONDS, COFFEE_PRICE, DAILY_RENT, DAY_OPEN_SECONDS, KAREN_INFO,
+  KarenKind, MEAL_PRICE, OPEN_MINUTE, PREP_SECONDS, PRODUCTS, PRODUCT_INFO, Product, RUN_SPEED, SERVER_INTERACT_RANGE,
+  UPGRADES, UPGRADE_IDS, UpgradeId, brewTime, checkoutTime, heatTime, shelfCapacity,
 } from './constants.ts';
 import {
-  COFFEE_MACHINE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, MOP_RACK, PLAYER_SPAWNS, QUEUE_SPOTS, REGISTERS,
-  SHELVES, SPAWN_OUTSIDE, clampToStore, distToAABB, findPath, resolveCollision, shelfBrowseSpots,
+  COFFEE_MACHINE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DOOR_X0, DOOR_X1, ENTRANCE, MICROWAVE, MOP_RACK,
+  PLAYER_SPAWNS, QUEUE_SPOTS, REGISTERS, SHELVES, SPAWN_OUTSIDE, STORE_D, clampToStore, distToAABB, findPath,
+  resolveCollision, shelfBrowseSpots,
 } from './map.ts';
 import type {
   ActKind, CustomerKind, DayStats, GameEvent, Held, Phase, Snapshot, StoreSave, Target,
 } from './protocol.ts';
+import { BASE_MODS, Food, ShiftConfig, ShiftResult } from './career.ts';
 
 export function mulberry32(seed: number) {
   let a = seed >>> 0;
@@ -24,28 +26,33 @@ export function mulberry32(seed: number) {
   };
 }
 
-export interface Busy { kind: ActKind; target: Target; start: number; dur: number; rid: string }
+export interface Busy { kind: ActKind; target: Target; start: number; dur: number; rid: string; reserved?: Product }
 export interface PlayerState {
   id: string; name: string; color: number; x: number; z: number; yaw: number; pitch: number;
-  held: Held | null; connected: boolean; away: boolean; ready: boolean; busy: Busy | null;
+  held: Held | null; held2: Held | null; connected: boolean; away: boolean; ready: boolean; busy: Busy | null;
   lastInputAt: number; recent: Map<string, { ok: boolean; reason?: string }>;
-  stats: { served: number; karens: number; cleaned: number; restocked: number };
+  grabbing: number | null; spinReadyAt: number;
+  stats: { served: number; karens: number; cleaned: number; restocked: number; ejected: number };
 }
 
 type CState =
-  | 'enter' | 'toShelf' | 'browse' | 'toCoffee' | 'waitCoffee' | 'queue' | 'toRegister' | 'atRegister'
-  | 'leaving' | 'toComplain' | 'complain' | 'wander' | 'flee' | 'toEat' | 'eat';
+  | 'enter' | 'toShelf' | 'browse' | 'toFood' | 'waitFood' | 'queue' | 'toRegister' | 'atRegister'
+  | 'leaving' | 'toComplain' | 'complain' | 'wander' | 'flee' | 'toEat' | 'eat' | 'held' | 'flying';
+
+export interface Flight { vx: number; vy: number; vz: number; y: number; t: number; thrown: boolean; by: string }
 
 export interface Customer {
   id: number; kind: CustomerKind; x: number; z: number; yaw: number; state: CState;
   path: { x: number; z: number }[]; speed: number;
-  shopping: Product[]; items: Product[]; wantsCoffee: boolean; coffeeDone: boolean; coffeeFailed: boolean;
+  shopping: Product[]; items: Product[]; want: Food | null; foodDone: boolean; foodFailed: boolean;
   patience: number; patienceMax: number; mood: number; timer: number; register: number; anger: number;
   resolved: boolean; hits: number; eaten: Product[]; eatShelf: Product | null; life: number; look: number;
   angry: boolean; moving: boolean; knockTimer: number; gone: boolean;
+  heldBy: string | null; fly: Flight | null;
 }
 
 export interface World {
+  cfg: ShiftConfig;
   time: number; phase: Phase; phaseLeft: number; clock: number; day: number;
   money: number; rating: number; backstock: Record<Product, number>; shelves: Record<Product, number>;
   upgrades: Record<UpgradeId, number>; mopsOnRack: number;
@@ -57,6 +64,21 @@ export interface World {
   dayStats: DayStats; bonusPaidDay: number; totals: StoreSave['totals'];
   events: GameEvent[]; results: { playerId: string; rid: string; ok: boolean; reason?: string }[];
   emptyShelfToastAt: number; saveOut: StoreSave | null; difficultyPlayers: number;
+  chaos: number; chaosTimer: number; burst: number; combo: number; comboUntil: number;
+  power: number; event: { kind: 'rush' | 'outage'; left: number; pulse: number } | null; nextEvent: number;
+  guardTimer: number; hintQueue: { at: number; text: string }[]; result: ShiftResult | null;
+}
+
+/** Default multiplayer "business day" configuration: every mechanic enabled. */
+export function dayConfig(): ShiftConfig {
+  return {
+    mode: 'day', id: 'day', title: '合作營業日', chapter: 0, length: DAY_OPEN_SECONDS, goal: 0,
+    karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], firstKaren: 22, karenEvery: 50, maxKarens: 1,
+    spawnEvery: 9, maxCustomers: 6, foods: ['coffee', 'meal'], foodChance: 0.35, events: ['rush', 'outage'], firstEvent: 70,
+    register2: false, abilities: ['grab', 'spin', 'ultimate'],
+    start: { money: 200, rating: 3, backstock: { drinks: 24, snacks: 24, bento: 18 }, shelves: { drinks: 8, snacks: 8, bento: 6 } },
+    mods: { ...BASE_MODS }, hints: [],
+  };
 }
 
 export function defaultSave(): StoreSave {
@@ -79,9 +101,7 @@ export function sanitizeSave(s: unknown): StoreSave {
   out.day = Math.round(num(o.day, 1, 9999, d.day));
   out.money = Math.round(num(o.money, -99999, 999999, d.money));
   out.rating = num(o.rating, 0, 5, d.rating);
-  for (const p of PRODUCTS) {
-    out.backstock[p] = Math.round(num(o.backstock?.[p], 0, 999, d.backstock[p]));
-  }
+  for (const p of PRODUCTS) out.backstock[p] = Math.round(num(o.backstock?.[p], 0, 999, d.backstock[p]));
   for (const u of UPGRADE_IDS) out.upgrades[u] = Math.round(num(o.upgrades?.[u], 0, UPGRADES[u].costs.length, 0));
   for (const p of PRODUCTS) out.shelves[p] = Math.round(num(o.shelves?.[p], 0, shelfCapacity(out.upgrades.shelves), d.shelves[p]));
   out.totals.served = Math.round(num(o.totals?.served, 0, 1e9, 0));
@@ -91,20 +111,28 @@ export function sanitizeSave(s: unknown): StoreSave {
 }
 
 function emptyStats(rating: number): DayStats {
-  return { revenue: 0, served: 0, angryLeft: 0, karensResolved: 0, karensFailed: 0, spillsCleaned: 0, tips: 0, expenses: 0, bonus: 0, ratingStart: rating };
+  return { revenue: 0, served: 0, angryLeft: 0, karensResolved: 0, karensFailed: 0, spillsCleaned: 0, tips: 0, expenses: 0, bonus: 0, ratingStart: rating, ejected: 0, maxCombo: 0 };
 }
 
-export function createWorld(save: StoreSave = defaultSave(), seed = Date.now()): World {
+export function createWorld(save: StoreSave = defaultSave(), seed = Date.now(), cfg: ShiftConfig = dayConfig()): World {
   const s = sanitizeSave(save);
-  return {
-    time: 0, phase: 'prep', phaseLeft: PREP_SECONDS, clock: OPEN_MINUTE, day: s.day,
-    money: s.money, rating: s.rating, backstock: { ...s.backstock }, shelves: { ...s.shelves }, upgrades: { ...s.upgrades },
-    mopsOnRack: 2, players: new Map(), customers: [], queue: [], registers: [null, null], spills: [], items: [], pings: [],
-    nextId: 1, rng: mulberry32(seed), spawnTimer: 3, karenTimer: 30, mopbotTimer: 20,
-    dayStats: emptyStats(s.rating), bonusPaidDay: 0, totals: { ...s.totals }, events: [], results: [],
+  const shift = cfg.mode === 'shift';
+  const upgrades = { ...s.upgrades };
+  if (cfg.register2) upgrades.register2 = 1;
+  const w: World = {
+    cfg, time: 0, phase: 'prep', phaseLeft: shift ? 10 : PREP_SECONDS, clock: OPEN_MINUTE, day: s.day,
+    money: shift ? cfg.start.money : s.money, rating: shift ? cfg.start.rating : s.rating,
+    backstock: shift ? { ...cfg.start.backstock } : { ...s.backstock }, shelves: shift ? { ...cfg.start.shelves } : { ...s.shelves },
+    upgrades, mopsOnRack: 2, players: new Map(), customers: [], queue: [], registers: [null, null], spills: [], items: [], pings: [],
+    nextId: 1, rng: mulberry32(seed), spawnTimer: 3, karenTimer: cfg.firstKaren, mopbotTimer: 20,
+    dayStats: emptyStats(shift ? cfg.start.rating : s.rating), bonusPaidDay: 0, totals: { ...s.totals }, events: [], results: [],
     emptyShelfToastAt: -99, saveOut: null, difficultyPlayers: 1,
+    chaos: 0, chaosTimer: 0, burst: 0, combo: 0, comboUntil: 0, power: 1, event: null, nextEvent: cfg.firstEvent,
+    guardTimer: guardInterval(cfg.mods.guard), hintQueue: cfg.hints.map((text, i) => ({ at: 1 + i * 16, text })), result: null,
   };
+  return w;
 }
+function guardInterval(level: number) { return Math.max(12, 36 - level * 6); }
 
 export function toSave(w: World): StoreSave {
   return {
@@ -117,8 +145,9 @@ export function toSave(w: World): StoreSave {
 export function addPlayer(w: World, id: string, name: string, color: number): PlayerState {
   const spawn = PLAYER_SPAWNS[w.players.size % PLAYER_SPAWNS.length];
   const p: PlayerState = {
-    id, name, color, x: spawn.x, z: spawn.z, yaw: Math.PI, pitch: 0, held: null, connected: true, away: false,
-    ready: false, busy: null, lastInputAt: w.time, recent: new Map(), stats: { served: 0, karens: 0, cleaned: 0, restocked: 0 },
+    id, name, color, x: spawn.x, z: spawn.z, yaw: Math.PI, pitch: 0, held: null, held2: null, connected: true, away: false,
+    ready: false, busy: null, lastInputAt: w.time, recent: new Map(), grabbing: null, spinReadyAt: 0,
+    stats: { served: 0, karens: 0, cleaned: 0, restocked: 0, ejected: 0 },
   };
   w.players.set(id, p);
   return p;
@@ -128,15 +157,33 @@ export function addPlayer(w: World, id: string, name: string, color: number): Pl
 export function removePlayer(w: World, id: string) {
   const p = w.players.get(id);
   if (!p) return;
+  releaseGrab(w, p);
   dropHeld(w, p);
   w.players.delete(id);
 }
 
+export function playerDisconnected(w: World, id: string) {
+  const p = w.players.get(id);
+  if (!p) return;
+  p.connected = false; p.busy = null; p.ready = false;
+  releaseGrab(w, p);
+}
+
 function dropHeld(w: World, p: PlayerState) {
-  if (!p.held) return;
-  if (p.held.kind === 'coffee') { p.held = null; return; }
-  w.items.push({ id: w.nextId++, x: p.x, z: p.z, held: p.held });
-  p.held = null;
+  for (const key of ['held2', 'held'] as const) {
+    const h = p[key];
+    if (!h) continue;
+    p[key] = null;
+    if (h.kind === 'coffee' || h.kind === 'meal') continue; // food is discarded
+    w.items.push({ id: w.nextId++, x: p.x, z: p.z, held: h });
+  }
+}
+
+function releaseGrab(w: World, p: PlayerState) {
+  if (p.grabbing == null) return;
+  const c = customer(w, p.grabbing);
+  p.grabbing = null;
+  if (c && c.heldBy === p.id) { c.heldBy = null; c.fly = { vx: 0, vy: 0, vz: 0, y: 0.4, t: 0.5, thrown: false, by: p.id }; c.state = 'flying'; }
 }
 
 export function applyInput(w: World, id: string, x: number, z: number, yaw: number, pitch: number) {
@@ -146,7 +193,7 @@ export function applyInput(w: World, id: string, x: number, z: number, yaw: numb
   p.lastInputAt = w.time;
   let dx = x - p.x, dz = z - p.z;
   const d = Math.hypot(dx, dz);
-  const max = RUN_SPEED * dt * 1.6 + 0.35;
+  const max = RUN_SPEED * w.cfg.mods.speed * dt * 1.6 + 0.35;
   if (d > max) { dx *= max / d; dz *= max / d; }
   let pos = resolveCollision(p.x + dx, p.z + dz);
   pos = clampToStore(pos.x, pos.z);
@@ -158,10 +205,17 @@ export function applyInput(w: World, id: string, x: number, z: number, yaw: numb
 function ev(w: World, e: GameEvent) { w.events.push(e); }
 function toast(w: World, text: string, tone: 'good' | 'bad' | 'info' = 'info') { ev(w, { e: 'toast', text, tone }); }
 function adjRating(w: World, d: number) { w.rating = Math.max(0, Math.min(5, w.rating + d)); }
+function adjChaos(w: World, d: number) { w.chaos = Math.max(0, Math.min(CHAOS_MAX, w.chaos + d)); }
+function adjBurst(w: World, d: number) { if (w.cfg.abilities.includes('ultimate')) w.burst = Math.max(0, Math.min(BURST_MAX, w.burst + d)); }
 function activePlayers(w: World) { let n = 0; for (const p of w.players.values()) if (p.connected) n++; return Math.max(1, n); }
 function cap(w: World) { return shelfCapacity(w.upgrades.shelves); }
 function customer(w: World, id: number) { return w.customers.find(c => c.id === id); }
 function pick<T>(w: World, arr: T[]): T { return arr[Math.floor(w.rng() * arr.length)]; }
+const isFood = (h: Held | null) => !!h && (h.kind === 'coffee' || h.kind === 'meal');
+function handsFree(p: PlayerState) { return !p.held && !p.held2 && p.grabbing == null; }
+/** A player can take one more food item if both hands hold only food and one slot is free. */
+function canTakeFood(p: PlayerState) { return p.grabbing == null && (!p.held || (isFood(p.held) && !p.held2)); }
+function giveFood(p: PlayerState, h: Held) { if (!p.held) p.held = h; else p.held2 = h; }
 
 function setGoal(c: Customer, goal: { x: number; z: number }) { c.path = findPath(c, goal); }
 
@@ -184,24 +238,38 @@ function addSpill(w: World, x: number, z: number) {
   if (w.spills.length >= 14) return;
   const pos = resolveCollision(x + (w.rng() - 0.5) * 0.8, z + (w.rng() - 0.5) * 0.8, 0.35);
   const c = clampToStore(pos.x, pos.z, 0.4);
+  if (w.spills.some(s => Math.hypot(s.x - c.x, s.z - c.z) < 0.6)) return;
   w.spills.push({ id: w.nextId++, x: c.x, z: c.z, born: w.time });
   ev(w, { e: 'sfx', name: 'splat', x: c.x, z: c.z });
+}
+
+function resolveKaren(w: World, c: Customer, p: PlayerState | null, rating: number, text: string) {
+  c.resolved = true; adjRating(w, rating); adjChaos(w, -5);
+  w.dayStats.karensResolved++; w.totals.karens++;
+  if (p) p.stats.karens++;
+  toast(w, text, 'good');
+}
+function failKaren(w: World, c: Customer, rating: number, chaos: number, text: string) {
+  c.resolved = true; adjRating(w, rating); adjChaos(w, chaos); w.dayStats.karensFailed++;
+  toast(w, text, 'bad');
 }
 
 // ---------------- customers ----------------
 function spawnCustomer(w: World, kind: CustomerKind) {
   const n = activePlayers(w);
+  const m = w.cfg.mods;
   const c: Customer = {
     id: w.nextId++, kind, x: SPAWN_OUTSIDE.x + (w.rng() - 0.5), z: SPAWN_OUTSIDE.z, yaw: Math.PI, state: 'enter', path: [],
-    speed: 1.5 + w.rng() * 0.5, shopping: [], items: [], wantsCoffee: false, coffeeDone: false, coffeeFailed: false,
+    speed: 1.5 + w.rng() * 0.5, shopping: [], items: [], want: null, foodDone: false, foodFailed: false,
     patience: 1, patienceMax: 1, mood: 80, timer: 0, register: -1, anger: 0, resolved: false, hits: 0, eaten: [],
     eatShelf: null, life: 0, look: Math.floor(w.rng() * 1000), angry: false, moving: true, knockTimer: 7, gone: false,
+    heldBy: null, fly: null,
   };
   if (kind === 'normal') {
     const count = 1 + Math.floor(w.rng() * 3);
     for (let i = 0; i < count; i++) c.shopping.push(w.rng() < 0.4 ? 'drinks' : w.rng() < 0.6 ? 'snacks' : 'bento');
-    c.wantsCoffee = w.rng() < 0.35;
-    c.patienceMax = 55 + w.rating * 6;
+    if (w.cfg.foods.length && w.rng() < w.cfg.foodChance) c.want = pick(w, w.cfg.foods);
+    c.patienceMax = (55 + w.rating * 6) * m.patience;
   } else if (kind === 'cutter') {
     c.shopping.push(pick(w, PRODUCTS));
     c.patienceMax = 200; c.speed = 2.1;
@@ -211,6 +279,8 @@ function spawnCustomer(w: World, kind: CustomerKind) {
     c.speed = 2.2; c.life = 85;
   } else if (kind === 'hog') {
     c.speed = 1.6; c.patienceMax = 200;
+  } else if (kind === 'litterer') {
+    c.speed = 1.8; c.life = 80; c.knockTimer = 4;
   }
   c.patience = c.patienceMax;
   w.customers.push(c);
@@ -224,15 +294,15 @@ function spawnCustomer(w: World, kind: CustomerKind) {
 
 function nextStep(w: World, c: Customer) {
   if (c.kind === 'rager' && !c.resolved) { c.state = 'toComplain'; setGoal(c, COMPLAINT_SPOT); return; }
-  if (c.kind === 'streamer' && !c.resolved) { c.state = 'wander'; setGoal(c, randomWanderSpot(w)); return; }
+  if ((c.kind === 'streamer' || c.kind === 'litterer') && !c.resolved) { c.state = 'wander'; c.speed = c.kind === 'streamer' ? 2.0 : 1.7; setGoal(c, randomWanderSpot(w)); return; }
   if (c.kind === 'hog' && !c.resolved) { goEat(w, c); return; }
   if (c.shopping.length) {
     c.state = 'toShelf';
     setGoal(c, pick(w, shelfBrowseSpots(c.shopping[0])));
     return;
   }
-  if (c.wantsCoffee && !c.coffeeDone && !c.coffeeFailed) { c.state = 'toCoffee'; setGoal(c, COFFEE_PICKUP); return; }
-  if (c.items.length || c.coffeeDone) { joinQueue(w, c, c.kind === 'cutter' && !c.resolved); return; }
+  if (c.want && !c.foodDone && !c.foodFailed) { c.state = 'toFood'; setGoal(c, COFFEE_PICKUP); return; }
+  if (c.items.length || c.foodDone) { joinQueue(w, c, c.kind === 'cutter' && !c.resolved); return; }
   leave(w, c, false);
 }
 
@@ -254,17 +324,21 @@ function joinQueue(w: World, c: Customer, front: boolean) {
   c.path = [];
 }
 
-function leave(w: World, c: Customer, angry: boolean) {
+function detachFromLines(w: World, c: Customer) {
   w.queue = w.queue.filter(id => id !== c.id);
   w.registers = w.registers.map(r => (r === c.id ? null : r));
+}
+
+function leave(w: World, c: Customer, angry: boolean) {
+  detachFromLines(w, c);
   c.state = 'leaving'; c.angry = angry; c.speed = angry ? 2.3 : 1.8;
   setGoal(c, SPAWN_OUTSIDE);
 }
 
 function angryLeave(w: World, c: Customer) {
   w.dayStats.angryLeft++;
-  adjRating(w, -0.15);
-  toast(w, '😠 一位顧客等太久生氣離開了（評價下降）', 'bad');
+  adjRating(w, -0.15); adjChaos(w, 5);
+  toast(w, '😠 一位顧客等太久生氣離開了（口碑下降）', 'bad');
   ev(w, { e: 'sfx', name: 'angry', x: c.x, z: c.z });
   leave(w, c, true);
 }
@@ -277,7 +351,8 @@ function updateQueue(w: World) {
   w.queue = w.queue.filter(id => { const c = customer(w, id); return c && c.state === 'queue'; });
   const regCount = w.upgrades.register2 > 0 ? 2 : 1;
   for (let r = 0; r < regCount; r++) {
-    if (w.registers[r] !== null) continue;
+    const cur = w.registers[r];
+    if (cur !== null) { const cc = customer(w, cur); if (cc && (cc.state === 'toRegister' || cc.state === 'atRegister')) continue; w.registers[r] = null; }
     const id = w.queue.shift();
     if (id === undefined) break;
     const c = customer(w, id)!;
@@ -293,10 +368,80 @@ function updateQueue(w: World) {
   });
 }
 
+/** Eject a customer through the front door (thrown, guard or ultimate). */
+function eject(w: World, c: Customer, by: PlayerState | null, how: 'throw' | 'guard' | 'ultimate') {
+  if (c.gone) return;
+  c.gone = true; c.heldBy = null; c.fly = null;
+  detachFromLines(w, c);
+  if (by && by.grabbing === c.id) by.grabbing = null;
+  const x = Math.min(DOOR_X1, Math.max(DOOR_X0, c.x)), z = STORE_D;
+  if (c.kind !== 'normal') {
+    const was = c.resolved;
+    w.dayStats.ejected++; if (by) by.stats.ejected++;
+    if (!was) { w.dayStats.karensResolved++; w.totals.karens++; if (by) by.stats.karens++; }
+    c.resolved = true;
+    adjChaos(w, -7); adjRating(w, 0.05);
+    if (how !== 'ultimate') adjBurst(w, 25);
+    w.combo = w.time < w.comboUntil ? w.combo + 1 : 1; w.comboUntil = w.time + 5;
+    w.dayStats.maxCombo = Math.max(w.dayStats.maxCombo, w.combo);
+    ev(w, { e: 'fx', name: 'eject', x, z, combo: w.combo, by: by?.name });
+    ev(w, { e: 'sfx', name: 'eject', x, z });
+    if (how === 'guard') toast(w, `🛡 保全請走了${KAREN_INFO[c.kind as KarenKind].name}`, 'good');
+    else if (how === 'throw') toast(w, w.combo > 1 ? `🚪 ${w.combo} 連送！奧客退散！` : `🚪 ${by?.name ?? ''} 把${KAREN_INFO[c.kind as KarenKind].name}請出門了！`, 'good');
+  } else {
+    w.dayStats.angryLeft++;
+    adjChaos(w, 20); adjRating(w, -0.6);
+    ev(w, { e: 'fx', name: 'mistake', x, z, by: by?.name });
+    toast(w, '😱 誤丟一般顧客！混亂 +20、口碑大跌', 'bad');
+  }
+}
+
+function updateFlight(w: World, c: Customer, dt: number) {
+  const f = c.fly!;
+  f.t -= dt; f.vy -= 7.8 * dt; f.y += f.vy * dt;
+  const ox = c.x, oz = c.z;
+  const nx = c.x + f.vx * dt, nz = c.z + f.vz * dt;
+  // door crossing (only thrown/knocked bodies leaving the store count)
+  if (f.vz > 0 && oz <= STORE_D && nz >= STORE_D) {
+    const cx = ox + (nx - ox) * (STORE_D - oz) / (nz - oz);
+    if (cx > DOOR_X0 + 0.15 && cx < DOOR_X1 - 0.15) {
+      c.x = cx; c.z = STORE_D;
+      eject(w, c, w.players.get(f.by) ?? null, 'throw');
+      return;
+    }
+  }
+  const r = resolveCollision(nx, nz, 0.25);
+  const hitX = Math.abs(r.x - nx) > 1e-4, hitZ = Math.abs(r.z - nz) > 1e-4;
+  if (hitX) f.vx *= -0.42;
+  if (hitZ) f.vz *= -0.42;
+  if ((hitX || hitZ) && Math.hypot(f.vx, f.vz) > 1.2) ev(w, { e: 'fx', name: 'impact', x: r.x, z: r.z });
+  const cl = clampToStore(r.x, r.z, 0.25);
+  c.x = cl.x; c.z = cl.z;
+  const drag = Math.pow(0.62, dt); f.vx *= drag; f.vz *= drag;
+  if (f.y < 0) { f.y = 0; f.vy *= -0.26; f.vx *= 0.7; f.vz *= 0.7; }
+  if (f.t <= 0 || (f.y === 0 && Math.hypot(f.vx, f.vz) < 0.7)) {
+    c.fly = null;
+    if (c.kind === 'normal') c.mood -= 30;
+    else if (c.kind === 'rager') c.anger = Math.min(99, c.anger + 12);
+    if (c.state === 'flying') { c.state = 'enter'; nextStep(w, c); }
+  }
+}
+
 function updateCustomer(w: World, c: Customer, dt: number) {
+  if (c.state === 'held') {
+    const p = c.heldBy ? w.players.get(c.heldBy) : undefined;
+    if (!p) { c.heldBy = null; c.state = 'enter'; nextStep(w, c); return; }
+    const fx = Math.sin(p.yaw), fz = Math.cos(p.yaw);
+    const pos = resolveCollision(p.x + fx * 0.9, p.z + fz * 0.9, 0.2);
+    c.x = pos.x; c.z = pos.z; c.yaw = p.yaw + Math.PI; c.moving = false;
+    return;
+  }
+  if (c.fly) { updateFlight(w, c, dt); return; }
   const n = activePlayers(w);
+  const m = w.cfg.mods;
   const arrived = moveAlong(c, dt);
-  const drain = cutterActive(w) && c.kind !== 'cutter' ? 2.2 : 1;
+  const drain = (cutterActive(w) && c.kind !== 'cutter' ? 2.2 : 1) * (w.power < 1 ? 1.3 : 1)
+    * (w.customers.some(s => s.kind === 'streamer' && !s.resolved && Math.hypot(s.x - c.x, s.z - c.z) < 3) ? 1.35 : 1);
   switch (c.state) {
     case 'enter': if (arrived) nextStep(w, c); break;
     case 'toShelf': if (arrived) { c.state = 'browse'; c.timer = 1.4 + w.rng() * 1.2; c.yaw = faceShelf(c); } break;
@@ -306,17 +451,17 @@ function updateCustomer(w: World, c: Customer, dt: number) {
         const p = c.shopping.shift()!;
         if (w.shelves[p] > 0) { w.shelves[p]--; c.items.push(p); }
         else {
-          c.mood -= 30; adjRating(w, -0.02);
+          c.mood -= 30; adjRating(w, -0.02); adjChaos(w, 1);
           if (w.time - w.emptyShelfToastAt > 8) { toast(w, `📦 ${PRODUCT_INFO[p].name}貨架空了！快去倉庫補貨`, 'bad'); w.emptyShelfToastAt = w.time; }
         }
-        if (w.rng() < 0.025 + 0.01 * activePlayers(w)) addSpill(w, c.x, c.z);
+        if (w.rng() < 0.025 + 0.01 * n) addSpill(w, c.x, c.z);
         nextStep(w, c);
       }
       break;
-    case 'toCoffee': if (arrived) { c.state = 'waitCoffee'; c.timer = 50; c.yaw = Math.PI / 2; } break;
-    case 'waitCoffee':
-      c.timer -= dt;
-      if (c.timer <= 0) { c.coffeeFailed = true; c.mood -= 35; adjRating(w, -0.06); toast(w, '☕ 咖啡等太久，顧客放棄了', 'bad'); nextStep(w, c); }
+    case 'toFood': if (arrived) { c.state = 'waitFood'; c.timer = 50 * m.patience; c.patienceMax = c.timer; c.yaw = Math.PI / 2; } break;
+    case 'waitFood':
+      c.timer -= dt * (w.power < 1 ? 1.3 : 1);
+      if (c.timer <= 0) { c.foodFailed = true; c.mood -= 35; adjRating(w, -0.06); adjChaos(w, 3); toast(w, `${c.want === 'meal' ? '🍱 熱便當' : '☕ 咖啡'}等太久，顧客放棄了`, 'bad'); c.patienceMax = (55 + w.rating * 6) * m.patience; c.patience = c.patienceMax; nextStep(w, c); }
       break;
     case 'queue': case 'toRegister': case 'atRegister':
       if (c.state === 'toRegister' && arrived) { c.state = 'atRegister'; c.yaw = Math.PI; }
@@ -330,40 +475,44 @@ function updateCustomer(w: World, c: Customer, dt: number) {
     case 'toComplain': if (arrived) { c.state = 'complain'; c.yaw = 0; } // fallthrough to anger
     // eslint-disable-next-line no-fallthrough
     case 'complain': {
-      const rate = (1.4 + 0.45 * n) * (w.upgrades.camera > 0 ? 0.7 : 1);
+      const rate = (1.4 + 0.45 * n) * (w.upgrades.camera > 0 ? 0.7 : 1) * m.angerRate * (w.power < 1 ? 1.25 : 1);
       c.anger += rate * dt;
       if (c.anger >= 100) {
         c.anger = 100;
         addSpill(w, c.x, c.z); addSpill(w, c.x, c.z);
-        adjRating(w, -0.4); w.money -= 25; w.dayStats.karensFailed++;
-        toast(w, '💥 退貨奧客大鬧砸店！評價 -0.4、損失 $25', 'bad');
+        w.money -= 25;
+        failKaren(w, c, -0.4, 12, '💥 退貨奧客大鬧砸店！口碑 -0.4、損失 $25');
         ev(w, { e: 'sfx', name: 'crash', x: c.x, z: c.z });
-        c.resolved = true; leave(w, c, true);
+        leave(w, c, true);
       }
       break;
     }
     case 'wander': case 'flee': {
       c.life -= dt; c.knockTimer -= dt;
       if (c.knockTimer <= 0) {
-        c.knockTimer = 7;
-        const stocked = PRODUCTS.filter(p => w.shelves[p] > 0);
-        if (stocked.length) { const p = pick(w, stocked); w.shelves[p]--; }
-        addSpill(w, c.x, c.z);
-        ev(w, { e: 'sfx', name: 'knock', x: c.x, z: c.z });
+        if (c.kind === 'litterer') { c.knockTimer = 6; addSpill(w, c.x, c.z); adjChaos(w, 1); }
+        else {
+          c.knockTimer = 7;
+          const stocked = PRODUCTS.filter(p => w.shelves[p] > 0);
+          if (stocked.length) { const p = pick(w, stocked); w.shelves[p]--; }
+          addSpill(w, c.x, c.z);
+          ev(w, { e: 'sfx', name: 'knock', x: c.x, z: c.z });
+        }
       }
       if (c.life <= 0) {
-        adjRating(w, -0.3); w.dayStats.karensFailed++;
-        toast(w, '📱 直播客拍完就走，店家形象受損（評價 -0.3）', 'bad');
-        c.resolved = true; leave(w, c, false); break;
+        if (c.kind === 'litterer') failKaren(w, c, -0.25, 8, '🗑 亂丟客逛完就走，留下一地垃圾');
+        else failKaren(w, c, -0.3, 10, '📱 直播客拍完就走，店家形象受損（口碑 -0.3）');
+        leave(w, c, false); break;
       }
-      const near = nearestPlayer(w, c);
-      if (near && near.d < 3.2 && c.state !== 'flee') {
-        c.state = 'flee'; c.speed = 3.0;
-        setGoal(c, fleeSpot(w, c, near.p));
-      } else if (arrived) {
-        c.state = 'wander'; c.speed = 2.0;
-        setGoal(c, randomWanderSpot(w));
+      if (c.kind === 'streamer') {
+        const near = nearestPlayer(w, c);
+        if (near && near.d < 3.2 && c.state !== 'flee') {
+          c.state = 'flee'; c.speed = 3.0;
+          setGoal(c, fleeSpot(w, c, near.p));
+          break;
+        }
       }
+      if (arrived) { c.state = 'wander'; c.speed = c.kind === 'streamer' ? 2.0 : 1.7; setGoal(c, randomWanderSpot(w)); }
       break;
     }
     case 'toEat': if (arrived) { c.state = 'eat'; c.timer = 3.5; c.yaw = faceShelf(c); } break;
@@ -373,9 +522,8 @@ function updateCustomer(w: World, c: Customer, dt: number) {
         const p = c.eatShelf!;
         if (w.shelves[p] > 0) { w.shelves[p]--; c.eaten.push(p); }
         if (c.eaten.length >= 6) {
-          adjRating(w, -0.2); w.dayStats.karensFailed++;
-          toast(w, '🍙 偷吃奧客吃飽就跑了！商品損失', 'bad');
-          c.resolved = true; leave(w, c, false); break;
+          failKaren(w, c, -0.2, 8, '🍙 偷吃奧客吃飽就跑了！商品損失');
+          leave(w, c, false); break;
         }
         if (c.eaten.length % 3 === 0 || w.shelves[p] === 0) goEat(w, c); else c.timer = 3.5;
       }
@@ -419,6 +567,7 @@ function targetDist(w: World, p: PlayerState, t: Target): number {
   switch (t.t) {
     case 'register': return Math.hypot(p.x - REGISTERS[t.idx]?.x, p.z - REGISTERS[t.idx]?.z);
     case 'coffee': return distToAABB(p.x, p.z, COFFEE_MACHINE);
+    case 'microwave': return distToAABB(p.x, p.z, MICROWAVE);
     case 'crate': { const c = CRATES.find(c => c.product === t.product); return c ? distToAABB(p.x, p.z, c.box) : Infinity; }
     case 'shelf': { const s = SHELVES.find(s => s.product === t.product); return s ? distToAABB(p.x, p.z, s.box) : Infinity; }
     case 'mop': return distToAABB(p.x, p.z, MOP_RACK);
@@ -432,33 +581,44 @@ function targetDist(w: World, p: PlayerState, t: Target): number {
 type Check = { ok: true; dur: number } | { ok: false; reason: string };
 
 /** Validates an action; returns its channel duration. Called at start and again at completion. */
-function check(w: World, p: PlayerState, kind: ActKind, t: Target): Check {
-  if (w.phase === 'summary') return { ok: false, reason: '日結中' };
+function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = false): Check {
+  if (w.phase === 'summary') return { ok: false, reason: '已經結算' };
   if (targetDist(w, p, t) > SERVER_INTERACT_RANGE) return { ok: false, reason: '距離太遠' };
-  const needTarget = (tt: Target['t']) => t.t === tt;
+  if (p.grabbing != null && kind !== 'grab') return { ok: false, reason: '先把抓著的人丟出去或放下' };
+  const m = w.cfg.mods;
   const c = t.t === 'customer' ? customer(w, t.id) : undefined;
+  const busyCust = c && (c.state === 'held' || c.state === 'flying' || c.gone);
+  if (busyCust && kind !== 'grab') return { ok: false, reason: '對方正在飛…' };
   switch (kind) {
     case 'checkout': {
-      if (!needTarget('register') || t.t !== 'register') return { ok: false, reason: '目標錯誤' };
+      if (t.t !== 'register') return { ok: false, reason: '目標錯誤' };
       if (t.idx === 1 && w.upgrades.register2 === 0) return { ok: false, reason: '第二收銀台未開放' };
       if (p.z > COUNTER.z0 + 0.2) return { ok: false, reason: '請到櫃台內側' };
       const id = w.registers[t.idx];
       const cc = id != null ? customer(w, id) : undefined;
       if (!cc || cc.state !== 'atRegister') return { ok: false, reason: '沒有顧客等待結帳' };
-      if (p.held && p.held.kind !== 'coffee') return { ok: false, reason: '手上有東西' };
-      return { ok: true, dur: checkoutTime(w.upgrades.scanner) };
+      if (p.held && !isFood(p.held)) return { ok: false, reason: '手上有東西' };
+      return { ok: true, dur: checkoutTime(w.upgrades.scanner) * m.checkout };
     }
     case 'brew':
       if (t.t !== 'coffee') return { ok: false, reason: '目標錯誤' };
-      if (p.held) return { ok: false, reason: '手上有東西' };
-      return { ok: true, dur: brewTime(w.upgrades.coffee) };
-    case 'deliver':
-      if (!c || p.held?.kind !== 'coffee') return { ok: false, reason: '需要拿著咖啡' };
-      if (c.state !== 'waitCoffee') return { ok: false, reason: '這位顧客沒有在等咖啡' };
+      if (!w.cfg.foods.includes('coffee')) return { ok: false, reason: '這間店還沒賣咖啡' };
+      if (!completing && !canTakeFood(p)) return { ok: false, reason: '雙手已滿（最多兩份餐點）' };
+      return { ok: true, dur: brewTime(w.upgrades.coffee) * m.brew };
+    case 'heat':
+      if (t.t !== 'microwave') return { ok: false, reason: '目標錯誤' };
+      if (!w.cfg.foods.includes('meal')) return { ok: false, reason: '這間店還沒賣熱便當' };
+      if (!completing && !canTakeFood(p)) return { ok: false, reason: '雙手已滿（最多兩份餐點）' };
+      if (!completing && w.backstock.bento <= 0) return { ok: false, reason: '便當缺貨，請採購' };
+      return { ok: true, dur: heatTime(w.upgrades.coffee) * m.brew };
+    case 'deliver': {
+      if (!c || c.state !== 'waitFood' || !c.want) return { ok: false, reason: '這位顧客沒有在等餐' };
+      if (p.held?.kind !== c.want && p.held2?.kind !== c.want) return { ok: false, reason: `他要的是${c.want === 'meal' ? '熱便當' : '咖啡'}` };
       return { ok: true, dur: 0 };
+    }
     case 'takeBox':
       if (t.t !== 'crate') return { ok: false, reason: '目標錯誤' };
-      if (p.held) return { ok: false, reason: '手上有東西' };
+      if (!handsFree(p)) return { ok: false, reason: '手上有東西' };
       if (w.backstock[t.product] <= 0) return { ok: false, reason: '倉庫沒貨了，請採購' };
       return { ok: true, dur: 0 };
     case 'returnBox':
@@ -470,7 +630,7 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target): Check {
       if (w.shelves[t.product] >= cap(w)) return { ok: false, reason: '貨架已滿' };
       return { ok: true, dur: 0.6 };
     case 'takeMop':
-      if (t.t !== 'mop' || p.held) return { ok: false, reason: '手上有東西' };
+      if (t.t !== 'mop' || !handsFree(p)) return { ok: false, reason: '手上有東西' };
       if (w.mopsOnRack <= 0) return { ok: false, reason: '拖把都被拿走了' };
       return { ok: true, dur: 0 };
     case 'returnMop':
@@ -479,7 +639,7 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target): Check {
     case 'clean':
       if (t.t !== 'spill' || !w.spills.some(s => s.id === t.id)) return { ok: false, reason: '已經清乾淨了' };
       if (p.held?.kind !== 'mop') return { ok: false, reason: '需要拖把（在西側牆邊）' };
-      return { ok: true, dur: 1.5 };
+      return { ok: true, dur: 1.5 * m.clean };
     case 'calm':
       if (!c || c.kind !== 'rager' || c.resolved) return { ok: false, reason: '不需要安撫' };
       return { ok: true, dur: 1.2 };
@@ -494,12 +654,26 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target): Check {
     case 'stopFilm':
       if (!c || c.kind !== 'streamer' || c.resolved) return { ok: false, reason: '不需要' };
       return { ok: true, dur: 0.6 };
+    case 'stopLitter':
+      if (!c || c.kind !== 'litterer' || c.resolved) return { ok: false, reason: '不需要' };
+      return { ok: true, dur: 0.9 };
     case 'checkBag':
       if (!c || c.kind !== 'hog' || c.resolved) return { ok: false, reason: '不需要' };
       return { ok: true, dur: 1.0 };
     case 'pickup': {
-      if (t.t !== 'item' || p.held) return { ok: false, reason: '手上有東西' };
-      if (!w.items.some(i => i.id === t.id)) return { ok: false, reason: '已被拿走' };
+      if (t.t !== 'item') return { ok: false, reason: '目標錯誤' };
+      const it = w.items.find(i => i.id === t.id);
+      if (!it) return { ok: false, reason: '已被拿走' };
+      if (isFood(it.held) ? !canTakeFood(p) : !handsFree(p)) return { ok: false, reason: '手上有東西' };
+      return { ok: true, dur: 0 };
+    }
+    case 'grab': {
+      if (!w.cfg.abilities.includes('grab')) return { ok: false, reason: '還沒學會（資深店員 Lv.11 解鎖）' };
+      if (!c || c.gone) return { ok: false, reason: '目標不見了' };
+      if (p.grabbing != null) return { ok: false, reason: '已經抓著人了' };
+      if (p.held || p.held2) return { ok: false, reason: '先放下手上的東西' };
+      if (c.heldBy) return { ok: false, reason: '已經被隊友抓住了' };
+      if (c.state === 'leaving' || c.fly) return { ok: false, reason: '抓不到' };
       return { ok: true, dur: 0 };
     }
   }
@@ -508,23 +682,21 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target): Check {
 
 function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
   const n = activePlayers(w);
+  const m = w.cfg.mods;
   const c = t.t === 'customer' ? customer(w, t.id) : undefined;
   switch (kind) {
     case 'checkout': {
       if (t.t !== 'register') return;
       const cc = customer(w, w.registers[t.idx]!)!;
-      let total = cc.items.reduce((s, it) => s + PRODUCT_INFO[it].price, 0) + (cc.coffeeDone ? COFFEE_PRICE : 0);
-      const tip = cc.kind === 'normal' ? Math.round(total * 0.18 * Math.max(0, cc.mood) / 100 * (w.rating / 5) * (cc.patience / cc.patienceMax + 0.3)) : 0;
+      let total = cc.items.reduce((s, it) => s + PRODUCT_INFO[it].price, 0) + (cc.foodDone ? (cc.want === 'meal' ? MEAL_PRICE : COFFEE_PRICE) : 0);
+      const tip = cc.kind === 'normal' ? Math.round(total * 0.18 * m.tips * Math.max(0, cc.mood) / 100 * (w.rating / 5) * (cc.patience / cc.patienceMax + 0.3)) : 0;
       total += tip;
       w.money += total; w.dayStats.revenue += total; w.dayStats.tips += tip; w.dayStats.served++; w.totals.revenue += total; w.totals.served++;
       p.stats.served++;
+      adjChaos(w, -2);
       if (cc.kind === 'cutter' && !cc.resolved) {
-        const others = w.queue.length;
-        adjRating(w, -Math.min(0.4, 0.08 * others));
-        w.dayStats.karensFailed++;
         for (const id of w.queue) { const o = customer(w, id); if (o) o.mood -= 20; }
-        toast(w, '😤 插隊奧客先結帳了，排隊的客人很不滿', 'bad');
-        cc.resolved = true;
+        failKaren(w, cc, -Math.min(0.4, 0.08 * w.queue.length), 6, '😤 插隊奧客先結帳了，排隊的客人很不滿');
       } else {
         adjRating(w, 0.025 * Math.max(0.2, cc.mood / 100));
       }
@@ -533,12 +705,15 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
       leave(w, cc, false);
       break;
     }
-    case 'brew': p.held = { kind: 'coffee' }; ev(w, { e: 'sfx', name: 'brew', x: p.x, z: p.z }); break;
-    case 'deliver':
-      p.held = null; c!.coffeeDone = true; c!.mood = Math.min(100, c!.mood + 10);
+    case 'brew': giveFood(p, { kind: 'coffee' }); ev(w, { e: 'sfx', name: 'brew', x: p.x, z: p.z }); break;
+    case 'heat': giveFood(p, { kind: 'meal' }); ev(w, { e: 'sfx', name: 'brew', x: p.x, z: p.z }); break;
+    case 'deliver': {
+      if (p.held?.kind === c!.want) { p.held = p.held2; p.held2 = null; } else p.held2 = null;
+      c!.foodDone = true; c!.mood = Math.min(100, c!.mood + 10);
       ev(w, { e: 'sfx', name: 'deliver', x: c!.x, z: c!.z });
       nextStep(w, c!);
       break;
+    }
     case 'takeBox': {
       if (t.t !== 'crate') return;
       const qty = Math.min(BOX_SIZE, w.backstock[t.product]);
@@ -563,37 +738,34 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
     case 'clean':
       if (t.t !== 'spill') return;
       w.spills = w.spills.filter(s => s.id !== t.id);
-      w.dayStats.spillsCleaned++; p.stats.cleaned++; adjRating(w, 0.01);
+      w.dayStats.spillsCleaned++; p.stats.cleaned++; adjRating(w, 0.01); adjChaos(w, -4);
       ev(w, { e: 'sfx', name: 'clean', x: p.x, z: p.z });
       break;
     case 'calm':
-      c!.anger -= 26;
+      c!.anger -= 26 * m.calm;
       ev(w, { e: 'sfx', name: 'calm', x: c!.x, z: c!.z });
       if (c!.anger <= 0) {
-        c!.anger = 0; c!.resolved = true; adjRating(w, 0.15); w.dayStats.karensResolved++; w.totals.karens++; p.stats.karens++;
-        toast(w, `😌 ${p.name} 成功安撫退貨奧客（評價 +0.15）`, 'good');
+        c!.anger = 0;
+        resolveKaren(w, c!, p, 0.15, `😌 ${p.name} 成功安撫退貨奧客（口碑 +0.15）`);
         leave(w, c!, false);
       }
       break;
     case 'coupon':
-      w.money -= 30; c!.resolved = true; c!.anger = 0; adjRating(w, 0.05); w.dayStats.karensResolved++; w.totals.karens++; p.stats.karens++;
-      toast(w, `🎟 ${p.name} 發了折價券打發奧客（-$30）`, 'info');
+      w.money -= 30; c!.anger = 0;
+      resolveKaren(w, c!, p, 0.05, `🎟 ${p.name} 發了折價券打發奧客（-$30）`);
       leave(w, c!, false);
       break;
     case 'askQueue': {
-      c!.resolved = true; adjRating(w, 0.1); w.dayStats.karensResolved++; w.totals.karens++; p.stats.karens++;
-      w.queue = w.queue.filter(id => id !== c!.id);
-      w.registers = w.registers.map(r => (r === c!.id ? null : r));
+      resolveKaren(w, c!, p, 0.1, `👉 ${p.name} 請插隊奧客到隊伍最後面（口碑 +0.1）`);
+      detachFromLines(w, c!);
       joinQueue(w, c!, false);
-      toast(w, `👉 ${p.name} 請插隊奧客到隊伍最後面（評價 +0.1）`, 'good');
       break;
     }
     case 'stopFilm': {
       c!.hits++;
       const need = 1 + Math.floor((n - 1) / 2);
       if (c!.hits >= need) {
-        c!.resolved = true; adjRating(w, 0.12); w.dayStats.karensResolved++; w.totals.karens++; p.stats.karens++;
-        toast(w, `📵 ${p.name} 制止了直播客（評價 +0.12）`, 'good');
+        resolveKaren(w, c!, p, 0.12, `📵 ${p.name} 制止了直播客（口碑 +0.12）`);
         leave(w, c!, false);
       } else {
         toast(w, `📵 直播客不聽勸，還要再 ${need - c!.hits} 次`, 'info');
@@ -601,18 +773,29 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
       }
       break;
     }
+    case 'stopLitter':
+      resolveKaren(w, c!, p, 0.1, `🗑 ${p.name} 請亂丟客把垃圾帶走（口碑 +0.1）`);
+      leave(w, c!, false);
+      break;
     case 'checkBag':
-      c!.resolved = true; c!.items = c!.eaten.length ? [...c!.eaten] : [pick(w, PRODUCTS)]; c!.eaten = [];
-      adjRating(w, 0.1); w.dayStats.karensResolved++; w.totals.karens++; p.stats.karens++;
-      toast(w, `🧾 ${p.name} 抓到偷吃奧客，他要去結帳了`, 'good');
+      c!.items = c!.eaten.length ? [...c!.eaten] : [pick(w, PRODUCTS)]; c!.eaten = [];
+      resolveKaren(w, c!, p, 0.1, `🧾 ${p.name} 抓到偷吃奧客，他要去結帳了`);
       joinQueue(w, c!, false);
       break;
     case 'pickup': {
       if (t.t !== 'item') return;
       const it = w.items.find(i => i.id === t.id)!;
       w.items = w.items.filter(i => i.id !== t.id);
-      p.held = it.held;
+      if (isFood(it.held)) giveFood(p, it.held); else p.held = it.held;
       ev(w, { e: 'sfx', name: 'pickup', x: p.x, z: p.z });
+      break;
+    }
+    case 'grab': {
+      detachFromLines(w, c!);
+      c!.heldBy = p.id; c!.state = 'held'; c!.path = []; c!.fly = null;
+      p.grabbing = c!.id;
+      if (c!.kind === 'normal') toast(w, '⚠ 這是一般顧客！丟出去會被扣分，按「放下」放開他', 'bad');
+      ev(w, { e: 'sfx', name: 'grab', x: c!.x, z: c!.z });
       break;
     }
   }
@@ -633,18 +816,93 @@ export function requestAct(w: World, playerId: string, rid: string, kind: ActKin
   const r = check(w, p, kind, target);
   if (!r.ok) return remember(false, r.reason);
   if (r.dur <= 0) { complete(w, p, kind, target); return remember(true); }
-  p.busy = { kind, target, start: w.time, dur: r.dur, rid };
+  let reserved: Product | undefined;
+  if (kind === 'heat') { w.backstock.bento--; reserved = 'bento'; } // reserve the ingredient, refunded on cancel
+  p.busy = { kind, target, start: w.time, dur: r.dur, rid, reserved };
   remember(true);
+}
+
+function cancelBusy(w: World, p: PlayerState) {
+  if (p.busy?.reserved) w.backstock[p.busy.reserved]++;
+  p.busy = null;
+}
+
+function once(p: PlayerState, rid: string) {
+  if (p.recent.has(rid)) return false;
+  p.recent.set(rid, { ok: true });
+  if (p.recent.size > 64) p.recent.delete(p.recent.keys().next().value!);
+  return true;
 }
 
 export function requestDrop(w: World, playerId: string, rid: string) {
   const p = w.players.get(playerId);
-  if (!p || !p.held) return;
-  if (p.recent.has(rid)) return;
-  p.recent.set(rid, { ok: true });
-  p.busy = null;
+  if (!p || !once(p, rid)) return;
+  if (p.busy) { cancelBusy(w, p); return; }
+  if (p.grabbing != null) { releaseGrab(w, p); return; }
+  if (!p.held && !p.held2) return;
+  if (p.held2) { p.held2 = null; ev(w, { e: 'sfx', name: 'drop', x: p.x, z: p.z }); return; }
+  if (isFood(p.held)) { p.held = null; adjChaos(w, 1); addSpill(w, p.x + Math.sin(p.yaw) * 0.6, p.z + Math.cos(p.yaw) * 0.6); ev(w, { e: 'sfx', name: 'drop', x: p.x, z: p.z }); return; }
   dropHeld(w, p);
   ev(w, { e: 'sfx', name: 'drop', x: p.x, z: p.z });
+}
+
+/** Throw the grabbed customer in the look direction. */
+export function requestThrow(w: World, playerId: string, rid: string, yaw: number, pitch: number) {
+  const p = w.players.get(playerId);
+  if (!p || !once(p, rid) || p.grabbing == null || !Number.isFinite(yaw) || !Number.isFinite(pitch)) return;
+  const c = customer(w, p.grabbing);
+  p.grabbing = null;
+  if (!c || c.heldBy !== p.id) return;
+  c.heldBy = null; c.state = 'flying';
+  const lift = Math.max(-0.25, Math.min(0.55, pitch));
+  const power = 11.5 * w.cfg.mods.throwPower;
+  c.fly = { vx: Math.sin(yaw) * power, vz: Math.cos(yaw) * power, vy: 3.6 + lift * 5, y: 0.62, t: 2.8, thrown: true, by: p.id };
+  adjBurst(w, 4);
+  ev(w, { e: 'fx', name: 'throw', x: c.x, z: c.z, by: p.name });
+  ev(w, { e: 'sfx', name: 'throw', x: c.x, z: c.z });
+}
+
+/** Mop whirlwind: knock back everyone nearby. */
+export function requestSpin(w: World, playerId: string, rid: string) {
+  const p = w.players.get(playerId);
+  if (!p || !once(p, rid)) return;
+  if (!w.cfg.abilities.includes('spin')) { w.results.push({ playerId, rid, ok: false, reason: '還沒學會（副店長 Lv.16 解鎖）' }); return; }
+  if (w.time < p.spinReadyAt) { w.results.push({ playerId, rid, ok: false, reason: `旋風冷卻中（${Math.ceil(p.spinReadyAt - w.time)} 秒）` }); return; }
+  if (p.grabbing != null) { w.results.push({ playerId, rid, ok: false, reason: '先丟出抓著的人' }); return; }
+  const m = w.cfg.mods;
+  p.spinReadyAt = w.time + m.spinCooldown;
+  adjBurst(w, 12);
+  let hitNormal = 0, hits = 0;
+  for (const c of w.customers) {
+    if (c.gone || c.heldBy || c.fly) continue;
+    const d = Math.hypot(c.x - p.x, c.z - p.z);
+    if (d > m.spinRange) continue;
+    const k = Math.max(0.1, d);
+    detachFromLines(w, c);
+    c.fly = { vx: (c.x - p.x) / k * 7, vz: (c.z - p.z) / k * 7, vy: 3.8, y: 0.3, t: 1.8, thrown: false, by: p.id };
+    c.state = 'flying'; c.path = []; hits++;
+    if (c.kind === 'normal') { hitNormal++; c.mood -= 30; }
+  }
+  if (hitNormal) { adjChaos(w, 4 * hitNormal); adjRating(w, -0.05 * hitNormal); }
+  ev(w, { e: 'fx', name: 'spin', x: p.x, z: p.z, by: p.name });
+  ev(w, { e: 'sfx', name: 'spin', x: p.x, z: p.z });
+  if (hitNormal) toast(w, `🌀 旋風也掃到 ${hitNormal} 位一般顧客（混亂 +${4 * hitNormal}）`, 'bad');
+  else if (hits) toast(w, `🌀 拖把旋風！擊退 ${hits} 人`, 'good');
+}
+
+export function requestUltimate(w: World, playerId: string, rid: string) {
+  const p = w.players.get(playerId);
+  if (!p || !once(p, rid)) return;
+  if (!w.cfg.abilities.includes('ultimate')) { w.results.push({ playerId, rid, ok: false, reason: '還沒學會（區域督導 Lv.26 解鎖）' }); return; }
+  if (w.burst < BURST_MAX) { w.results.push({ playerId, rid, ok: false, reason: `爆發值 ${Math.floor(w.burst)}/100` }); return; }
+  const targets = w.customers.filter(c => c.kind !== 'normal' && !c.resolved && !c.gone && c.state !== 'leaving');
+  if (!targets.length) { w.results.push({ playerId, rid, ok: false, reason: '店內沒有奧客，先存著' }); return; }
+  w.burst = 0;
+  for (const c of targets) { if (c.heldBy) { const h = w.players.get(c.heldBy); if (h) h.grabbing = null; } eject(w, c, p, 'ultimate'); }
+  adjChaos(w, -15);
+  ev(w, { e: 'fx', name: 'ultimate', x: p.x, z: p.z, by: p.name });
+  ev(w, { e: 'sfx', name: 'ultimate' });
+  toast(w, `✴ ${p.name}：全 店 奧 客 退 散 ！`, 'good');
 }
 
 /** Purchases. Upgrades carry the level the buyer saw, so a resent/duplicate request can't buy twice. */
@@ -664,6 +922,7 @@ export function requestBuy(w: World, playerId: string, rid: string, item: string
     return done(true);
   }
   if (item.startsWith('upg_')) {
+    if (w.cfg.mode === 'shift') return done(false, '班次模式請在職涯畫面升級裝備');
     const id = item.slice(4) as UpgradeId;
     const def = UPGRADES[id];
     if (!def) return done(false, '未知升級');
@@ -707,20 +966,19 @@ function setPhase(w: World, phase: Phase) {
   ev(w, { e: 'phase', phase, day: w.day });
 }
 
-function settleDay(w: World) {
-  // Return carried/dropped goods to the stockroom, clear the floor.
+function clearFloor(w: World) {
   for (const p of w.players.values()) {
-    p.busy = null;
+    cancelBusy(w, p);
     if (p.held?.kind === 'box') w.backstock[p.held.product] += p.held.qty;
-    if (p.held?.kind === 'mop') w.mopsOnRack++;
-    p.held = null;
+    p.held = null; p.held2 = null; p.grabbing = null;
   }
-  for (const it of w.items) {
-    if (it.held.kind === 'box') w.backstock[it.held.product] += it.held.qty;
-    if (it.held.kind === 'mop') w.mopsOnRack++;
-  }
+  for (const it of w.items) if (it.held.kind === 'box') w.backstock[it.held.product] += it.held.qty;
   w.items = []; w.spills = []; w.customers = []; w.queue = []; w.registers = [null, null]; w.pings = [];
-  w.mopsOnRack = 2;
+  w.mopsOnRack = 2; w.event = null; w.power = 1;
+}
+
+function settleDay(w: World) {
+  clearFloor(w);
   if (w.bonusPaidDay !== w.day) { // pay the daily bonus exactly once per day
     w.bonusPaidDay = w.day;
     const bonus = Math.round(w.rating * 12 + w.dayStats.karensResolved * 10);
@@ -731,75 +989,116 @@ function settleDay(w: World) {
   w.saveOut = { ...toSave(w), day: w.day + 1 };
 }
 
+function finishShift(w: World, failReason: string) {
+  if (w.result) return;
+  const d = w.dayStats;
+  const won = !failReason && d.revenue >= w.cfg.goal;
+  w.result = {
+    shiftId: w.cfg.id, won, failReason: failReason || (won ? '' : `營業額未達目標 $${w.cfg.goal}`),
+    revenue: d.revenue, goal: w.cfg.goal, rating: Math.round(w.rating * 100) / 100, chaos: Math.round(w.chaos),
+    served: d.served, angryLeft: d.angryLeft, karensResolved: d.karensResolved, karensFailed: d.karensFailed,
+    ejected: d.ejected, cleaned: d.spillsCleaned, maxCombo: d.maxCombo,
+  };
+  clearFloor(w);
+  setPhase(w, 'summary'); w.phaseLeft = 0;
+  ev(w, { e: 'sfx', name: won ? 'open' : 'angry' });
+}
+
+function updateEvents(w: World, dt: number) {
+  if (!w.cfg.events.length) return;
+  if (w.event) {
+    w.event.left -= dt;
+    if (w.event.kind === 'rush') {
+      w.event.pulse -= dt;
+      if (w.event.pulse <= 0) { w.event.pulse = 2.8; if (w.customers.length < w.cfg.maxCustomers + 3 * activePlayers(w) + 4) spawnCustomer(w, 'normal'); }
+    }
+    if (w.event.left <= 0) { w.event = null; w.power = 1; toast(w, '突發狀況結束，繼續營業', 'info'); }
+    return;
+  }
+  w.nextEvent -= dt;
+  if (w.nextEvent <= 0) {
+    w.nextEvent = 42;
+    const kind = pick(w, w.cfg.events);
+    w.event = { kind, left: kind === 'rush' ? 14 : 11, pulse: 0 };
+    if (kind === 'outage') { w.power = 0.35; toast(w, '⚡ 突然停電！備用照明啟動，顧客比較不耐煩', 'bad'); ev(w, { e: 'sfx', name: 'outage' }); }
+    else toast(w, '🚶 尖峰人潮！接下來客人暴增', 'bad');
+  }
+}
+
 export function tick(w: World, dt: number) {
   w.time += dt;
   w.difficultyPlayers = activePlayers(w);
   const n = w.difficultyPlayers;
+  const shift = w.cfg.mode === 'shift';
   // player channel actions
   for (const p of w.players.values()) {
     if (!p.busy) continue;
     const b = p.busy;
     if (w.time >= b.start + b.dur) {
       p.busy = null;
-      const r = check(w, p, b.kind, b.target);
+      const r = check(w, p, b.kind, b.target, true);
       if (r.ok) complete(w, p, b.kind, b.target);
-      else toast(w, `${p.name}：動作中斷（${r.reason}）`, 'info');
+      else { if (b.reserved) w.backstock[b.reserved]++; toast(w, `${p.name}：動作中斷（${r.reason}）`, 'info'); }
     } else if (targetDist(w, p, b.target) > SERVER_INTERACT_RANGE + 0.4) {
-      p.busy = null;
+      cancelBusy(w, p);
     }
   }
   w.pings = w.pings.filter(pg => pg.until > w.time);
+  while (w.hintQueue.length && w.hintQueue[0].at <= w.time) ev(w, { e: 'hint', text: w.hintQueue.shift()!.text });
 
   switch (w.phase) {
     case 'prep':
       w.phaseLeft -= dt;
       if (w.phaseLeft <= 0 || allReady(w)) {
-        setPhase(w, 'open'); w.clock = OPEN_MINUTE; w.phaseLeft = DAY_OPEN_SECONDS;
-        w.dayStats = emptyStats(w.rating); w.spawnTimer = 2; w.karenTimer = 22; w.saveOut = null;
-        toast(w, `🏪 第 ${w.day} 天開始營業！`, 'good');
+        setPhase(w, 'open'); w.clock = OPEN_MINUTE; w.phaseLeft = w.cfg.length;
+        w.dayStats = emptyStats(w.rating); w.spawnTimer = 2; w.karenTimer = w.cfg.firstKaren; w.saveOut = null; w.nextEvent = w.cfg.firstEvent;
+        toast(w, shift ? `🏪 ${w.cfg.title}：開始上班！目標營業額 $${w.cfg.goal}` : `🏪 第 ${w.day} 天開始營業！`, 'good');
         ev(w, { e: 'sfx', name: 'open' });
       }
       break;
     case 'open': {
       w.phaseLeft -= dt;
-      w.clock = OPEN_MINUTE + (1 - Math.max(0, w.phaseLeft) / DAY_OPEN_SECONDS) * (CLOSE_MINUTE - OPEN_MINUTE);
+      w.clock = OPEN_MINUTE + (1 - Math.max(0, w.phaseLeft) / w.cfg.length) * (CLOSE_MINUTE - OPEN_MINUTE);
       const playerScale = 0.7 + 0.3 * n;
       const ratingScale = 0.6 + w.rating * 0.16;
       const adsScale = 1 + 0.2 * w.upgrades.ads;
       w.spawnTimer -= dt * playerScale * ratingScale * adsScale;
-      const maxCustomers = 6 + 3 * n;
+      const maxCustomers = w.cfg.maxCustomers + 3 * n;
       if (w.spawnTimer <= 0) {
-        w.spawnTimer = 7 + w.rng() * 4;
+        w.spawnTimer = w.cfg.spawnEvery * (0.8 + w.rng() * 0.45);
         if (w.customers.length < maxCustomers) spawnCustomer(w, 'normal');
       }
-      w.karenTimer -= dt * (0.8 + 0.2 * n);
-      if (w.karenTimer <= 0) {
-        w.karenTimer = 40 + w.rng() * 25;
-        const active = w.customers.filter(c => c.kind !== 'normal' && !c.resolved);
-        if (active.length < 1 + Math.floor(n / 2)) {
-          const kinds: KarenKind[] = ['cutter', 'rager', 'streamer', 'hog'];
-          const avail = kinds.filter(k => !active.some(a => a.kind === k));
-          spawnCustomer(w, pick(w, avail.length ? avail : kinds));
+      if (w.cfg.karens.length) {
+        w.karenTimer -= dt * (0.8 + 0.2 * n);
+        if (w.karenTimer <= 0) {
+          w.karenTimer = w.cfg.karenEvery * (0.85 + w.rng() * 0.4);
+          const active = w.customers.filter(c => c.kind !== 'normal' && !c.resolved && !c.gone);
+          if (active.length < w.cfg.maxKarens + Math.floor((n - 1) / 2)) {
+            const avail = w.cfg.karens.filter(k => !active.some(a => a.kind === k));
+            spawnCustomer(w, pick(w, avail.length ? avail : w.cfg.karens));
+          }
         }
       }
+      updateEvents(w, dt);
       if (w.phaseLeft <= 0) {
-        setPhase(w, 'closing'); w.phaseLeft = CLOSING_MAX_SECONDS; w.clock = CLOSE_MINUTE;
-        toast(w, '🌙 打烊時間到！服務完店內顧客', 'info');
+        setPhase(w, 'closing'); w.phaseLeft = shift ? 10 : CLOSING_MAX_SECONDS; w.clock = CLOSE_MINUTE;
+        w.event = null; w.power = 1;
+        toast(w, shift ? '🔔 下班時間到！把手上的結帳做完' : '🌙 打烊時間到！服務完店內顧客', 'info');
       }
       break;
     }
     case 'closing':
       w.phaseLeft -= dt;
       for (const c of w.customers) {
-        if (c.kind !== 'normal' && !c.resolved && c.state !== 'leaving' && c.kind !== 'cutter') { c.resolved = true; leave(w, c, false); }
+        if (c.kind !== 'normal' && !c.resolved && c.state !== 'leaving' && c.kind !== 'cutter' && !c.heldBy && !c.fly) { c.resolved = true; leave(w, c, false); }
       }
       if (w.customers.length === 0 || w.phaseLeft <= 0) {
-        settleDay(w);
-        setPhase(w, 'summary'); w.phaseLeft = 0;
+        if (shift) finishShift(w, '');
+        else { settleDay(w); setPhase(w, 'summary'); w.phaseLeft = 0; }
       }
       break;
     case 'summary':
-      if (allReady(w)) {
+      if (!shift && allReady(w)) {
         w.day++; setPhase(w, 'prep'); w.phaseLeft = PREP_SECONDS; w.clock = OPEN_MINUTE;
         w.dayStats = emptyStats(w.rating);
       }
@@ -808,15 +1107,28 @@ export function tick(w: World, dt: number) {
 
   if (w.phase === 'open' || w.phase === 'closing') {
     adjRating(w, -0.0008 * Math.min(6, w.spills.length) * dt);
+    w.chaosTimer += dt;
+    if (w.chaosTimer >= 8) { w.chaosTimer = 0; adjChaos(w, w.spills.length * 0.8); }
     if (w.upgrades.mopbot > 0 && w.spills.length) {
       w.mopbotTimer -= dt;
       if (w.mopbotTimer <= 0) { w.mopbotTimer = 20; const s = w.spills.shift()!; ev(w, { e: 'sfx', name: 'clean', x: s.x, z: s.z }); }
     }
+    if (w.cfg.mods.guard > 0) {
+      w.guardTimer -= dt;
+      if (w.guardTimer <= 0) {
+        w.guardTimer = guardInterval(w.cfg.mods.guard);
+        const k = w.customers.filter(c => c.kind !== 'normal' && !c.resolved && !c.gone && !c.heldBy && !c.fly && Math.hypot(c.x - ENTRANCE.x, c.z - ENTRANCE.z) < 5.5)[0];
+        if (k) eject(w, k, null, 'guard');
+      }
+    }
+    if (shift && (w.chaos >= CHAOS_MAX || w.rating <= 0)) finishShift(w, w.chaos >= CHAOS_MAX ? '店面混亂度爆表' : '口碑歸零');
   }
 
-  updateQueue(w);
-  for (const c of w.customers) updateCustomer(w, c, dt);
-  w.customers = w.customers.filter(c => !c.gone);
+  if (w.phase !== 'summary') {
+    updateQueue(w);
+    for (const c of [...w.customers]) if (!c.gone) updateCustomer(w, c, dt);
+    w.customers = w.customers.filter(c => !c.gone);
+  }
 }
 
 export function snapshot(w: World, now: number): Snapshot {
@@ -832,19 +1144,27 @@ export function snapshot(w: World, now: number): Snapshot {
     money: w.money, rating: r2(w.rating), backstock: { ...w.backstock }, shelves: { ...w.shelves }, upgrades: { ...w.upgrades },
     mopsOnRack: w.mopsOnRack, playerCount: activePlayers(w),
     players: [...w.players.values()].map(p => ({
-      id: p.id, name: p.name, color: p.color, x: r2(p.x), z: r2(p.z), yaw: r2(p.yaw), pitch: r2(p.pitch), held: p.held,
-      connected: p.connected, away: p.away, ready: p.ready,
+      id: p.id, name: p.name, color: p.color, x: r2(p.x), z: r2(p.z), yaw: r2(p.yaw), pitch: r2(p.pitch), held: p.held, held2: p.held2,
+      connected: p.connected, away: p.away, ready: p.ready, grabbing: p.grabbing, spinCd: r2(Math.max(0, p.spinReadyAt - w.time)),
       busy: p.busy ? { kind: p.busy.kind, p: Math.min(1, (w.time - p.busy.start) / p.busy.dur) } : null,
     })),
     customers: w.customers.map(c => ({
       id: c.id, kind: c.kind, x: r2(c.x), z: r2(c.z), yaw: r2(c.yaw), state: c.state,
-      patience: Math.max(0, c.state === 'waitCoffee' ? c.timer / 50 : c.patience / c.patienceMax),
+      patience: Math.max(0, Math.min(1, c.state === 'waitFood' ? c.timer / c.patienceMax : c.patience / c.patienceMax)),
       anger: Math.round(c.anger), resolved: c.resolved, revealed: reveal(c), items: c.items.length,
-      wantsCoffee: c.wantsCoffee && !c.coffeeDone && !c.coffeeFailed, look: c.look, moving: c.moving,
+      want: c.want && !c.foodDone && !c.foodFailed ? c.want : null, look: c.look, moving: c.moving,
+      y: c.fly ? r2(c.fly.y) : c.state === 'held' ? 0.25 : 0, held: c.state === 'held', flying: !!c.fly,
     })),
     spills: w.spills.map(s => ({ id: s.id, x: r2(s.x), z: r2(s.z) })),
     items: w.items.map(i => ({ id: i.id, x: r2(i.x), z: r2(i.z), held: i.held })),
     pings: w.pings.map(pg => ({ id: pg.id, x: pg.x, z: pg.z, by: pg.by, ttl: pg.until - w.time })),
     dayStats: { ...w.dayStats },
+    chaos: Math.round(w.chaos), burst: Math.floor(w.burst), combo: w.time < w.comboUntil ? w.combo : 0, power: w.power,
+    event: w.event ? { kind: w.event.kind, left: r2(w.event.left) } : null,
+    shift: {
+      mode: w.cfg.mode, id: w.cfg.id, title: w.cfg.title, chapter: w.cfg.chapter, goal: w.cfg.goal, length: w.cfg.length, abilities: w.cfg.abilities, foods: w.cfg.foods,
+      staminaMax: w.cfg.mods.staminaMax, staminaRegen: w.cfg.mods.staminaRegen, speed: w.cfg.mods.speed,
+    },
+    result: w.result,
   };
 }

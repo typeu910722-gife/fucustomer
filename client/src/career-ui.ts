@@ -1,0 +1,148 @@
+// Career screens: rank card, chapter map, skill trees, gear shop and the post-shift result.
+import {
+  ABILITY_INFO, ABILITY_LEVEL, Ability, CHAPTERS, CareerProfile, GEAR, GEAR_IDS, GEAR_MAX, GearId, MAX_LEVEL, RANKS, Reward, SKILLS,
+  SKILL_MAX, ShiftResult, SkillTree, buyGear, chapterUnlocked, expToNext, findShift, gearPrice, rankOf, sanitizeProfile, shiftUnlocked,
+  spendSkill,
+} from '../../shared/career.ts';
+import { KAREN_INFO } from '../../shared/constants.ts';
+import { esc, show } from './ui.ts';
+
+const KEY = 'fucustomer.career.v1';
+export function loadProfile(): CareerProfile {
+  try { return sanitizeProfile(JSON.parse(localStorage.getItem(KEY) ?? 'null')); } catch { return sanitizeProfile(null); }
+}
+export function saveProfile(p: CareerProfile) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ignore */ } }
+
+type Tab = 'chapters' | 'skills' | 'gear' | 'stats';
+export interface CareerHandlers { play(shiftId: string): void; back(): void }
+
+const stars = (n: number, max = 3) => '★'.repeat(n) + '<span class="dim">' + '★'.repeat(max - n) + '</span>';
+
+function rankCard(p: CareerProfile) {
+  const need = expToNext(p.level);
+  const pct = p.level >= MAX_LEVEL ? 100 : Math.min(100, (p.exp / need) * 100);
+  const nextRank = RANKS.find(r => r.from > p.level);
+  return `
+    <div class="rankcard">
+      <div class="rankbadge">Lv.${p.level}</div>
+      <div style="flex:1">
+        <div class="rankname">${rankOf(p.level)}${p.title ? ` <span class="tag ok">${esc(p.title)}</span>` : ''}</div>
+        <div class="bar big"><i style="width:${pct}%"></i></div>
+        <div class="muted">${p.level >= MAX_LEVEL ? '已達最高職級' : `EXP ${p.exp} / ${need}`}${nextRank ? `・Lv.${nextRank.from} 晉升「${nextRank.name}」` : ''}</div>
+      </div>
+      <div class="wallet">💰 ${p.wallet}<small>薪資點數</small></div>
+    </div>`;
+}
+
+export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'chapters') {
+  const tabs: [Tab, string][] = [['chapters', '📖 主線'], ['skills', `🧠 技能${p.skillPoints ? ` (${p.skillPoints})` : ''}`], ['gear', '🧰 裝備'], ['stats', '📊 紀錄']];
+  show(`
+    <div class="card wide career">
+      <div class="row" style="align-items:center"><h2 style="flex:1;margin:0">打工人職涯</h2><button class="btn small" id="c-back" style="flex:0">← 主選單</button></div>
+      ${rankCard(p)}
+      <div class="tabs">${tabs.map(([t, l]) => `<button class="tab ${t === tab ? 'on' : ''}" data-tab="${t}">${l}</button>`).join('')}</div>
+      <div id="c-body">${tab === 'chapters' ? chaptersHtml(p) : tab === 'skills' ? skillsHtml(p) : tab === 'gear' ? gearHtml(p) : statsHtml(p)}</div>
+    </div>`);
+  document.getElementById('c-back')!.onclick = () => h.back();
+  document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(b => { b.onclick = () => careerScreen(p, h, b.dataset.tab as Tab); });
+  document.querySelectorAll<HTMLButtonElement>('[data-play]').forEach(b => { b.onclick = () => h.play(b.dataset.play!); });
+  document.querySelectorAll<HTMLButtonElement>('[data-skill]').forEach(b => { b.onclick = () => { if (spendSkill(p, b.dataset.skill as SkillTree)) saveProfile(p); careerScreen(p, h, 'skills'); }; });
+  document.querySelectorAll<HTMLButtonElement>('[data-gear]').forEach(b => { b.onclick = () => { if (buyGear(p, b.dataset.gear as GearId)) saveProfile(p); careerScreen(p, h, 'gear'); }; });
+}
+
+function chaptersHtml(p: CareerProfile) {
+  // the first playable, not-yet-cleared shift is highlighted as "next"
+  let next = '';
+  for (const c of CHAPTERS) for (const s of c.shifts) if (!next && !p.stars[s.id] && shiftUnlocked(p, s.id).ok) next = s.id;
+  return CHAPTERS.map(c => {
+    const open = chapterUnlocked(p, c.n);
+    const got = c.shifts.reduce((n, s) => n + (p.stars[s.id] ?? 0), 0);
+    return `
+      <div class="chapter ${open.ok ? '' : 'locked'}">
+        <div class="chhead"><b>第 ${c.n} 章・${esc(c.title)}</b><span class="muted">${esc(c.place)}</span><span class="tag">★ ${got}/${c.shifts.length * 3}</span></div>
+        <div class="muted story">${open.ok ? esc(c.story) : `🔒 ${esc(open.why ?? '')}`}</div>
+        ${open.ok ? `<div class="shifts">${c.shifts.map(s => {
+          const u = shiftUnlocked(p, s.id);
+          const st = p.stars[s.id] ?? 0;
+          const ks = s.karens.map(k => KAREN_INFO[k].name).join('、') || '無奧客';
+          return `<button class="shiftbtn ${s.id === next ? 'next' : ''}" data-play="${s.id}" ${u.ok ? '' : 'disabled'}>
+            <span class="sid">${s.id}</span><b>${esc(s.title)}</b><span class="stars">${stars(st)}</span>
+            <small>${s.length} 秒・目標 $${s.goal}・${esc(ks)}</small></button>`;
+        }).join('')}</div>` : ''}
+      </div>`;
+  }).join('');
+}
+
+function skillsHtml(p: CareerProfile) {
+  const abil = (Object.keys(ABILITY_LEVEL) as Ability[]).map(a => `<div class="shopitem ${p.level >= ABILITY_LEVEL[a] ? '' : 'locked'}"><b>${p.level >= ABILITY_LEVEL[a] ? '✅' : '🔒'} ${ABILITY_INFO[a].name}</b><span class="muted">${ABILITY_INFO[a].desc}・Lv.${ABILITY_LEVEL[a]}（${rankOf(ABILITY_LEVEL[a])}）解鎖</span></div>`).join('');
+  return `
+    <p class="muted">每升一級獲得 1 點技能點。剩餘：<b>${p.skillPoints}</b> 點</p>
+    <div class="grid2">${(Object.keys(SKILLS) as SkillTree[]).map(t => `
+      <div class="shopitem"><b>${SKILLS[t].icon} ${SKILLS[t].name} <span class="tag">${p.skills[t]}/${SKILL_MAX}</span></b>
+        <div class="bar"><i style="width:${p.skills[t] * 10}%"></i></div>
+        <span class="muted">每點：${SKILLS[t].perPoint}</span><br>
+        <button class="btn small" data-skill="${t}" ${p.skillPoints > 0 && p.skills[t] < SKILL_MAX ? '' : 'disabled'}>＋ 加點</button></div>`).join('')}</div>
+    <h3>職級能力</h3><div class="grid2">${abil}</div>`;
+}
+
+function gearHtml(p: CareerProfile) {
+  return `<p class="muted">用上班賺的薪資點數購買，永久生效。目前 💰 ${p.wallet}</p>
+    <div class="grid2">${GEAR_IDS.map(g => {
+      const lv = p.gear[g], price = gearPrice(g, lv);
+      return `<div class="shopitem"><b>${GEAR[g].icon} ${GEAR[g].name} <span class="tag">Lv ${lv}/${GEAR_MAX}</span></b><span class="muted">${GEAR[g].detail}</span><br>
+        <button class="btn small" data-gear="${g}" ${price !== null && p.wallet >= price ? '' : 'disabled'}>${price === null ? '已滿級' : `升級 💰${price}`}</button></div>`;
+    }).join('')}</div>`;
+}
+
+function statsHtml(p: CareerProfile) {
+  const s = p.stats;
+  const totalStars = Object.values(p.stars).reduce((a, b) => a + b, 0);
+  const maxStars = CHAPTERS.reduce((n, c) => n + c.shifts.length * 3, 0);
+  return `<div class="grid2"><div>
+      <div class="stat"><span>上班次數</span><b>${s.shifts}</b></div><div class="stat"><span>成功下班</span><b>${s.wins}</b></div>
+      <div class="stat"><span>服務顧客</span><b>${s.served}</b></div><div class="stat"><span>累計營業額</span><b>$${s.revenue}</b></div></div><div>
+      <div class="stat"><span>處理奧客</span><b>${s.karens}</b></div><div class="stat"><span>請出門</span><b>${s.ejected}</b></div>
+      <div class="stat"><span>主線星數</span><b>★ ${totalStars}/${maxStars}</b></div><div class="stat"><span>職級</span><b>${rankOf(p.level)} Lv.${p.level}</b></div></div></div>`;
+}
+
+export function resultScreen(r: ShiftResult, reward: Reward, p: CareerProfile, h: { retry(): void; next(id: string | null): void; career(): void }) {
+  const f = findShift(r.shiftId)!;
+  const idx = f.chapter.shifts.findIndex(s => s.id === r.shiftId);
+  let nextId: string | null = f.chapter.shifts[idx + 1]?.id ?? CHAPTERS.find(c => c.n === f.chapter.n + 1)?.shifts[0]?.id ?? null;
+  if (nextId && !shiftUnlocked(p, nextId).ok) nextId = null;
+  const lvl = reward.levels.length ? `<div class="levelup">🎉 升級！Lv.${reward.levels[reward.levels.length - 1]}「${rankOf(reward.levels[reward.levels.length - 1])}」・技能點 +${reward.levels.length}</div>` : '';
+  const newAbil = (Object.keys(ABILITY_LEVEL) as Ability[]).filter(a => reward.levels.includes(ABILITY_LEVEL[a]));
+  show(`
+    <div class="card wide result ${r.won ? 'won' : 'lost'}">
+      <div class="muted">${f.chapter.n}-${idx + 1}・${esc(f.shift.title)}</div>
+      <h1 class="title">${r.won ? '下班快樂！' : '這班辛苦了'}</h1>
+      <div class="bigstars">${[1, 2, 3].map(i => `<span class="${i <= reward.stars ? 'on' : ''}" style="animation-delay:${i * 0.25}s">★</span>`).join('')}</div>
+      ${r.won ? '' : `<p class="err" style="text-align:center">${esc(r.failReason)}</p>`}
+      <div class="grid2">
+        <div>
+          <div class="stat"><span>營業額 / 目標</span><b>$${r.revenue} / $${r.goal}</b></div>
+          <div class="stat"><span>口碑</span><b>★ ${r.rating.toFixed(2)}</b></div>
+          <div class="stat"><span>混亂度</span><b>${r.chaos}%</b></div>
+          <div class="stat"><span>服務顧客</span><b>${r.served}</b></div>
+        </div>
+        <div>
+          <div class="stat"><span>奧客處理 成功/失敗</span><b>${r.karensResolved} / ${r.karensFailed}</b></div>
+          <div class="stat"><span>請出門 / 最高連送</span><b>${r.ejected} / ${r.maxCombo}</b></div>
+          <div class="stat"><span>生氣離開</span><b>${r.angryLeft}</b></div>
+          <div class="stat"><span>清潔</span><b>${r.cleaned}</b></div>
+        </div>
+      </div>
+      <div class="reward">EXP +${reward.exp}${reward.firstClear ? '（首次通關）' : ''}　💰 +${reward.wallet}</div>
+      ${lvl}
+      ${newAbil.map(a => `<div class="levelup">🔓 新能力：${ABILITY_INFO[a].name} — ${ABILITY_INFO[a].desc}</div>`).join('')}
+      <p class="muted" style="text-align:center">★1 達成營業額・★2 口碑 3.5 以上且混亂低於 60%・★3 營業額達 130% 且奧客零失誤、生氣離開不超過 1 人</p>
+      <div class="row">
+        <button class="btn" id="r-retry">🔁 再挑戰</button>
+        ${nextId ? `<button class="btn primary" id="r-next">下一班 ▶</button>` : ''}
+        <button class="btn" id="r-career">回職涯</button>
+      </div>
+    </div>`);
+  document.getElementById('r-retry')!.onclick = () => h.retry();
+  document.getElementById('r-career')!.onclick = () => h.career();
+  const nb = document.getElementById('r-next'); if (nb) nb.onclick = () => h.next(nextId);
+}

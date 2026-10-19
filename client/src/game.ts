@@ -4,7 +4,8 @@ import * as THREE from 'three';
 import {
   INPUT_RATE, INTERACT_RANGE, KAREN_INFO, PRODUCT_INFO, QUICK_MESSAGES, RUN_SPEED, WALK_SPEED, shelfCapacity, EYE_HEIGHT,
 } from '../../shared/constants.ts';
-import { COFFEE_MACHINE, CRATES, MOP_RACK, REGISTERS, SHELVES, AABB, clampToStore, resolveCollision } from '../../shared/map.ts';
+import { COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, AABB, clampToStore, resolveCollision } from '../../shared/map.ts';
+import type { ShiftResult } from '../../shared/career.ts';
 import type { ActKind, ClientMsg, CustomerSnap, GameEvent, LobbyState, ServerMsg, Snapshot, Target } from '../../shared/protocol.ts';
 import { audio } from './audio.ts';
 import { Input } from './input.ts';
@@ -57,8 +58,13 @@ export class Game {
   private destroyed = false;
   private feed: { text: string; until: number }[] = [];
   private lastPhase = '';
+  private stamina = 100;
+  private slipT = 0;
+  private hintUntil = 0;
+  private resultSeen = false;
+  finalResult: ShiftResult | null = null;
 
-  constructor(private conn: GameConnection, private settings: Settings, private touch: boolean, private onExit: (reason?: string) => void) {
+  constructor(private conn: GameConnection, private settings: Settings, private touch: boolean, private onExit: (reason?: string, result?: ShiftResult | null) => void) {
     const canvas = $('view') as HTMLCanvasElement;
     this.view = new StoreView(canvas, settings.quality, settings.fov);
     this.view.setQuality(settings.quality);
@@ -155,8 +161,13 @@ export class Game {
     // server reconciliation (the server clamps speed and resolves collisions)
     const err = Math.hypot(me.x - this.pos.x, me.z - this.pos.z);
     if (err > 1.5) { if (++this.corrections > 2) { this.pos = { x: me.x, z: me.z }; this.corrections = 0; } } else this.corrections = 0;
+    if (s.result && !this.resultSeen) {
+      this.resultSeen = true; this.finalResult = s.result;
+      this.toast(s.result.won ? '🎉 下班囉！' : '😵 ' + s.result.failReason, s.result.won ? 'good' : 'bad');
+      setTimeout(() => this.exit(), 1400);
+    }
     if (s.phase !== this.lastPhase) {
-      if (s.phase === 'summary') this.openOverlay('summary');
+      if (s.phase === 'summary' && s.shift.mode === 'day') this.openOverlay('summary');
       else if (this.lastPhase === 'summary' && this.overlay === 'summary') this.closeOverlay();
       this.lastPhase = s.phase;
     }
@@ -172,7 +183,16 @@ export class Game {
       case 'karen': audio.play('karen'); break;
       case 'quick': this.addFeed(`💬 ${e.from}：${e.text}`); audio.play('quick'); break;
       case 'phase':
-        if (e.phase === 'prep') this.toast(`☀ 第 ${e.day} 天・開店準備：採購(B)、補貨、升級，按 R 準備開店`, 'info', 5000);
+        if (e.phase === 'prep' && this.snap && this.snap.shift.mode !== 'shift') this.toast(`☀ 第 ${e.day} 天・開店準備：採購(B)、補貨、升級，按 Enter 準備開店`, 'info', 5000);
+        break;
+      case 'hint': this.showHint(e.text); break;
+      case 'fx':
+        if (e.name === 'eject') { this.view.floatText(e.combo && e.combo > 1 ? `${e.combo} 連送！` : '退散！', e.x, e.z - 0.6, '#ffa94d'); this.view.burst(e.x, e.z - 0.4, 0xff922b, 26); this.view.shake = 0.25; if (e.combo && e.combo > 1) this.showCombo(e.combo); }
+        else if (e.name === 'ultimate') { this.flash(false); this.view.shake = 0.65; this.view.burst(e.x, e.z, 0xffd43b, 40); }
+        else if (e.name === 'spin') { this.view.burst(e.x, e.z, 0x63e6be, 30); this.view.shake = 0.2; }
+        else if (e.name === 'mistake') { this.flash(true); this.view.shake = 0.4; }
+        else if (e.name === 'impact') this.view.burst(e.x, e.z, 0xffd69a, 6);
+        else if (e.name === 'throw') this.view.shake = 0.15;
         break;
     }
   }
@@ -184,6 +204,19 @@ export class Game {
     box.appendChild(d);
     while (box.childElementCount > 4) box.firstElementChild!.remove();
     setTimeout(() => d.remove(), ms);
+  }
+  private showHint(text: string) {
+    const el = $('hintbar'); el.textContent = '💡 ' + text; el.classList.remove('hidden');
+    this.hintUntil = performance.now() + 7000;
+  }
+  private flash(red: boolean) {
+    const f = $('flash'); f.classList.toggle('red', red); f.style.opacity = red ? '0.45' : '0.85';
+    setTimeout(() => { f.style.opacity = '0'; }, 160);
+  }
+  private comboTimer = 0;
+  private showCombo(n: number) {
+    const el = $('combo'); el.textContent = `${n} 連送！`; el.classList.remove('hidden');
+    clearTimeout(this.comboTimer); this.comboTimer = window.setTimeout(() => el.classList.add('hidden'), 1600);
   }
   private addFeed(text: string) { this.feed.push({ text, until: performance.now() + 7000 }); if (this.feed.length > 5) this.feed.shift(); }
 
@@ -276,8 +309,15 @@ export class Game {
           : { label: `結帳（${waiting.items} 件${waiting.kind === 'cutter' && !waiting.resolved ? '・⚠插隊奧客' : ''}）`, primary: 'checkout', target: { t: 'register', idx: r.idx }, box })
         : { label: `收銀台 ${r.idx + 1}`, reason: '目前沒有顧客等結帳', target: { t: 'register', idx: r.idx }, box });
     }
-    out.push(held ? { label: '咖啡機', reason: '手上要空著才能煮咖啡', target: { t: 'coffee' }, box: COFFEE_MACHINE }
+    const foodSlot = me.grabbing == null && (!held || ((held.kind === 'coffee' || held.kind === 'meal') && !me.held2));
+    const sells = (f: 'coffee' | 'meal') => s.shift.foods.includes(f);
+    out.push(!sells('coffee') ? { label: '咖啡機', reason: '這間店還沒賣咖啡', target: { t: 'coffee' }, box: COFFEE_MACHINE }
+      : !foodSlot ? { label: '咖啡機', reason: '雙手已滿（最多兩份餐點）', target: { t: 'coffee' }, box: COFFEE_MACHINE }
       : { label: '煮咖啡', primary: 'brew', target: { t: 'coffee' }, box: COFFEE_MACHINE });
+    out.push(!sells('meal') ? { label: '微波爐', reason: '這間店還沒賣熱便當', target: { t: 'microwave' }, box: MICROWAVE }
+      : !foodSlot ? { label: '微波爐', reason: '雙手已滿（最多兩份餐點）', target: { t: 'microwave' }, box: MICROWAVE }
+      : s.backstock.bento <= 0 ? { label: '微波爐', reason: '便當缺貨，按 B 採購', target: { t: 'microwave' }, box: MICROWAVE }
+      : { label: `加熱便當（倉庫 ${s.backstock.bento}）`, primary: 'heat', target: { t: 'microwave' }, box: MICROWAVE });
     for (const c of CRATES) {
       const name = PRODUCT_INFO[c.product].name;
       const t: Target = { t: 'crate', product: c.product };
@@ -298,7 +338,7 @@ export class Game {
     else if (held) out.push({ label: '拖把架', reason: '手上有東西', target: { t: 'mop' }, box: MOP_RACK });
     else out.push(s.mopsOnRack > 0 ? { label: '拿拖把', primary: 'takeMop', target: { t: 'mop' }, box: MOP_RACK } : { label: '拖把架', reason: '拖把都被拿走了', target: { t: 'mop' }, box: MOP_RACK });
     for (const c of s.customers) {
-      const cand = this.customerCandidate(c, held?.kind ?? null, s.money);
+      const cand = this.customerCandidate(c, [held?.kind ?? null, me.held2?.kind ?? null], s.money);
       if (cand) out.push(cand);
     }
     for (const sp of s.spills) out.push(held?.kind === 'mop' ? { label: '清理髒污', primary: 'clean', target: { t: 'spill', id: sp.id }, point: { x: sp.x, z: sp.z, r: 0.55, h: 0 } }
@@ -311,21 +351,43 @@ export class Game {
     return out;
   }
 
-  private customerCandidate(c: CustomerSnap, held: string | null, money: number): Candidate | null {
+  private customerCandidate(c: CustomerSnap, hands: (string | null)[], money: number): Candidate | null {
     const pos = this.view.customerWorldPos(c.id) ?? c;
     const point = { x: pos.x, z: pos.z, r: 0.45, h: 1.8 };
     const t: Target = { t: 'customer', id: c.id };
-    if (c.state === 'leaving') return null;
+    if (c.state === 'leaving' || c.flying || c.held) return null;
     if (c.kind !== 'normal' && !c.resolved && c.revealed) {
       const name = KAREN_INFO[c.kind].name;
       if (c.kind === 'rager') return c.state === 'complain' ? { label: `安撫${name}（怒氣 ${c.anger}）`, primary: 'calm', alt: 'coupon', altLabel: money >= 30 ? '發折價券 $30' : undefined, target: t, point } : { label: name, reason: '正走向服務台', target: t, point };
       if (c.kind === 'cutter') return ['queue', 'toRegister', 'atRegister'].includes(c.state) ? { label: `請${name}重新排隊`, primary: 'askQueue', target: t, point } : { label: name, reason: '還在挑商品', target: t, point };
       if (c.kind === 'streamer') return { label: `請${name}停止拍攝`, primary: 'stopFilm', target: t, point };
       if (c.kind === 'hog') return { label: `請${name}先結帳`, primary: 'checkBag', target: t, point };
+      if (c.kind === 'litterer') return { label: `請${name}不要亂丟`, primary: 'stopLitter', target: t, point };
     }
-    if (c.state === 'waitCoffee') return held === 'coffee' ? { label: '交付咖啡', primary: 'deliver', target: t, point } : { label: '等咖啡的顧客', reason: '去咖啡機煮一杯', target: t, point };
+    if (c.state === 'waitFood' && c.want) {
+      const name = c.want === 'meal' ? '熱便當' : '咖啡';
+      return hands.includes(c.want) ? { label: `交付${name}`, primary: 'deliver', target: t, point }
+        : { label: `等${name}的顧客`, reason: c.want === 'meal' ? '去微波爐加熱便當' : '去咖啡機煮一杯', target: t, point };
+    }
+    if (this.canGrab() && c.kind === 'normal') return { label: '一般顧客', reason: '別亂丟一般顧客喔', target: t, point };
     if (c.state === 'atRegister') return { label: '等結帳的顧客', reason: '到櫃台內側對收銀機互動', target: t, point };
     return null;
+  }
+
+  private canGrab() { return !!this.snap?.shift.abilities.includes('grab'); }
+  private karenTarget(s: Snapshot): CustomerSnap | null {
+    // grab/throw aims at the nearest customer in front of the crosshair (karens first)
+    const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
+    let best: CustomerSnap | null = null, bs = Infinity;
+    for (const c of s.customers) {
+      if (c.held || c.flying || c.state === 'leaving') continue;
+      const px = c.x - this.pos.x, pz = c.z - this.pos.z;
+      const along = px * fx + pz * fz, perp = Math.abs(px * fz - pz * fx);
+      if (along < -0.2 || along > 2.4 || perp > 0.7) continue;
+      const score = along + perp + (c.kind === 'normal' ? 1.5 : 0);
+      if (score < bs) { bs = score; best = c; }
+    }
+    return best;
   }
 
   private pickTarget(s: Snapshot): Candidate | null {
@@ -379,7 +441,15 @@ export class Game {
       this.pitch = Math.max(-1.35, Math.min(1.35, this.pitch));
       // movement relative to view
       const mv = this.input.move;
-      const speed = this.input.run ? RUN_SPEED : WALK_SPEED;
+      const sh = s.shift;
+      const wantsRun = this.input.run && Math.hypot(mv.x, mv.y) > 0.05 && this.stamina > 3;
+      this.stamina = Math.max(0, Math.min(sh.staminaMax, this.stamina + (wantsRun ? -25 : 17 * sh.staminaRegen) * dt));
+      this.slipT = Math.max(0, this.slipT - dt);
+      if (wantsRun && this.slipT === 0 && this.stamina > 30 && s.spills.some(sp => Math.hypot(sp.x - this.pos.x, sp.z - this.pos.z) < 0.5)) {
+        this.slipT = 0.65; this.stamina -= 28; this.view.shake = 0.3; this.showHint('踩到髒污滑了一跤！拿拖把把它拖乾淨。'); audio.play('splat');
+      }
+      const carrying = me.held?.kind === 'box' || me.grabbing != null ? 0.85 : 1;
+      const speed = (wantsRun ? RUN_SPEED : WALK_SPEED) * sh.speed * carrying * (this.slipT > 0 ? 0.42 : 1);
       const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
       const rx = -Math.cos(this.yaw), rz = Math.sin(this.yaw);
       const dx = (fx * mv.y + rx * mv.x) * speed * dt, dz = (fz * mv.y + rz * mv.x) * speed * dt;
@@ -405,7 +475,14 @@ export class Game {
         if (this.target?.alt && this.target.altLabel) this.send({ type: 'act', rid: newRid(), kind: this.target.alt, target: this.target.target });
         else if (me.held) this.send({ type: 'drop', rid: newRid() });
       }
-      if (this.input.consume('drop') && me.held) this.send({ type: 'drop', rid: newRid() });
+      if (this.input.consume('drop') && (me.held || me.held2 || me.grabbing != null || me.busy)) this.send({ type: 'drop', rid: newRid() });
+      if (this.input.consume('grab')) {
+        if (!this.canGrab()) this.toast('「抓起／投擲」在 Lv.11 資深店員解鎖', 'info', 1800);
+        else if (me.grabbing != null) this.send({ type: 'throw', rid: newRid(), yaw: this.yaw, pitch: this.pitch });
+        else { const k = this.karenTarget(s); if (k) this.send({ type: 'act', rid: newRid(), kind: 'grab', target: { t: 'customer', id: k.id } }); else this.toast('準星對準身前的顧客再抓', 'info', 1400); }
+      }
+      if (this.input.consume('spin')) this.send({ type: 'spin', rid: newRid() });
+      if (this.input.consume('ultimate')) this.send({ type: 'ultimate', rid: newRid() });
       if (this.input.consume('ping')) this.doPing();
       if (this.input.consume('ready') && (s.phase === 'prep' || s.phase === 'summary')) this.send({ type: 'ready', ready: !me.ready });
       for (let i = 1; i <= 6; i++) if (this.input.consume(`q${i}` as 'q1')) this.send({ type: 'quick', msg: i - 1 });
@@ -425,6 +502,7 @@ export class Game {
     audio.listener = { x: this.pos.x, z: this.pos.z };
     this.view.update(s, this.selfId, dt, () => null);
     this.view.setCamera(this.pos.x, this.pos.z, this.yaw, this.pitch, this.bob, me.held);
+    this.view.setSecondHand(me.held2);
     const tb = this.target?.box ? new THREE.Box3(new THREE.Vector3(this.target.box.x0, 0, this.target.box.z0), new THREE.Vector3(this.target.box.x1, this.target.box.h ?? 1.5, this.target.box.z1))
       : this.target?.point ? new THREE.Box3(new THREE.Vector3(this.target.point.x - 0.35, 0, this.target.point.z - 0.35), new THREE.Vector3(this.target.point.x + 0.35, Math.max(0.15, this.target.point.h), this.target.point.z + 0.35)) : null;
     this.view.setHighlight(tb);
@@ -496,15 +574,63 @@ export class Game {
     } else al.classList.add('hidden');
     // phase banner
     const pb = $('phasebanner');
-    if (s.phase === 'prep') {
+    if (s.phase === 'prep' && s.shift.mode === 'shift') {
+      const html = `<button class="btn small good" id="pb-ready">▶ 開始上班${this.touch ? '' : ' [Enter]'}（<span id="pb-left"></span>）</button>`;
+      if (pb.dataset.k !== html) {
+        pb.dataset.k = html; pb.innerHTML = html;
+        document.getElementById('pb-ready')!.addEventListener('click', () => this.send({ type: 'ready', ready: true }));
+      }
+      $('pb-left').textContent = String(Math.ceil(s.phaseLeft));
+    } else if (s.phase === 'prep') {
       const ready = s.players.filter(p => p.ready).length, total = s.players.filter(p => p.connected).length;
-      const html = `<button class="btn small ${me.ready ? '' : 'good'}" id="pb-ready">${me.ready ? '取消準備' : '準備開店'}（${ready}/${total}）${this.touch ? '' : ' [R]'}</button><button class="btn small" id="pb-shop">🛒 採購/升級${this.touch ? '' : ' [B]'}</button>`;
+      const html = `<button class="btn small ${me.ready ? '' : 'good'}" id="pb-ready">${me.ready ? '取消準備' : '準備開店'}（${ready}/${total}）${this.touch ? '' : ' [Enter]'}</button><button class="btn small" id="pb-shop">🛒 採購/升級${this.touch ? '' : ' [B]'}</button>`;
       if (pb.dataset.k !== html) {
         pb.dataset.k = html; pb.innerHTML = html;
         document.getElementById('pb-ready')!.addEventListener('click', () => this.send({ type: 'ready', ready: !this.snap?.players.find(p => p.id === this.selfId)?.ready }));
         document.getElementById('pb-shop')!.addEventListener('click', () => this.openOverlay('shop'));
       }
     } else if (pb.dataset.k) { pb.dataset.k = ''; pb.innerHTML = ''; }
+    // shift HUD
+    const shiftMode = s.shift.mode === 'shift';
+    $('shiftbar').classList.toggle('hidden', !shiftMode);
+    document.body.classList.toggle('shiftmode', shiftMode);
+    if (shiftMode) {
+      $('sb-title').textContent = `${s.shift.id}・${s.shift.title}`;
+      $('sb-extra').textContent = `口碑 ★${s.rating.toFixed(1)}・現金 $${s.money}`;
+      $('sb-time').textContent = s.phase === 'prep' ? `準備 ${Math.ceil(s.phaseLeft)}` : s.phase === 'open' ? `⏱ ${Math.ceil(s.phaseLeft)} 秒` : '收尾中';
+      const rev = s.dayStats.revenue;
+      $('sb-money').textContent = `$${rev} / $${s.shift.goal}`;
+      ($('sb-moneybar') as HTMLElement).style.width = `${Math.min(100, rev / s.shift.goal * 100)}%`;
+      ($('sb-moneybar') as HTMLElement).style.background = rev >= s.shift.goal ? '#51cf66' : '#4dabf7';
+      $('sb-chaos').textContent = `${s.chaos}%`;
+      ($('sb-chaosbar') as HTMLElement).style.width = `${s.chaos}%`;
+      $('h-clock').textContent = s.phase === 'open' ? `⏱ ${Math.ceil(s.phaseLeft)}s` : $('h-clock').textContent;
+      $('h-day').textContent = `第 ${s.shift.chapter} 章`;
+    }
+    const hasUlt = s.shift.abilities.includes('ultimate');
+    $('burst').classList.toggle('hidden', !hasUlt);
+    if (hasUlt) {
+      $('burst-num').textContent = `${s.burst}/100`;
+      ($('burst-bar') as HTMLElement).style.width = `${s.burst}%`;
+      $('burst').classList.toggle('full', s.burst >= 100);
+      $('burst-hint').textContent = s.burst >= 100 ? `按 ${this.touch ? '「退散」' : 'R'} 全店奧客退散！` : '請出門 +25・旋風 +12・投擲 +4';
+    }
+    (($('stamina').firstElementChild) as HTMLElement).style.width = `${this.stamina / s.shift.staminaMax * 100}%`;
+    (($('stamina').firstElementChild) as HTMLElement).style.background = this.stamina < 25 ? '#ff6b6b' : '#69db7c';
+    const es = $('eventstrip');
+    if (s.event) { es.classList.remove('hidden'); es.textContent = s.event.kind === 'outage' ? `⚡ 停電中 ${Math.ceil(s.event.left)}s` : `🚶 尖峰人潮 ${Math.ceil(s.event.left)}s`; } else es.classList.add('hidden');
+    if (performance.now() > this.hintUntil) $('hintbar').classList.add('hidden');
+    if (this.touch) {
+      const ab = s.shift.abilities;
+      $('t-grab').classList.toggle('hidden', !ab.includes('grab'));
+      $('t-grab').textContent = me.grabbing != null ? '丟出' : '抓起';
+      $('t-spin').classList.toggle('hidden', !ab.includes('spin'));
+      $('t-spin').textContent = me.spinCd > 0 ? `${Math.ceil(me.spinCd)}` : '旋風';
+      $('t-ult').classList.toggle('hidden', !ab.includes('ultimate'));
+      $('t-ult').classList.toggle('active', s.burst >= 100);
+      $('t-item').classList.toggle('hidden', !me.held && !me.held2 && me.grabbing == null);
+    }
+    if (me.grabbing != null) pr.innerHTML = `<span class="key">${this.touch ? '丟出' : this.input.usingGamepad ? 'Y' : '空白'}</span>對準發光的出口丟出去！<div class="sub">${this.touch ? '「放下」' : 'G'} 放開</div>`;
     // feed
     const t = performance.now();
     this.feed = this.feed.filter(f => f.until > t);
@@ -522,8 +648,9 @@ export class Game {
     this.conn.close();
     audio.stopAmbient();
     $('hud').classList.add('hidden'); $('touch').classList.add('hidden'); $('netstatus').classList.add('hidden');
+    document.body.classList.remove('shiftmode');
     this.view.renderer.dispose();
-    this.onExit(reason);
+    this.onExit(reason, this.finalResult);
   }
 }
 

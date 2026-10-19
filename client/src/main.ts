@@ -6,6 +6,9 @@ import {
   clearSoloSave, defaultServerUrl, detectPlatform, isTouch, loadCoopSave, loadLastSession, loadSettings, loadSoloSave, saveSettings,
 } from './storage.ts';
 import * as UI from './ui.ts';
+import { careerScreen, loadProfile, resultScreen, saveProfile } from './career-ui.ts';
+import { applyResult, buildShiftConfig, shiftUnlocked } from '../../shared/career.ts';
+import type { ShiftResult } from '../../shared/career.ts';
 
 let settings = loadSettings();
 const platform = detectPlatform();
@@ -24,12 +27,12 @@ function freshCanvas() {
 
 let current: Game | null = null;
 
-function startGame(make: () => LocalConnection | WsConnection) {
+function startGame(make: () => LocalConnection | WsConnection, onDone?: (reason?: string, result?: ShiftResult | null) => void) {
   audio.unlock();
   freshCanvas();
-  UI.show('<div class="card"><h2>連線中…</h2><p class="muted">正在連線到伺服器</p></div>');
+  UI.show('<div class="card"><h2>載入中…</h2><p class="muted">準備開店</p></div>');
   const conn = make();
-  current = new Game(conn, settings, isTouch, reason => { current = null; menu(reason); });
+  current = new Game(conn, settings, isTouch, (reason, result) => { current = null; if (onDone) onDone(reason, result); else menu(reason); });
   (window as unknown as { __game: Game }).__game = current; // used by automated browser tests
   tryFullscreenLandscape();
 }
@@ -41,11 +44,31 @@ function tryFullscreenLandscape() {
   try { void (screen.orientation as unknown as { lock?: (o: string) => Promise<void> }).lock?.('landscape').catch(() => {}); } catch { /* ignore */ }
 }
 
+// ---------------- career (single-player main story) ----------------
+function career() {
+  const p = loadProfile();
+  careerScreen(p, { back: () => menu(), play: id => playShift(id) });
+}
+
+function playShift(id: string) {
+  const p = loadProfile();
+  if (!shiftUnlocked(p, id).ok) return career();
+  const cfg = buildShiftConfig(p, id);
+  startGame(() => new LocalConnection(playerName(), null, cfg), (reason, result) => {
+    if (!result) { if (reason) UI.message('提示', reason, '回職涯', career); else career(); return; }
+    const prof = loadProfile();
+    const reward = applyResult(prof, result);
+    saveProfile(prof);
+    resultScreen(result, reward, prof, { retry: () => playShift(id), next: n => (n ? playShift(n) : career()), career });
+  });
+}
+
 function menu(error?: string) {
   const last = loadLastSession();
   const canRejoin = last && Date.now() - last.at < 125_000 ? last.code : null;
   UI.mainMenu(settings, {
     setName: n => { settings = { ...settings, name: n }; saveSettings(settings); },
+    career: () => career(),
     solo: fresh => {
       if (fresh) clearSoloSave();
       const save = fresh ? null : loadSoloSave();

@@ -3,6 +3,7 @@
 import { PROTOCOL_VERSION, TICK_RATE } from '../../shared/constants.ts';
 import type { ClientMsg, ServerMsg, StoreSave } from '../../shared/protocol.ts';
 import { Room } from '../../shared/room.ts';
+import type { ShiftConfig } from '../../shared/career.ts';
 
 export type NetStatus = 'connecting' | 'online' | 'reconnecting' | 'offline';
 
@@ -22,8 +23,8 @@ export class LocalConnection implements GameConnection {
   private playerId = '';
   private timer: number;
   private last = performance.now();
-  constructor(name: string, save: StoreSave | null) {
-    this.room = new Room('SOLO', save, { solo: true });
+  constructor(name: string, save: StoreSave | null, shift?: ShiftConfig) {
+    this.room = new Room('SOLO', save, { solo: true, shift });
     const conn = { send: (m: ServerMsg) => queueMicrotask(() => this.onMessage(m)), close: () => {} };
     const r = this.room.join(conn, name, undefined, 'solo');
     if (r.ok) this.playerId = r.member.playerId;

@@ -1,0 +1,297 @@
+// Single-player career: ranks, EXP, skill trees, gear, chapters/shifts and rewards.
+// Pure data + functions so it can be unit-tested and used by the client and the simulation.
+import { KarenKind, Product } from './constants.ts';
+
+export type Ability = 'grab' | 'spin' | 'ultimate';
+export type Food = 'coffee' | 'meal';
+export type ShiftEvent = 'rush' | 'outage';
+
+/** Numeric modifiers applied by skills and gear (1 = no change). */
+export interface ShiftMods {
+  checkout: number; tips: number; patience: number; angerRate: number; calm: number;
+  brew: number; clean: number; speed: number; staminaMax: number; staminaRegen: number;
+  spinRange: number; spinCooldown: number; guard: number; throwPower: number;
+}
+export const BASE_MODS: ShiftMods = {
+  checkout: 1, tips: 1, patience: 1, angerRate: 1, calm: 1, brew: 1, clean: 1, speed: 1, staminaMax: 100, staminaRegen: 1,
+  spinRange: 3.2, spinCooldown: 5, guard: 0, throwPower: 1,
+};
+
+export interface ShiftConfig {
+  mode: 'day' | 'shift';
+  id: string; title: string; chapter: number;
+  length: number; goal: number;
+  karens: KarenKind[]; firstKaren: number; karenEvery: number; maxKarens: number;
+  spawnEvery: number; maxCustomers: number;
+  foods: Food[]; foodChance: number;
+  events: ShiftEvent[]; firstEvent: number;
+  register2: boolean; abilities: Ability[];
+  start: { money: number; rating: number; backstock: Record<Product, number>; shelves: Record<Product, number> };
+  mods: ShiftMods; hints: string[];
+}
+
+// ---------------- ranks & levels ----------------
+export const MAX_LEVEL = 30;
+export const RANKS = [
+  { name: '試用期工讀生', from: 1 }, { name: '正職店員', from: 6 }, { name: '資深店員', from: 11 }, { name: '副店長', from: 16 },
+  { name: '店長', from: 21 }, { name: '區域督導', from: 26 }, { name: '終極打工人', from: 30 },
+];
+export function rankOf(level: number) { let r = RANKS[0]; for (const k of RANKS) if (level >= k.from) r = k; return r.name; }
+/** EXP needed to go from `level` to `level + 1`. */
+export function expToNext(level: number) { return level >= MAX_LEVEL ? Infinity : 60 + 25 * (level - 1); }
+
+export const ABILITY_LEVEL: Record<Ability, number> = { grab: 11, spin: 16, ultimate: 26 };
+export const ABILITY_INFO: Record<Ability, { name: string; desc: string }> = {
+  grab: { name: '抓起／投擲', desc: '抓起奧客，對準發光出口丟出店外' },
+  spin: { name: '拖把旋風', desc: '擊退身邊所有人（小心一般顧客）' },
+  ultimate: { name: '全店退散', desc: '爆發值滿 100，店內奧客一次送走' },
+};
+export function abilitiesAt(level: number): Ability[] { return (Object.keys(ABILITY_LEVEL) as Ability[]).filter(a => level >= ABILITY_LEVEL[a]); }
+
+// ---------------- skills ----------------
+export type SkillTree = 'service' | 'body' | 'crisis';
+export const SKILL_MAX = 10;
+export const SKILLS: Record<SkillTree, { name: string; icon: string; perPoint: string }> = {
+  service: { name: '服務', icon: '💳', perPoint: '結帳 -5%、小費 +6%、顧客耐心 +3%' },
+  body: { name: '體能', icon: '🏃', perPoint: '移動 +2.5%、體力上限 +6、回復 +6%' },
+  crisis: { name: '危機處理', icon: '🧯', perPoint: '奧客怒氣上升 -5%、安撫效果 +8%、投擲力道 +3%' },
+};
+
+// ---------------- gear (from v0.4) ----------------
+export type GearId = 'shoes' | 'mop' | 'machine' | 'cleaner' | 'guard';
+export const GEAR: Record<GearId, { name: string; icon: string; base: number; detail: string }> = {
+  shoes: { name: '輕量工作鞋', icon: '👟', base: 100, detail: '每級移動速度 +8%' },
+  mop: { name: '旋風拖把', icon: '🌀', base: 100, detail: '每級旋風範圍 +0.35m、冷卻 -0.5 秒' },
+  machine: { name: '極速餐飲設備', icon: '☕', base: 120, detail: '每級咖啡／熱便當製作時間 -14%' },
+  cleaner: { name: '強效清潔組', icon: '🧽', base: 80, detail: '每級清潔時間 -18%' },
+  guard: { name: '夜班保全', icon: '🛡', base: 150, detail: '定期請走靠近出口的奧客；升級縮短巡邏間隔' },
+};
+export const GEAR_IDS = Object.keys(GEAR) as GearId[];
+export const GEAR_MAX = 3;
+export function gearPrice(id: GearId, level: number) { return level >= GEAR_MAX ? null : Math.ceil(GEAR[id].base * [1, 1.7, 2.7][level]); }
+
+// ---------------- profile ----------------
+export interface CareerProfile {
+  version: 1; level: number; exp: number; wallet: number; skillPoints: number;
+  skills: Record<SkillTree, number>; gear: Record<GearId, number>;
+  stars: Record<string, number>; clears: Record<string, number>;
+  stats: { shifts: number; wins: number; served: number; ejected: number; karens: number; revenue: number };
+  endlessBest: number; title: string;
+}
+export function newProfile(): CareerProfile {
+  return {
+    version: 1, level: 1, exp: 0, wallet: 120, skillPoints: 0,
+    skills: { service: 0, body: 0, crisis: 0 }, gear: { shoes: 0, mop: 0, machine: 0, cleaner: 0, guard: 0 },
+    stars: {}, clears: {}, stats: { shifts: 0, wins: 0, served: 0, ejected: 0, karens: 0, revenue: 0 }, endlessBest: 0, title: '',
+  };
+}
+export function sanitizeProfile(v: unknown): CareerProfile {
+  const p = newProfile();
+  if (!v || typeof v !== 'object') return p;
+  const o = v as Partial<CareerProfile>;
+  const int = (x: unknown, lo: number, hi: number, d: number) => (typeof x === 'number' && Number.isFinite(x) ? Math.max(lo, Math.min(hi, Math.floor(x))) : d);
+  p.level = int(o.level, 1, MAX_LEVEL, 1);
+  p.exp = int(o.exp, 0, 1e7, 0);
+  p.wallet = int(o.wallet, 0, 1e8, 120);
+  for (const s of Object.keys(p.skills) as SkillTree[]) p.skills[s] = int(o.skills?.[s], 0, SKILL_MAX, 0);
+  const spent = p.skills.service + p.skills.body + p.skills.crisis;
+  p.skillPoints = Math.max(0, Math.min(int(o.skillPoints, 0, 99, 0), p.level - 1 - spent));
+  for (const g of GEAR_IDS) p.gear[g] = int(o.gear?.[g], 0, GEAR_MAX, 0);
+  for (const sh of allShifts()) {
+    const st = int(o.stars?.[sh.id], 0, 3, 0); if (st) p.stars[sh.id] = st;
+    const cl = int(o.clears?.[sh.id], 0, 1e6, 0); if (cl) p.clears[sh.id] = cl;
+  }
+  for (const k of Object.keys(p.stats) as (keyof CareerProfile['stats'])[]) p.stats[k] = int(o.stats?.[k], 0, 1e12, 0);
+  p.endlessBest = int(o.endlessBest, 0, 1e12, 0);
+  p.title = typeof o.title === 'string' ? o.title.slice(0, 20) : '';
+  return p;
+}
+
+/** Adds EXP; returns the levels gained. Each level grants one skill point. */
+export function addExp(p: CareerProfile, amount: number): number[] {
+  const gained: number[] = [];
+  p.exp += Math.max(0, Math.floor(amount));
+  while (p.level < MAX_LEVEL && p.exp >= expToNext(p.level)) {
+    p.exp -= expToNext(p.level); p.level++; p.skillPoints++; gained.push(p.level);
+  }
+  if (p.level >= MAX_LEVEL) { p.exp = 0; p.title = '終極打工人'; }
+  return gained;
+}
+
+export function spendSkill(p: CareerProfile, tree: SkillTree): boolean {
+  if (p.skillPoints <= 0 || p.skills[tree] >= SKILL_MAX) return false;
+  p.skillPoints--; p.skills[tree]++; return true;
+}
+export function buyGear(p: CareerProfile, id: GearId): boolean {
+  const price = gearPrice(id, p.gear[id]);
+  if (price === null || p.wallet < price) return false;
+  p.wallet -= price; p.gear[id]++; return true;
+}
+
+export function modsFor(p: CareerProfile): ShiftMods {
+  const s = p.skills, g = p.gear;
+  return {
+    checkout: Math.max(0.4, 1 - 0.05 * s.service), tips: 1 + 0.06 * s.service, patience: 1 + 0.03 * s.service,
+    angerRate: Math.max(0.3, 1 - 0.05 * s.crisis), calm: 1 + 0.08 * s.crisis, throwPower: 1 + 0.03 * s.crisis,
+    speed: (1 + 0.08 * g.shoes) * (1 + 0.025 * s.body), staminaMax: 100 + 6 * s.body, staminaRegen: 1 + 0.06 * s.body,
+    brew: 1 - 0.14 * g.machine, clean: 1 - 0.18 * g.cleaner, spinRange: 3.2 + 0.35 * g.mop, spinCooldown: 5 - 0.5 * g.mop, guard: g.guard,
+  };
+}
+
+// ---------------- chapters ----------------
+export interface ShiftDef {
+  id: string; title: string; length: number; goal: number; karens: KarenKind[]; maxKarens?: number; karenEvery?: number; firstKaren?: number;
+  foods?: Food[]; events?: ShiftEvent[]; spawnEvery?: number; hints?: string[];
+}
+export interface ChapterDef {
+  n: number; title: string; place: string; minLevel: number; baseExp: number; story: string; coming?: boolean;
+  register2?: boolean; shifts: ShiftDef[];
+}
+
+const S = (d: ShiftDef) => d;
+export const CHAPTERS: ChapterDef[] = [
+  {
+    n: 1, title: '巷口小店', place: '社區便利商店・白天班', minLevel: 1, baseExp: 120,
+    story: '你錄取了巷口的便利商店。老店長說：「顧客至上，但奧客……你遲早會懂。」',
+    shifts: [
+      S({ id: '1-1', title: '第一天上班', length: 100, goal: 60, karens: [], spawnEvery: 9, hints: ['走到櫃台內側，對收銀機按互動幫顧客結帳。', '貨架快空了就去左上角倉庫拿貨箱，對同類貨架互動上架。'] }),
+      S({ id: '1-2', title: '插隊阿伯', length: 110, goal: 90, karens: ['cutter'], firstKaren: 35, maxKarens: 1, hints: ['有人插隊！靠近他按互動「請排隊」，不然其他客人會很不爽。'] }),
+      S({ id: '1-3', title: '打翻了！', length: 120, goal: 120, karens: ['cutter'], firstKaren: 45, hints: ['地上的髒污會拉高混亂度。去西側牆邊拿拖把，對髒污互動清乾淨。'] }),
+      S({ id: '1-4', title: '放學人潮', length: 130, goal: 150, karens: ['cutter'], spawnEvery: 7.5 }),
+      S({ id: '1-5', title: '店長來巡店', length: 140, goal: 185, karens: ['cutter'], maxKarens: 2, karenEvery: 40, spawnEvery: 7.5, hints: ['店長考核：達成營業額並保持口碑，就能轉為正職！'] }),
+    ],
+  },
+  {
+    n: 2, title: '深夜班', place: '24 小時便利商店・大夜班', minLevel: 6, baseExp: 235,
+    story: '升上正職，排到了大夜班。咖啡機、微波爐，還有半夜來退貨的大嬸。',
+    shifts: [
+      S({ id: '2-1', title: '咖啡香', length: 130, goal: 160, karens: ['cutter'], foods: ['coffee'], hints: ['客人站在取餐區等咖啡：到咖啡機煮好後拿給他。'] }),
+      S({ id: '2-2', title: '微波便當', length: 140, goal: 200, karens: ['cutter'], foods: ['coffee', 'meal'], hints: ['熱便當要在微波爐加熱。手上最多可以拿兩份餐點。'] }),
+      S({ id: '2-3', title: '退貨大嬸', length: 150, goal: 230, karens: ['rager', 'cutter'], foods: ['coffee', 'meal'], firstKaren: 30, hints: ['退貨大鬧：怒氣滿了會砸店。持續按互動安撫，或按次要鍵發折價券。'] }),
+      S({ id: '2-4', title: '突然停電', length: 150, goal: 250, karens: ['rager', 'cutter'], foods: ['coffee', 'meal'], events: ['outage'], hints: ['停電時燈光變暗、顧客比較不耐煩，撐到恢復供電！'] }),
+      S({ id: '2-5', title: '午夜考驗', length: 170, goal: 300, karens: ['rager', 'cutter'], maxKarens: 2, foods: ['coffee', 'meal'], events: ['outage'], spawnEvery: 7 }),
+    ],
+  },
+  {
+    n: 3, title: '車站店', place: '車站前門市・通勤尖峰', minLevel: 11, baseExp: 360,
+    story: '調到車站店，人潮一波接一波，還有拿著自拍棒的直播主。你學會了一招：直接請出門。',
+    shifts: [
+      S({ id: '3-1', title: '請出門的藝術', length: 140, goal: 240, karens: ['cutter', 'rager'], foods: ['coffee'], hints: ['新能力：抓起奧客（空白鍵／抓丟），轉向發光出口再按一次丟出去！誤丟一般顧客會被扣分。'] }),
+      S({ id: '3-2', title: '直播主來了', length: 150, goal: 270, karens: ['streamer', 'cutter'], foods: ['coffee', 'meal'], hints: ['直播客會躲人又撞翻商品，追上去勸阻或直接請出門。'] }),
+      S({ id: '3-3', title: '早高峰', length: 150, goal: 300, karens: ['streamer', 'rager'], foods: ['coffee', 'meal'], events: ['rush'], hints: ['尖峰時段客人暴增，先顧收銀！'] }),
+      S({ id: '3-4', title: '誤點的列車', length: 160, goal: 330, karens: ['streamer', 'rager', 'cutter'], foods: ['coffee', 'meal'], events: ['rush', 'outage'] }),
+      S({ id: '3-5', title: '末班車', length: 180, goal: 380, karens: ['streamer', 'rager', 'cutter'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 6.5 }),
+    ],
+  },
+  {
+    n: 4, title: '觀光旗艦店', place: '老街旗艦店・觀光客滿', minLevel: 16, baseExp: 485, register2: true,
+    story: '升上副店長，負責觀光旗艦店。兩台收銀機、偷吃的、亂丟的，全部都要顧。',
+    shifts: [
+      S({ id: '4-1', title: '雙收銀', length: 150, goal: 320, karens: ['cutter', 'hog'], foods: ['coffee', 'meal'], spawnEvery: 6.5, hints: ['旗艦店有兩台收銀機。新能力：拖把旋風（Q）擊退身邊的人。'] }),
+      S({ id: '4-2', title: '試吃不是吃到飽', length: 160, goal: 360, karens: ['hog', 'litterer'], foods: ['coffee', 'meal'], spawnEvery: 6.5, hints: ['亂丟客會一路製造髒污；偷吃客要靠近才看得到。'] }),
+      S({ id: '4-3', title: '旅遊團', length: 160, goal: 400, karens: ['hog', 'litterer', 'streamer'], foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 6 }),
+      S({ id: '4-4', title: '颱風夜', length: 170, goal: 420, karens: ['rager', 'litterer', 'hog'], foods: ['coffee', 'meal'], events: ['outage', 'rush'], spawnEvery: 6 }),
+      S({ id: '4-5', title: '旗艦店評鑑', length: 180, goal: 470, karens: ['rager', 'litterer', 'hog', 'streamer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage', 'rush'], spawnEvery: 5.8 }),
+    ],
+  },
+  {
+    n: 5, title: '跨年夜美食街', place: '百貨美食街・跨年夜', minLevel: 21, baseExp: 610, register2: true,
+    story: '店長的升職考核：跨年夜的美食街，所有奧客一次到齊。',
+    shifts: [
+      S({ id: '5-1', title: '倒數 6 小時', length: 170, goal: 480, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 5.8 }),
+      S({ id: '5-2', title: '煙火前', length: 180, goal: 520, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.5 }),
+      S({ id: '5-3', title: '人擠人', length: 180, goal: 560, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.2 }),
+      S({ id: '5-4', title: '跨年倒數', length: 200, goal: 620, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 4, karenEvery: 30, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5 }),
+    ],
+  },
+  {
+    n: 6, title: '奧客之王', place: '總公司旗艦店・最終班', minLevel: 26, baseExp: 750, register2: true, coming: true,
+    story: '傳說中的「奧客之王」要來了。只有終極打工人能讓他退散。',
+    shifts: [
+      S({ id: '6-1', title: '前哨戰', length: 180, goal: 600, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 4, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5 }),
+      S({ id: '6-2', title: '總部視察', length: 190, goal: 650, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 4, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 4.8 }),
+      S({ id: '6-3', title: '奧客之王', length: 240, goal: 700, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 5, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 4.8 }),
+    ],
+  },
+];
+export function allShifts() { return CHAPTERS.flatMap(c => c.shifts.map(s => ({ ...s, chapter: c.n }))); }
+export function findShift(id: string) {
+  for (const c of CHAPTERS) { const s = c.shifts.find(x => x.id === id); if (s) return { chapter: c, shift: s }; }
+  return null;
+}
+
+/** A chapter is open when its level requirement is met and the previous chapter's last shift is cleared. */
+export function chapterUnlocked(p: CareerProfile, n: number): { ok: boolean; why?: string } {
+  const c = CHAPTERS.find(x => x.n === n);
+  if (!c) return { ok: false, why: '不存在' };
+  if (c.coming) return { ok: false, why: '製作中，敬請期待' };
+  if (n > 1) {
+    const prev = CHAPTERS.find(x => x.n === n - 1)!;
+    const last = prev.shifts[prev.shifts.length - 1];
+    if (!p.stars[last.id]) return { ok: false, why: `先通過第 ${n - 1} 章「${last.title}」` };
+  }
+  if (p.level < c.minLevel) return { ok: false, why: `需要 Lv.${c.minLevel}（${rankOf(c.minLevel)}）` };
+  return { ok: true };
+}
+export function shiftUnlocked(p: CareerProfile, id: string): { ok: boolean; why?: string } {
+  const f = findShift(id);
+  if (!f) return { ok: false, why: '不存在' };
+  const ch = chapterUnlocked(p, f.chapter.n);
+  if (!ch.ok) return ch;
+  const i = f.chapter.shifts.findIndex(s => s.id === id);
+  if (i > 0 && !p.stars[f.chapter.shifts[i - 1].id]) return { ok: false, why: '先通過前一個班次' };
+  return { ok: true };
+}
+
+export function buildShiftConfig(p: CareerProfile, id: string): ShiftConfig {
+  const f = findShift(id);
+  if (!f) throw new Error('unknown shift ' + id);
+  const { chapter: c, shift: s } = f;
+  const stockScale = 1 + (c.n - 1) * 0.35;
+  return {
+    mode: 'shift', id: s.id, title: s.title, chapter: c.n, length: s.length, goal: s.goal,
+    karens: s.karens, firstKaren: s.firstKaren ?? 28, karenEvery: s.karenEvery ?? 45, maxKarens: s.maxKarens ?? 1 + Math.floor(c.n / 2),
+    spawnEvery: s.spawnEvery ?? 8, maxCustomers: 8 + c.n * 2,
+    foods: s.foods ?? [], foodChance: 0.35, events: s.events ?? [], firstEvent: 40,
+    register2: !!c.register2, abilities: abilitiesAt(p.level),
+    start: {
+      money: 80, rating: 3,
+      backstock: { drinks: Math.round(24 * stockScale), snacks: Math.round(24 * stockScale), bento: Math.round(18 * stockScale) },
+      shelves: { drinks: 8, snacks: 8, bento: 6 },
+    },
+    mods: modsFor(p), hints: s.hints ?? [],
+  };
+}
+
+// ---------------- results & rewards ----------------
+export interface ShiftResult {
+  shiftId: string; won: boolean; failReason: string; revenue: number; goal: number; rating: number; chaos: number;
+  served: number; angryLeft: number; karensResolved: number; karensFailed: number; ejected: number; cleaned: number; maxCombo: number;
+}
+export function starsFor(r: ShiftResult) {
+  if (!r.won) return 0;
+  let s = 1;
+  if (r.rating >= 3.5 && r.chaos < 60) s++;
+  if (r.revenue >= r.goal * 1.3 && r.karensFailed === 0 && r.angryLeft <= 1) s++;
+  return s;
+}
+
+export interface Reward { stars: number; exp: number; wallet: number; levels: number[]; firstClear: boolean; newBest: boolean }
+/** Applies a finished shift to the profile. EXP: full on first clear, 60% on replays, 35% on a failed attempt. */
+export function applyResult(p: CareerProfile, r: ShiftResult): Reward {
+  const f = findShift(r.shiftId);
+  const base = f?.chapter.baseExp ?? 100;
+  const stars = starsFor(r);
+  const prevStars = p.stars[r.shiftId] ?? 0;
+  const firstClear = stars > 0 && prevStars === 0;
+  let exp = r.won ? base * (0.7 + 0.15 * stars) * (firstClear || stars > prevStars ? 1 : 0.6) : base * 0.35;
+  exp = Math.round(exp);
+  const wallet = Math.round(r.revenue * 0.18 + (r.won ? 60 : 15) + stars * 20 + r.ejected * 4 + r.cleaned * 2);
+  p.wallet += wallet;
+  p.stats.shifts++; if (r.won) p.stats.wins++;
+  p.stats.served += r.served; p.stats.ejected += r.ejected; p.stats.karens += r.karensResolved; p.stats.revenue += r.revenue;
+  if (stars > prevStars) p.stars[r.shiftId] = stars;
+  if (r.won) p.clears[r.shiftId] = (p.clears[r.shiftId] ?? 0) + 1;
+  const levels = addExp(p, exp);
+  return { stars, exp, wallet, levels, firstClear, newBest: stars > prevStars };
+}

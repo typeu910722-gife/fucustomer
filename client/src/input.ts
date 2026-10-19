@@ -1,5 +1,5 @@
 // Unified input: keyboard + mouse (pointer lock), gamepad, and multi-touch virtual controls.
-export type Action = 'interact' | 'alt' | 'drop' | 'ping' | 'menu' | 'quick' | 'shop' | 'ready' | 'tab'
+export type Action = 'interact' | 'alt' | 'drop' | 'ping' | 'menu' | 'quick' | 'shop' | 'ready' | 'tab' | 'grab' | 'spin' | 'ultimate'
   | 'q1' | 'q2' | 'q3' | 'q4' | 'q5' | 'q6';
 
 export class Input {
@@ -29,6 +29,7 @@ export class Input {
       if (!this.locked) { if (this.enabled) this.lock(); return; }
       if (e.button === 0) { this.pressed.add('interact'); this.holdInteract = true; }
       if (e.button === 2) this.pressed.add('alt');
+      if (e.button === 1) { this.pressed.add('ping'); e.preventDefault(); }
     });
     window.addEventListener('mouseup', e => { if (e.button === 0) this.holdInteract = false; });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -53,11 +54,12 @@ export class Input {
     if (down) {
       if (!this.keys.has(k)) {
         const map: Record<string, Action> = {
-          KeyE: 'interact', KeyF: 'alt', KeyQ: 'drop', KeyG: 'ping', Escape: 'menu', KeyT: 'quick', KeyB: 'shop', KeyR: 'ready', Tab: 'tab',
+          KeyE: 'interact', KeyF: 'alt', KeyG: 'drop', KeyV: 'ping', Escape: 'menu', KeyP: 'menu', KeyT: 'quick', KeyB: 'shop', Enter: 'ready', Tab: 'tab',
+          Space: 'grab', KeyQ: 'spin', KeyR: 'ultimate',
           Digit1: 'q1', Digit2: 'q2', Digit3: 'q3', Digit4: 'q4', Digit5: 'q5', Digit6: 'q6',
         };
         const a = map[k];
-        if (a) { this.pressed.add(a); if (k === 'Tab') e.preventDefault(); }
+        if (a) { this.pressed.add(a); if (k === 'Tab' || k === 'Space') e.preventDefault(); }
         if (k === 'KeyE') this.holdInteract = true;
       }
       this.keys.add(k);
@@ -121,6 +123,7 @@ export class Input {
     };
     bind('t-interact', 'interact'); bind('t-item', 'drop'); bind('t-alt', 'alt'); bind('t-run', 'run');
     bind('t-ping', 'ping'); bind('t-chat', 'quick'); bind('t-menu', 'menu'); bind('t-shop', 'shop');
+    bind('t-grab', 'grab'); bind('t-spin', 'spin'); bind('t-ult', 'ultimate');
   }
 
   /** Call once per frame. dt in seconds. */
@@ -143,7 +146,8 @@ export class Input {
       this.lookDX += rx * 900 * dt; this.lookDY += ry * 700 * dt;
       const b = gp.buttons.map(bt => bt.pressed);
       const edge = (i: number, a: Action) => { if (b[i] && !this.padPrev[i]) { this.pressed.add(a); this.usingGamepad = true; } };
-      edge(0, 'interact'); edge(1, 'drop'); edge(2, 'alt'); edge(3, 'ping'); edge(9, 'menu'); edge(8, 'quick'); edge(5, 'shop'); edge(4, 'ready');
+      edge(0, 'interact'); edge(1, 'drop'); edge(2, 'alt'); edge(3, 'grab'); edge(5, 'spin'); edge(4, 'ultimate'); edge(9, 'menu'); edge(8, 'quick');
+      edge(12, 'ping'); edge(13, 'shop'); edge(15, 'ready');
       if (b[0]) this.holdInteract = true; else if (this.padPrev[0]) this.holdInteract = false;
       run = run || !!b[10] || !!b[6];
       this.padPrev = b;

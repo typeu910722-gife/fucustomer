@@ -38,6 +38,7 @@ export const REGISTERS = [
   { idx: 1, x: 19.2, z: 11.4, cashier: { x: 19.2, z: 10.3 }, customer: { x: 19.2, z: 12.5 } },
 ];
 export const COFFEE_MACHINE = box(15.1, 8.6, 16.1, 9.4, 1.0, 'coffee');
+export const MICROWAVE = box(17.7, 8.7, 18.6, 9.4, 1.0, 'microwave');
 export const COFFEE_PICKUP = { x: 14.2, z: 11.6 };
 export const COMPLAINT_SPOT = { x: 13.2, z: 13.2 };
 export const MOP_RACK = box(0, 12, 0.7, 13.4, 1.5, 'mop');
@@ -65,7 +66,7 @@ export const QUEUE_SPOTS = [
 ];
 
 export const SOLIDS: AABB[] = [
-  ...WALLS, ...SHELVES.map(s => s.box), COUNTER, COFFEE_MACHINE, MOP_RACK, ...CRATES.map(c => c.box), ...DECOR,
+  ...WALLS, ...SHELVES.map(s => s.box), COUNTER, COFFEE_MACHINE, MICROWAVE, MOP_RACK, ...CRATES.map(c => c.box), ...DECOR,
 ];
 
 /** Points customers stand at to browse a shelf. */

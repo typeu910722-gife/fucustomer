@@ -26,6 +26,9 @@ export const PRODUCT_INFO: Record<Product, { name: string; price: number; boxCos
 };
 export const BOX_SIZE = 6;
 export const COFFEE_PRICE = 10;
+export const MEAL_PRICE = 18;
+export const BURST_MAX = 100;
+export const CHAOS_MAX = 100;
 
 export type UpgradeId = 'register2' | 'scanner' | 'coffee' | 'shelves' | 'camera' | 'mopbot' | 'ads';
 export interface UpgradeDef { name: string; desc: string; costs: number[] }
@@ -43,6 +46,7 @@ export const UPGRADE_IDS = Object.keys(UPGRADES) as UpgradeId[];
 export function shelfCapacity(level: number) { return 10 + level * 5; }
 export function checkoutTime(level: number) { return [1.4, 0.95, 0.6][level] ?? 0.6; }
 export function brewTime(level: number) { return [3.0, 2.0, 1.2][level] ?? 1.2; }
+export function heatTime(level: number) { return [4.0, 2.8, 1.8][level] ?? 1.8; }
 
 export const DAY_OPEN_SECONDS = 300; // real seconds for 08:00 → 22:00
 export const OPEN_MINUTE = 8 * 60;
@@ -51,12 +55,13 @@ export const PREP_SECONDS = 60;
 export const CLOSING_MAX_SECONDS = 60;
 export const DAILY_RENT = 60;
 
-export type KarenKind = 'cutter' | 'rager' | 'streamer' | 'hog';
+export type KarenKind = 'cutter' | 'rager' | 'streamer' | 'hog' | 'litterer';
 export const KAREN_INFO: Record<KarenKind, { name: string; hint: string; how: string }> = {
   cutter: { name: '插隊奧客', hint: '有人插隊！其他顧客耐心快速下降', how: '靠近按互動「請排隊」' },
   rager: { name: '退貨大鬧', hint: '客訴怒氣上升中！滿了會砸店', how: '互動「安撫」（可多人同時），或次要鍵發折價券 $30' },
   streamer: { name: '直播亂拍', hint: '直播客到處拍片撞翻商品，會躲人', how: '追上並互動「請停止拍攝」' },
   hog: { name: '偷吃奧客', hint: '有人在貨架偷吃！（監視器可直接看見）', how: '靠近互動「請先結帳」' },
+  litterer: { name: '亂丟客', hint: '有人邊走邊亂丟垃圾，髒污越來越多', how: '靠近互動「請勿亂丟」，或直接請出門' },
 };
 
 export const PLAYER_COLORS = [0xff6b6b, 0x4dabf7, 0x51cf66, 0xfcc419, 0xcc5de8];
