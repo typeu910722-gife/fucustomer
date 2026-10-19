@@ -10,7 +10,7 @@ async function page(profile) {
   const pg = await browser.newPage({ viewport: { width: 1280, height: 720 } });
   pg.on('pageerror', e => errors.push(String(e)));
   await pg.goto(URL);
-  await pg.evaluate(p => { localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'medium', name: '測試' })); if (p) localStorage.setItem('fucustomer.career.v1', JSON.stringify(p)); }, profile);
+  await pg.evaluate(p => { localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'medium', name: '測試' })); localStorage.setItem('fucustomer.flags.v1', JSON.stringify({ seenKarens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'] })); if (p) localStorage.setItem('fucustomer.career.v1', JSON.stringify(p)); }, profile);
   await pg.reload();
   return pg;
 }

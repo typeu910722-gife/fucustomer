@@ -50,6 +50,8 @@ export interface Customer {
   angry: boolean; moving: boolean; knockTimer: number; gone: boolean;
   heldBy: string | null; fly: Flight | null;
   phase: number; minions: number[];
+  /** Thrown out: seconds left lying dazed on the pavement before getting up and walking off. */
+  downT?: number; ejected?: boolean;
 }
 
 export interface World {
@@ -408,7 +410,7 @@ function bossDefeat(w: World, c: Customer, by: PlayerState | null) {
 
 /** Eject a customer through the front door (thrown, guard or ultimate). */
 function eject(w: World, c: Customer, by: PlayerState | null, how: 'throw' | 'guard' | 'ultimate') {
-  if (c.gone) return;
+  if (c.gone || c.ejected) return;
   if (c.kind === 'boss' && c.phase < 5) {
     // the boss can't be thrown out before the final phase: he storms back in
     c.heldBy = null; c.fly = null; c.x = 12; c.z = STORE_D - 0.6;
@@ -418,10 +420,15 @@ function eject(w: World, c: Customer, by: PlayerState | null, how: 'throw' | 'gu
     else { c.state = 'enter'; nextStep(w, c); }
     return;
   }
-  c.gone = true; c.heldBy = null; c.fly = null;
+  c.heldBy = null; c.fly = null;
   detachFromLines(w, c);
   if (by && by.grabbing === c.id) by.grabbing = null;
   const x = Math.min(DOOR_X1, Math.max(DOOR_X0, c.x)), z = STORE_D;
+  // lands on the pavement, lies there dazed, then gets up and walks off down the street
+  c.ejected = true; c.state = 'leaving'; c.angry = true; c.speed = 1.5; c.moving = false;
+  c.x = Math.min(DOOR_X1 - 0.3, Math.max(DOOR_X0 + 0.3, x + (w.rng() - 0.5) * 1.6)); c.z = STORE_D + 0.9 + w.rng() * 0.4;
+  c.downT = 2.2; c.yaw = Math.PI; // facing the store: lying on the back, head toward the street
+  c.path = [{ x: c.x, z: STORE_D + 1.6 }, { x: c.x < 12 ? -3 : 27, z: STORE_D + 1.7 }];
   if (c.kind === 'boss') { w.dayStats.ejected++; if (by) by.stats.ejected++; bossDefeat(w, c, by); ev(w, { e: 'fx', name: 'ultimate', x, z, by: by?.name }); }
   if (c.kind !== 'normal' && c.kind !== 'boss') {
     const was = c.resolved;
@@ -491,6 +498,7 @@ function updateCustomer(w: World, c: Customer, dt: number) {
   if (c.fly) { updateFlight(w, c, dt); return; }
   const n = activePlayers(w);
   const m = w.cfg.mods;
+  if (c.downT && c.downT > 0) { c.downT = Math.max(0, c.downT - dt); c.moving = false; return; }
   const arrived = moveAlong(c, dt);
   const drain = (cutterActive(w) && c.kind !== 'cutter' ? 2.2 : 1) * (w.power < 1 ? 1.3 : 1)
     * (w.customers.some(s => s.kind === 'streamer' && !s.resolved && Math.hypot(s.x - c.x, s.z - c.z) < 3) ? 1.35 : 1);
@@ -884,7 +892,7 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
       break;
     case 'unplug':
       c!.hits++;
-      ev(w, { e: 'sfx', name: 'pickup', x: c!.x, z: c!.z });
+      ev(w, { e: 'sfx', name: 'unplug', x: c!.x, z: c!.z });
       if (c!.hits >= 2) { resolveKaren(w, c!, p, 0.08, `🔌 ${p.name} 拔掉插頭，充電霸王悻悻然離開（口碑 +0.08）`); leave(w, c!, false); }
       else toast(w, '🔌 他又插回去了！再拔一次，或請他喝杯咖啡', 'info');
       break;
@@ -1289,7 +1297,7 @@ export function snapshot(w: World, now: number): Snapshot {
       patience: Math.max(0, Math.min(1, c.state === 'waitFood' ? c.timer / c.patienceMax : c.kind === 'charger' ? c.life / 75 : c.patience / c.patienceMax)),
       anger: Math.round(c.anger), resolved: c.resolved, revealed: reveal(c), items: c.items.length,
       want: c.want && !c.foodDone && !c.foodFailed ? c.want : null, look: c.look, moving: c.moving,
-      y: c.fly ? r2(c.fly.y) : c.state === 'held' ? 0.25 : 0, held: c.state === 'held', flying: !!c.fly, phase: c.kind === 'charger' ? c.hits : c.phase,
+      y: c.fly ? r2(c.fly.y) : c.state === 'held' ? 0.25 : 0, held: c.state === 'held', flying: !!c.fly, down: c.downT ? r2(c.downT) : 0, phase: c.kind === 'charger' ? c.hits : c.phase,
     })),
     spills: w.spills.map(s => ({ id: s.id, x: r2(s.x), z: r2(s.z) })),
     items: w.items.map(i => ({ id: i.id, x: r2(i.x), z: r2(i.z), held: i.held })),

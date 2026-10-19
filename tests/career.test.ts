@@ -90,7 +90,7 @@ test('throwing a karen through the door ejects her once (burst, combo, resolved)
   requestThrow(w, 'a', 't', 0, 0.1);
   requestThrow(w, 'a', 't', 0, 0.1); // duplicate ignored
   run(w, 1.5);
-  assert.equal(w.customers.includes(k), false);
+  assert.equal(k.ejected, true); assert.equal(k.state, 'leaving'); // lying outside, about to walk off
   assert.equal(w.dayStats.ejected, 1); assert.equal(w.dayStats.karensResolved, 1);
   assert.equal(w.burst, 29); // throw +4, eject +25
   assert.ok(k.x >= DOOR_X0 && k.x <= DOOR_X1 && k.z >= STORE_D - 0.01);
@@ -121,7 +121,11 @@ test('ultimate needs full burst and clears every unresolved karen', () => {
   w.burst = 100;
   requestUltimate(w, 'a', 'u2');
   assert.equal(w.dayStats.ejected, 2); assert.equal(w.burst, 0);
-  assert.equal(w.customers.filter(c => !c.gone).length, 1);
+  // thrown-out karens lie on the pavement outside, then walk away
+  const out = w.customers.filter(c => c.ejected);
+  assert.equal(out.length, 2); assert.ok(out.every(c => c.state === 'leaving' && c.z > 16 && (c.downT ?? 0) > 0));
+  run(w, 16);
+  assert.equal(w.customers.filter(c => c.ejected).length, 0, 'gone after walking off');
 });
 
 test('abilities are locked below their level', () => {

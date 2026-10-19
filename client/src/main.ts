@@ -82,6 +82,9 @@ function playShift(id: string) {
     saveProfile(prof);
     reportAchievements(prof.achievements);
     resultScreen(result, reward, prof, fresh, { retry: () => playShift(id), next: n => (n ? playShift(n) : career()), career });
+    audio.play(result.won ? 'win' : 'lose');
+    if (reward.levels.length) window.setTimeout(() => audio.play('levelup'), 900);
+    if (fresh.length) window.setTimeout(() => audio.play('achievement'), 1500);
   });
 }
 
@@ -104,6 +107,7 @@ function menu(error?: string) {
       online(l.url, { kind: 'join', code: l.code, name: playerName(), token: l.token });
     },
     quit: isApp ? () => quitApp() : undefined,
+    firstDay: loadProfile().stats.shifts === 0 ? () => playShift('1-1') : undefined,
     settings: () => { screenDepth = 1; return UI.settingsMenu(settings, s => { settings = s; saveSettings(s); audio.setVolume(s.volume); audio.setMusicVolume(s.music); menu(); }); },
   }, { soloSave: loadSoloSave(), coopSave: loadCoopSave(), canRejoin, server: serverUrl(), platform, error });
 }

@@ -21,6 +21,8 @@ export interface MainMenuHandlers {
   career(): void;
   solo(fresh: boolean): void; create(continueCoop: boolean): void; join(code: string): void; rejoin(): void; settings(): void;
   quit?(): void;
+  /** First launch: jump straight into career shift 1-1. */
+  firstDay?(): void;
   setName(n: string): void;
 }
 
@@ -31,6 +33,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: Sto
       <div class="subtitle">FUCustomer・第一人稱便利商店經營＋奧客退散</div>
       <label class="field">你的名字<input type="text" id="m-name" maxlength="16" placeholder="店員名字" value="${esc(s.name)}"></label>
       ${info.canRejoin ? `<button class="btn good" id="m-rejoin">🔌 重新連線到房間 ${esc(info.canRejoin)}</button>` : ''}
+      ${h.firstDay ? `<div class="welcome"><b>👋 第一次來上班？</b><span>直接從第一天開始，會有一步一步的教學。</span><button class="btn good" id="m-first">▶ 開始第一天上班</button></div>` : ''}
       <button class="btn primary" id="m-career" style="font-size:20px;padding:16px">🧑‍💼 職涯模式：從工讀生到終極打工人</button>
       <h3>自由營業（單人）</h3>
       <div class="row">
@@ -60,6 +63,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: Sto
   on('m-rejoin', 'click', () => { name(); h.rejoin(); });
   on('m-settings', 'click', () => h.settings());
   on('m-quit', 'click', () => h.quit?.());
+  on('m-first', 'click', () => { name(); h.firstDay?.(); });
 }
 
 export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay = false) {

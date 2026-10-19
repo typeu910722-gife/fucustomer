@@ -21,7 +21,7 @@ async function open(level, cleared, touch = false, extra = []) {
   for (let c = 1; c <= cleared; c++) for (let i = 1; i <= 5; i++) { stars[`${c}-${i}`] = 2 + ((c + i) % 2); clears[`${c}-${i}`] = 1; }
   for (const id of extra) { stars[id] = 2; clears[id] = 1; }
   await page.evaluate(([level, stars, clears]) => {
-    localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'high', name: '阿明', fpsCap: 0, adaptive: false }));
+    localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'high', name: '阿明', fpsCap: 0, adaptive: false })); localStorage.setItem('fucustomer.flags.v1', JSON.stringify({ seenKarens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'] }));
     localStorage.setItem('fucustomer.career.v1', JSON.stringify({ version: 1, level, exp: 40, wallet: 1860, skillPoints: 2, skills: { service: 6, body: 7, crisis: 5 }, gear: { shoes: 2, mop: 2, machine: 1, cleaner: 1, guard: 1 }, stars, clears, stats: { shifts: 60, wins: 52, served: 1400, ejected: 120, karens: 180, revenue: 18000 }, endlessBest: 1240, title: '' }));
   }, [level, stars, clears]);
   await page.reload();

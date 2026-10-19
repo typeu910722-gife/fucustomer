@@ -11,7 +11,7 @@ pg.on('pageerror', e => errors.push(String(e)));
 await pg.goto(URL);
 const stars = {}; for (const c of [1, 2, 3]) for (let i = 1; i <= 5; i++) stars[`${c}-${i}`] = 2;
 await pg.evaluate(stars => {
-  localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'low', name: '測試' }));
+  localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'low', name: '測試' })); localStorage.setItem('fucustomer.flags.v1', JSON.stringify({ seenKarens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'] }));
   localStorage.setItem('fucustomer.career.v1', JSON.stringify({ version: 1, level: 18, stars, clears: { ...stars }, stats: { shifts: 30, wins: 25, served: 300, ejected: 3, karens: 40, revenue: 5000 } }));
 }, stars);
 await pg.reload();

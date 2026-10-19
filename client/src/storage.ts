@@ -62,3 +62,12 @@ export function defaultServerUrl(): string {
   }
   return 'ws://localhost:8787/ws';
 }
+
+/** One-time UI flags: tutorial finished/skipped and which karen intro cards were already shown. */
+export interface Flags { tutorialDone: boolean; seenKarens: string[] }
+const FLAGS_KEY = 'fucustomer.flags.v1';
+export function loadFlags(): Flags {
+  const f = read<Partial<Flags>>(FLAGS_KEY) ?? {};
+  return { tutorialDone: f.tutorialDone === true, seenKarens: Array.isArray(f.seenKarens) ? f.seenKarens.filter(k => typeof k === 'string').slice(0, 20) : [] };
+}
+export function saveFlags(f: Flags) { write(FLAGS_KEY, f); }

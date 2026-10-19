@@ -56,7 +56,8 @@ export interface CustomerSnap {
   patience: number; // 0..1
   anger: number; // 0..100 (rager)
   resolved: boolean; revealed: boolean; items: number; want: Food | null; look: number; moving: boolean;
-  y: number; held: boolean; flying: boolean; phase: number; // boss phase; for 充電霸王 the number of unplugs so far
+  y: number; held: boolean; flying: boolean; down: number; // seconds left lying on the pavement after being thrown out
+  phase: number; // boss phase; for 充電霸王 the number of unplugs so far
 }
 export interface Snapshot {
   t: number; // server time ms

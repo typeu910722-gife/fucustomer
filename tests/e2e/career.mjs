@@ -12,7 +12,7 @@ await page.goto(URL);
 // a Lv.12 profile that has cleared chapters 1-2, so chapter 3 (grab/throw) is open
 await page.evaluate(() => {
   const stars = {}; for (const c of [1, 2]) for (let i = 1; i <= 5; i++) stars[`${c}-${i}`] = 2;
-  localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'low' }));
+  localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'low' })); localStorage.setItem('fucustomer.flags.v1', JSON.stringify({ seenKarens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'] }));
   localStorage.setItem('fucustomer.career.v1', JSON.stringify({ version: 1, level: 12, exp: 10, wallet: 500, skillPoints: 11, skills: {}, gear: {}, stars, clears: {}, stats: {} }));
 });
 await page.reload();

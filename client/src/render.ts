@@ -139,7 +139,7 @@ const SKIN = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac];
 const HAIR = [0x2b1b0e, 0x4a3020, 0x111111, 0x8a6a3a, 0xb8b8b8, 0x6b2b14];
 const SHIRT = [0x5c7cfa, 0x94d82d, 0xf783ac, 0x20c997, 0xadb5bd, 0xffa94d, 0x845ef7, 0x868e96];
 
-export type Pose = 'normal' | 'angry' | 'flail' | 'pay' | 'film' | 'sit';
+export type Pose = 'normal' | 'angry' | 'flail' | 'pay' | 'film' | 'sit' | 'sitAngry' | 'dazed';
 export interface Look {
   shirt: number; pants: number; skin: number; hair: number; hairStyle: number; scale?: number; apron?: boolean;
   build?: number; height?: number; accessory?: number;
@@ -296,6 +296,13 @@ export class Human {
         break;
       }
       case 'pay': this.armR.rotation.x = -1.3 + Math.sin(this.t * 3) * 0.08; this.armL.rotation.x = -s * 0.8; this.mouth.scale.set(1.3, 1.6, 1); break;
+      case 'dazed': // flat on the pavement, limbs out, swirly-eyed
+        this.armL.rotation.z = -1.2 + Math.sin(this.t * 3) * 0.1; this.armR.rotation.z = 1.2 - Math.sin(this.t * 3) * 0.1;
+        this.legL.rotation.z = -0.25; this.legR.rotation.z = 0.25; this.mouth.scale.set(1.3, 2.2, 1);
+        this.browL.rotation.z = 0.5; this.browR.rotation.z = -0.5; break;
+      case 'sitAngry': // just got unplugged: legs out, shaking a fist at you
+        this.legL.rotation.x = -1.45; this.legR.rotation.x = -1.4; this.armR.rotation.x = -2.4 + Math.sin(this.t * 18) * 0.3; this.armL.rotation.x = -0.9;
+        this.mouth.scale.set(0.8, 3, 1); this.browL.rotation.z = -0.5; this.browR.rotation.z = 0.5; break;
       case 'sit': // on the floor, legs out, staring at the phone
         this.legL.rotation.x = -1.45; this.legR.rotation.x = -1.4; this.armR.rotation.x = -1.1; this.armL.rotation.x = -0.9; this.armL.rotation.z = 0.25;
         this.mouth.scale.set(1.1, 0.8, 1); this.browL.rotation.z = 0.15; this.browR.rotation.z = -0.15; break;
@@ -793,10 +800,14 @@ export class StoreView {
       if (c.flying || c.held) { e.s.x = c.x; e.s.z = c.z; } else this.smooth(e.s, c.x, c.z, c.yaw, dt);
       // held: carried sideways at chest height so the view stays clear; flying: tumbling
       const sitting = c.state === 'charge' && !c.held && !c.flying;
-      e.h.group.position.set(e.s.x, c.held ? 0.95 : sitting ? -0.68 : c.y, e.s.z); e.h.group.rotation.y = e.s.yaw;
-      e.h.group.rotation.x = c.flying ? e.h.group.rotation.x + dt * 9 : 0;
+      // thrown out: flat on the back, then sits up over the last 0.7 s
+      const lying = c.down > 0 ? Math.min(1, c.down / 0.7) : 0;
+      e.h.group.position.set(e.s.x, c.held ? 0.95 : sitting ? -0.68 : lying ? 0.18 * lying : c.y, e.s.z); e.h.group.rotation.y = e.s.yaw;
+      e.h.group.rotation.x = c.flying ? e.h.group.rotation.x + dt * 9 : Math.PI / 2 * lying;
       e.h.group.rotation.z = c.held ? Math.PI / 2 + Math.sin(this.time * 12) * 0.15 : 0;
       const pose = c.held || c.flying ? 'flail'
+        : lying ? 'dazed'
+        : sitting && c.kind === 'charger' && c.phase > 0 ? 'sitAngry'
         : (c.kind === 'rager' || (c.kind === 'boss' && c.phase === 2)) && c.state === 'complain' && !c.resolved ? 'angry'
           : (c.kind === 'streamer' || (c.kind === 'boss' && c.phase === 3)) && !c.resolved ? 'film'
             : sitting ? 'sit'
@@ -812,7 +823,8 @@ export class StoreView {
         const ph = ['', '插隊霸王', '退貨暴君', '直播帝王', '召喚小弟', '強弩之末'][c.phase] ?? '';
         key = 'boss' + c.phase + (c.phase === 2 ? Math.round(c.anger / 5) : '');
         draw = () => textCanvas([{ text: `👑 奧客之王・${ph}`, size: 44, color: '#ffe066' }], 512, 150, 'rgba(80,20,120,0.92)', c.phase === 2 ? { v: c.anger / 100, color: '#ff6b6b' } : { v: (c.phase - 1) / 4, color: '#ffd43b' });
-      } else if (c.held || c.flying) { key = c.held ? 'held' : 'fly'; draw = () => textCanvas([{ text: c.held ? '😵 放開我！' : '😱 啊——', size: 50 }], 512, 128, 'rgba(15,16,26,0.7)'); }
+      } else if (c.down > 0) { key = 'down'; draw = () => textCanvas([{ text: '💫 好痛…', size: 50 }], 512, 128, 'rgba(15,16,26,0.6)'); }
+      else if (c.held || c.flying) { key = c.held ? 'held' : 'fly'; draw = () => textCanvas([{ text: c.held ? '😵 放開我！' : '😱 啊——', size: 50 }], 512, 128, 'rgba(15,16,26,0.7)'); }
       else if (c.kind !== 'normal' && !c.resolved && c.revealed) {
         if (c.kind === 'rager') { const a = c.anger; key = 'r' + Math.round(a / 4); draw = () => textCanvas([{ text: '😡 退貨大鬧', size: 46, color: '#ffc9c9' }], 512, 150, 'rgba(120,10,30,0.88)', { v: a / 100, color: a > 70 ? '#ff3b3b' : '#ffa94d' }); }
         else if (c.kind === 'cutter') { key = 'cut'; draw = () => textCanvas([{ text: '⚠ 插隊！', size: 54, color: '#ffe066' }], 512, 128, 'rgba(120,60,0,0.88)'); }

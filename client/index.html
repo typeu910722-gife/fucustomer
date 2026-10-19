@@ -181,6 +181,14 @@
     .shopitem.ach.locked { opacity: .55; }
     .achpop { display: flex; flex-direction: column; align-items: center; text-align: center; background: linear-gradient(90deg, rgba(250,176,5,.25), rgba(132,94,247,.25)); border: 1px solid #fab005; border-radius: 12px; padding: 8px 10px; margin: 6px 0; font-weight: 800; animation: pop .5s both; }
     .achpop small { font-weight: 400; opacity: .8; }
+    .welcome { display: flex; flex-direction: column; gap: 4px; background: rgba(81,207,102,.12); border: 1px solid #51cf66; border-radius: 12px; padding: 10px 12px; margin: 6px 0; }
+    .welcome span { opacity: .85; font-size: 14px; }
+    #introcard { position: absolute; left: 0; right: 0; margin: 0 auto; top: 30%; width: min(460px, 86vw); box-sizing: border-box; background: rgba(20,24,33,.94); border: 2px solid #ff6b6b; border-radius: 16px; padding: 14px 18px; text-align: center; z-index: 8; animation: pop .35s both; pointer-events: none; }
+    #introcard h3 { margin: 4px 0 6px; font-size: 22px; color: #ffc9c9; }
+    #introcard p { margin: 4px 0; }
+    #introcard .how { background: rgba(255,212,59,.14); border-radius: 10px; padding: 6px 8px; font-weight: 700; }
+    #tutskip { position: absolute; left: 50%; bottom: calc(160px + var(--safe-b)); transform: translateX(-50%); z-index: 9; pointer-events: auto; font-size: 13px; padding: 4px 10px; }
+    body.touch #tutskip { bottom: auto; top: calc(146px + var(--safe-t)); }
     .levelup { text-align: center; background: rgba(252,196,25,.15); border: 1px solid var(--warn); border-radius: 10px; padding: 8px; margin: 6px 0; font-weight: 800; animation: pop .5s both .8s; }
 
     #quickmenu { position: fixed; z-index: 40; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(420px, 90vw); }
@@ -220,6 +228,8 @@
     <div id="stamina"><i></i></div>
     <div id="combo" class="hidden"></div>
     <div id="hintbar" class="hidden"></div>
+    <button id="tutskip" class="btn small hidden">跳過教學（K）</button>
+    <div id="introcard" class="hidden"></div>
     <div id="eventstrip" class="hidden"></div>
     <div id="helpkeys">WASD 移動・Shift 跑・滑鼠 視角・E 互動・F 次要・G 放下・空白 抓/丟・Q 旋風・R 全店退散・V 標記・T 訊息・B 採購・Esc 選單</div>
     <div id="fps"></div>

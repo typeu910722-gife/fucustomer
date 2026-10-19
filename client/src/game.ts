@@ -14,7 +14,7 @@ import { Input } from './input.ts';
 import { Minimap } from './minimap.ts';
 import type { GameConnection, NetStatus } from './net.ts';
 import { StoreView } from './render.ts';
-import { Settings, saveCoopSave, saveLastSession, saveSettings, saveSoloSave } from './storage.ts';
+import { Settings, loadFlags, saveCoopSave, saveFlags, saveLastSession, saveSettings, saveSoloSave } from './storage.ts';
 import * as UI from './ui.ts';
 import { desktop } from './platform.ts';
 
@@ -68,6 +68,8 @@ export class Game {
   finalResult: ShiftResult | null = null;
   private tutorial: Tutorial | null = null;
   private tut: TutorialView | null = null;
+  private flags = loadFlags();
+  private introTimers: number[] = [];
 
   constructor(private conn: GameConnection, private settings: Settings, private touch: boolean, private onExit: (reason?: string, result?: ShiftResult | null) => void) {
     const canvas = $('view') as HTMLCanvasElement;
@@ -80,11 +82,35 @@ export class Game {
     window.addEventListener('resize', this.onResize);
     document.addEventListener('visibilitychange', this.onVis);
     document.addEventListener('pointerlockchange', this.onLockChange);
+    window.addEventListener('keydown', this.onKey);
+    $('tutskip').onclick = () => this.skipTutorial();
     this.raf = requestAnimationFrame(this.frame);
     audio.unlock();
   }
 
   private onResize = () => this.view.resize();
+  private onKey = (e: KeyboardEvent) => { if (e.code === 'KeyK' && this.tut && this.overlay === 'none') this.skipTutorial(); };
+
+  /** Tutorial skipped (or finished): never shown again on this device. */
+  private skipTutorial() {
+    this.flags.tutorialDone = true; saveFlags(this.flags);
+    this.tutorial = null; this.tut = null; this.view.setGuide(null);
+    $('tutskip').classList.add('hidden'); $('hintbar').classList.add('hidden');
+  }
+
+  /** First time a karen type shows up: a short card explaining how to deal with it (solo pauses for 2 s). */
+  private introduceKaren(kind: string) {
+    if (kind === 'boss' || this.flags.seenKarens.includes(kind) || !(kind in KAREN_INFO)) return;
+    this.flags.seenKarens.push(kind); saveFlags(this.flags);
+    const info = KAREN_INFO[kind as keyof typeof KAREN_INFO];
+    const card = $('introcard');
+    card.innerHTML = `<div class="muted">新奧客出現！</div><h3>⚠ ${UI.esc(info.name)}</h3><p>${UI.esc(info.hint)}</p><p class="how">處理方法：${UI.esc(info.how)}</p>`;
+    card.classList.remove('hidden');
+    const pause = this.conn.solo && this.overlay === 'none';
+    if (pause) this.send({ type: 'pause', paused: true });
+    this.introTimers.push(window.setTimeout(() => { if (pause && this.overlay === 'none') this.send({ type: 'pause', paused: false }); }, 2000));
+    this.introTimers.push(window.setTimeout(() => card.classList.add('hidden'), 4200));
+  }
   private onVis = () => {
     if (this.conn.solo && this.started) {
       if (document.hidden) { this.conn.send({ type: 'pause', paused: true }); audio.suspend(); }
@@ -197,7 +223,7 @@ export class Game {
       case 'toast': this.toast(e.text, e.tone ?? 'info'); break;
       case 'sfx': audio.play(e.name, e.x, e.z); if (e.name === 'clean' && e.x !== undefined) this.view.burst(e.x, e.z!, 0x99e9f2); break;
       case 'money': this.view.floatText(`+$${e.amount}`, e.x, e.z); this.view.burst(e.x, e.z, 0xffd43b, 10); break;
-      case 'karen': audio.play('karen'); break;
+      case 'karen': audio.play('karen'); this.introduceKaren(e.kind); break;
       case 'quick': this.addFeed(`💬 ${e.from}：${e.text}`); audio.play('quick'); break;
       case 'phase':
         if (e.phase === 'prep' && this.snap && this.snap.shift.mode !== 'shift') this.toast(`☀ 第 ${e.day} 天・開店準備：採購(B)、補貨、升級，按 Enter 準備開店`, 'info', 5000);
@@ -550,7 +576,7 @@ export class Game {
     const tb = this.target?.box ? new THREE.Box3(new THREE.Vector3(this.target.box.x0, 0, this.target.box.z0), new THREE.Vector3(this.target.box.x1, this.target.box.h ?? 1.5, this.target.box.z1))
       : this.target?.point ? new THREE.Box3(new THREE.Vector3(this.target.point.x - 0.35, 0, this.target.point.z - 0.35), new THREE.Vector3(this.target.point.x + 0.35, Math.max(0.15, this.target.point.h), this.target.point.z + 0.35)) : null;
     this.view.setHighlight(tb);
-    if (!this.tutorial && s.shift.id === '1-1') this.tutorial = new Tutorial(this.touch);
+    if (!this.tutorial && s.shift.id === '1-1' && !this.flags.tutorialDone) this.tutorial = new Tutorial(this.touch);
     this.tut = this.tutorial ? this.tutorial.update(s, me, this.pos, now) : null;
     this.view.setGuide(this.tut?.target ?? null);
     this.view.render();
@@ -678,7 +704,10 @@ export class Game {
     if (this.tut) {
       const hb = $('hintbar'); hb.classList.remove('hidden');
       hb.textContent = `📘 教學 ${Math.min(this.tut.step, this.tut.total)}/${this.tut.total}：${this.tut.text}`;
-    } else if (performance.now() > this.hintUntil) $('hintbar').classList.add('hidden');
+      const finished = this.tut.step >= this.tut.total;
+      $('tutskip').classList.toggle('hidden', finished);
+      if (finished && !this.flags.tutorialDone) { this.flags.tutorialDone = true; saveFlags(this.flags); }
+    } else { $('tutskip').classList.add('hidden'); if (performance.now() > this.hintUntil) $('hintbar').classList.add('hidden'); }
     if (this.touch) {
       const ab = s.shift.abilities;
       $('t-grab').classList.toggle('hidden', !ab.includes('grab'));
@@ -704,6 +733,9 @@ export class Game {
     window.removeEventListener('resize', this.onResize);
     document.removeEventListener('visibilitychange', this.onVis);
     document.removeEventListener('pointerlockchange', this.onLockChange);
+    window.removeEventListener('keydown', this.onKey);
+    for (const t of this.introTimers) clearTimeout(t);
+    $('introcard').classList.add('hidden'); $('tutskip').classList.add('hidden');
     this.input.unlock();
     this.conn.close();
     audio.stopMusic();

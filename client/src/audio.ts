@@ -14,7 +14,10 @@ export class Audio {
     this.ctx = new AC();
     this.master = this.ctx.createGain();
     this.master.gain.value = this.volume;
-    this.master.connect(this.ctx.destination);
+    // gentle limiter so stacked effects (ultimate + crash + eject) never clip
+    const comp = this.ctx.createDynamicsCompressor();
+    comp.threshold.value = -14; comp.knee.value = 10; comp.ratio.value = 6; comp.attack.value = 0.003; comp.release.value = 0.2;
+    this.master.connect(comp); comp.connect(this.ctx.destination);
     const len = this.ctx.sampleRate * 0.6;
     this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = this.noiseBuf.getChannelData(0);
@@ -50,10 +53,36 @@ export class Audio {
     s.connect(f); f.connect(g); g.connect(this.master); s.start(t); s.stop(t + dur + 0.02);
   }
 
+  private lastPlayed = new Map<string, number>();
+  private voices = 0;
+  /** Minimum gap between two plays of the same effect (ms); loud one-shots get a longer gap. */
+  private static GAP: Record<string, number> = { step: 120, knock: 120, cash: 70, impact: 150, crash: 250, karen: 600, ultimate: 800, error: 200, achievement: 400, levelup: 400 };
+
   play(name: string, x?: number, z?: number) {
     if (!this.ctx) return;
+    const now = performance.now();
+    const gap = Audio.GAP[name] ?? 50;
+    if (now - (this.lastPlayed.get(name) ?? -1e9) < gap) return; // same sound fired twice at once: play it once
+    if (this.voices > 24 && name !== 'ultimate' && name !== 'achievement') return; // too busy: drop minor sounds
+    this.lastPlayed.set(name, now);
+    this.voices++; window.setTimeout(() => { this.voices--; }, 400);
     const v = this.gainFor(x, z);
     switch (name) {
+      case 'grab': this.tone(330, 0.12, 'triangle', 0.16 * v, 0, 520); this.noise(0.12, 0.12 * v, 1200); this.tone(260, 0.18, 'sawtooth', 0.05 * v, 0.06, 420); break;
+      case 'throw': this.noise(0.35, 0.18 * v, 1800, 0, 'bandpass'); this.tone(700, 0.3, 'sine', 0.1 * v, 0, 240); break;
+      case 'eject': this.noise(0.2, 0.25 * v, 900); [659, 880, 1175].forEach((f, i) => this.tone(f, 0.16, 'square', 0.07 * v, 0.08 + i * 0.07)); break;
+      case 'impact': this.noise(0.22, 0.32 * v, 600); this.tone(110, 0.22, 'sine', 0.2 * v, 0, 55); break;
+      case 'mistake': this.tone(392, 0.18, 'square', 0.09 * v); this.tone(277, 0.3, 'square', 0.09 * v, 0.16); break;
+      case 'spin': this.noise(0.5, 0.18 * v, 2200, 0, 'bandpass'); this.tone(300, 0.45, 'triangle', 0.08 * v, 0, 900); break;
+      case 'ultimate':
+        this.tone(110, 0.9, 'sawtooth', 0.12, 0, 55); this.noise(0.9, 0.3, 1400);
+        [523, 659, 784, 1046, 1318].forEach((f, i) => this.tone(f, 0.35, 'square', 0.06, 0.15 + i * 0.06)); break;
+      case 'outage': this.tone(220, 0.6, 'sawtooth', 0.1, 0, 40); this.noise(0.3, 0.15, 300); break;
+      case 'unplug': this.tone(1400, 0.05, 'square', 0.1 * v); this.noise(0.08, 0.12 * v, 4000, 0.03, 'highpass'); break;
+      case 'levelup': [523, 659, 784, 1046, 1318, 1568].forEach((f, i) => this.tone(f, 0.28, 'triangle', 0.11, i * 0.07)); break;
+      case 'achievement': [784, 1046, 1318].forEach((f, i) => this.tone(f, 0.5, 'sine', 0.12, i * 0.1)); this.tone(1568, 0.7, 'triangle', 0.08, 0.32); break;
+      case 'win': [523, 659, 784, 1046].forEach((f, i) => this.tone(f, 0.45, 'triangle', 0.12, i * 0.13)); break;
+      case 'lose': [392, 349, 311, 262].forEach((f, i) => this.tone(f, 0.4, 'triangle', 0.1, i * 0.16)); break;
       case 'cash': this.tone(1318, 0.12, 'square', 0.12 * v); this.tone(1760, 0.3, 'square', 0.1 * v, 0.08); this.noise(0.15, 0.08 * v, 6000, 0.05, 'highpass'); break;
       case 'door': this.tone(988, 0.35, 'sine', 0.15 * v); this.tone(784, 0.5, 'sine', 0.13 * v, 0.18); break;
       case 'splat': this.noise(0.25, 0.25 * v, 700); break;
