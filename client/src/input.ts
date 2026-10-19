@@ -19,6 +19,8 @@ export class Input {
   private padPrev: boolean[] = [];
   holdInteract = false;
   private lockAt = 0;
+  /** The page isn't allowed to capture the mouse (e.g. shown inside another site's frame): look by dragging instead. */
+  lockBlocked = false;
 
   constructor(private canvas: HTMLCanvasElement, public touch: boolean) {
     window.addEventListener('keydown', e => this.onKey(e, true));
@@ -26,7 +28,7 @@ export class Input {
     window.addEventListener('blur', () => { this.keys.clear(); });
     canvas.addEventListener('mousedown', e => {
       if (this.touch) return;
-      if (!this.locked) { if (this.enabled) this.lock(); return; }
+      if (!this.locked && !this.lockBlocked) { if (this.enabled) this.lock(); return; }
       if (e.button === 0) { this.pressed.add('interact'); this.holdInteract = true; }
       if (e.button === 2) this.pressed.add('alt');
       if (e.button === 1) { this.pressed.add('ping'); e.preventDefault(); }
@@ -34,8 +36,14 @@ export class Input {
     window.addEventListener('mouseup', e => { if (e.button === 0) this.holdInteract = false; });
     canvas.addEventListener('contextmenu', e => e.preventDefault());
     document.addEventListener('pointerlockchange', () => { this.lockAt = performance.now(); });
+    document.addEventListener('pointerlockerror', () => { this.lockBlocked = true; });
     document.addEventListener('mousemove', e => {
-      if (!this.locked || !this.enabled) return;
+      if (!this.enabled) return;
+      if (!this.locked) {
+        // fallback: hold a mouse button and drag to look around
+        if (this.lockBlocked && e.buttons !== 0 && Math.abs(e.movementX) < 250 && Math.abs(e.movementY) < 250) { this.lookDX += e.movementX; this.lookDY += e.movementY; }
+        return;
+      }
       // Browsers can report one huge jump right after pointer lock engages; drop it.
       if (performance.now() - this.lockAt < 150 || Math.abs(e.movementX) > 250 || Math.abs(e.movementY) > 250) return;
       this.lookDX += e.movementX; this.lookDY += e.movementY;
@@ -44,7 +52,7 @@ export class Input {
   }
 
   get locked() { return document.pointerLockElement === this.canvas; }
-  lock() { if (!this.touch) { try { const r = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined; r?.catch?.(() => {}); } catch { /* ignore */ } } }
+  lock() { if (!this.touch && !this.lockBlocked) { try { const r = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined; r?.catch?.(() => { this.lockBlocked = true; }); } catch { this.lockBlocked = true; } } }
   unlock() { if (this.locked) document.exitPointerLock(); }
 
   private onKey(e: KeyboardEvent, down: boolean) {

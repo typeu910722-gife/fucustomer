@@ -83,6 +83,7 @@ export class Game {
     document.addEventListener('visibilitychange', this.onVis);
     document.addEventListener('pointerlockchange', this.onLockChange);
     window.addEventListener('keydown', this.onKey);
+    document.addEventListener('pointerlockerror', () => this.showHint('這個頁面不能鎖定滑鼠：按住滑鼠左鍵拖曳來轉動視角。'), { once: true });
     $('tutskip').onclick = () => this.skipTutorial();
     this.raf = requestAnimationFrame(this.frame);
     audio.unlock();
