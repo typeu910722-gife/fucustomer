@@ -95,7 +95,7 @@ npm run dist:win-installer   # 安裝程式版（需在 Windows 上建，或 Lin
 
 | 功能 | 做法 |
 |---|---|
-| 成就 | 遊戲結算後依職涯存檔計算（`shared/achievements.ts`，18 個，ID 例如 `FIRST_SHIFT`、`BOSS`、`LV30`），呼叫 Steam 解鎖。請在 Steamworks 後台建立相同 API 名稱 |
+| 成就 | 已存在職涯存檔並顯示在職涯「成就」分頁；遊戲結算後依存檔計算（`shared/achievements.ts`，20 個，ID 例如 `FIRST_SHIFT`、`BOSS`、`LV30`），呼叫 Steam 解鎖。請在 Steamworks 後台建立相同 API 名稱 |
 | 好友邀請 | 在多人房間時設定 rich presence `connect = +join 房間碼`；好友在 Steam 按「加入遊戲」→ 遊戲以 `+join 房間碼` 啟動（或已開啟時轉送）→ 自動加入同一房間。手機玩家輸入同一組房間碼即可同房 |
 | 雲端存檔 | 尚未做。可用 Steam Auto-Cloud 同步 Electron 的 localStorage 資料夾（後台設定，不需改程式） |
 

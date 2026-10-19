@@ -29,6 +29,10 @@ export interface ShiftConfig {
   start: { money: number; rating: number; backstock: Record<Product, number>; shelves: Record<Product, number> };
   mods: ShiftMods; hints: string[];
   boss: boolean; bossAt: number; endless: boolean;
+  /** Seconds between random events (default 42). */
+  eventEvery?: number;
+  /** Set for the daily challenge. */
+  daily?: { date: string; mods: DailyModId[]; scene: number };
 }
 
 // ---------------- ranks & levels ----------------
@@ -78,12 +82,17 @@ export interface CareerProfile {
   stars: Record<string, number>; clears: Record<string, number>;
   stats: { shifts: number; wins: number; served: number; ejected: number; karens: number; revenue: number };
   endlessBest: number; title: string;
+  /** Unlocked achievement IDs (see achievements.ts). */
+  achievements: string[];
+  /** Daily challenge: today's best and whether today's reward was paid; streak counts consecutive days won. */
+  daily: { date: string; best: number; rewarded: boolean; streak: number; lastWin: string; wins: number };
 }
 export function newProfile(): CareerProfile {
   return {
     version: 1, level: 1, exp: 0, wallet: 120, skillPoints: 0,
     skills: { service: 0, body: 0, crisis: 0 }, gear: { shoes: 0, mop: 0, machine: 0, cleaner: 0, guard: 0 },
     stars: {}, clears: {}, stats: { shifts: 0, wins: 0, served: 0, ejected: 0, karens: 0, revenue: 0 }, endlessBest: 0, title: '',
+    achievements: [], daily: { date: '', best: 0, rewarded: false, streak: 0, lastWin: '', wins: 0 },
   };
 }
 export function sanitizeProfile(v: unknown): CareerProfile {
@@ -105,6 +114,14 @@ export function sanitizeProfile(v: unknown): CareerProfile {
   for (const k of Object.keys(p.stats) as (keyof CareerProfile['stats'])[]) p.stats[k] = int(o.stats?.[k], 0, 1e12, 0);
   p.endlessBest = int(o.endlessBest, 0, 1e12, 0);
   p.title = typeof o.title === 'string' ? o.title.slice(0, 20) : '';
+  if (Array.isArray(o.achievements)) p.achievements = [...new Set(o.achievements.filter((a): a is string => typeof a === 'string' && /^[A-Z0-9_]{1,24}$/.test(a)))].slice(0, 64);
+  const d = o.daily, isDate = (x: unknown): x is string => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x);
+  if (d && typeof d === 'object') {
+    p.daily = {
+      date: isDate(d.date) ? d.date : '', best: int(d.best, 0, 1e7, 0), rewarded: d.rewarded === true,
+      streak: int(d.streak, 0, 1e5, 0), lastWin: isDate(d.lastWin) ? d.lastWin : '', wins: int(d.wins, 0, 1e6, 0),
+    };
+  }
   return p;
 }
 
@@ -190,28 +207,28 @@ export const CHAPTERS: ChapterDef[] = [
     shifts: [
       S({ id: '4-1', title: '雙收銀', length: 150, goal: 280, karens: ['cutter', 'hog'], foods: ['coffee', 'meal'], spawnEvery: 6.5, hints: ['旗艦店有兩台收銀機。新能力：拖把旋風（Q）擊退身邊的人。'] }),
       S({ id: '4-2', title: '試吃不是吃到飽', length: 160, goal: 310, karens: ['hog', 'litterer'], foods: ['coffee', 'meal'], spawnEvery: 6.5, hints: ['亂丟客會一路製造髒污；偷吃客要靠近才看得到。'] }),
-      S({ id: '4-3', title: '旅遊團', length: 160, goal: 335, karens: ['hog', 'litterer', 'streamer'], foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 6 }),
+      S({ id: '4-3', title: '旅遊團', length: 160, goal: 335, karens: ['charger', 'litterer', 'streamer'], foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 6, hints: ['新奧客「充電霸王」會霸佔門口插座：拔兩次插頭，或煮杯咖啡請他喝，他就會走。'] }),
       S({ id: '4-4', title: '颱風夜', length: 170, goal: 355, karens: ['rager', 'litterer', 'hog'], foods: ['coffee', 'meal'], events: ['outage', 'rush'], spawnEvery: 6 }),
-      S({ id: '4-5', title: '旗艦店評鑑', length: 180, goal: 420, karens: ['rager', 'litterer', 'hog', 'streamer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage', 'rush'], spawnEvery: 5.8 }),
+      S({ id: '4-5', title: '旗艦店評鑑', length: 180, goal: 405, karens: ['rager', 'litterer', 'hog', 'streamer', 'charger'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage', 'rush'], spawnEvery: 5.8 }),
     ],
   },
   {
     n: 5, title: '跨年夜美食街', place: '百貨美食街・跨年夜', minLevel: 21, baseExp: 760, register2: true,
     story: '店長的升職考核：跨年夜的美食街，所有奧客一次到齊。',
     shifts: [
-      S({ id: '5-1', title: '倒數 6 小時', length: 170, goal: 385, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 5.8 }),
-      S({ id: '5-2', title: '煙火前', length: 180, goal: 405, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.5 }),
-      S({ id: '5-3', title: '人擠人', length: 180, goal: 400, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.2 }),
-      S({ id: '5-4', title: '跨年倒數', length: 200, goal: 460, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 4, karenEvery: 30, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5 }),
+      S({ id: '5-1', title: '倒數 6 小時', length: 170, goal: 385, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'], foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 5.8 }),
+      S({ id: '5-2', title: '煙火前', length: 180, goal: 385, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.5 }),
+      S({ id: '5-3', title: '人擠人', length: 180, goal: 400, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.2 }),
+      S({ id: '5-4', title: '跨年倒數', length: 200, goal: 445, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'], maxKarens: 4, karenEvery: 30, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5 }),
     ],
   },
   {
     n: 6, title: '奧客之王', place: '總公司旗艦店・最終班', minLevel: 26, baseExp: 750, register2: true,
     story: '傳說中的「奧客之王」要來了。只有終極打工人能讓他退散。',
     shifts: [
-      S({ id: '6-1', title: '前哨戰', length: 180, goal: 400, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5, expMul: 2, hints: ['新能力：全店退散（R）。請出門、旋風、投擲都會累積爆發值，滿 100 一次清場！'] }),
-      S({ id: '6-2', title: '總部視察', length: 190, goal: 440, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 4.8, expMul: 2 }),
-      S({ id: '6-3', title: '奧客之王', length: 240, goal: 400, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], maxKarens: 1, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.2, boss: true, expMul: 2, hints: ['奧客之王會分五個階段鬧事，看畫面下方的提示一關一關破！最後把他丟出門或全店退散。'] }),
+      S({ id: '6-1', title: '前哨戰', length: 180, goal: 400, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5, expMul: 2, hints: ['新能力：全店退散（R）。請出門、旋風、投擲都會累積爆發值，滿 100 一次清場！'] }),
+      S({ id: '6-2', title: '總部視察', length: 190, goal: 410, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 4.8, expMul: 2 }),
+      S({ id: '6-3', title: '奧客之王', length: 240, goal: 400, karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'], maxKarens: 1, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5.2, boss: true, expMul: 2, hints: ['奧客之王會分五個階段鬧事，看畫面下方的提示一關一關破！最後把他丟出門或全店退散。'] }),
     ],
   },
 ];
@@ -251,7 +268,7 @@ export function buildShiftConfig(p: CareerProfile, id: string): ShiftConfig {
   if (id === ENDLESS_ID) {
     return {
       mode: 'shift', id, title: '無限夜班', chapter: 7, length: 1e6, goal: 0,
-      karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer'], firstKaren: 25, karenEvery: 40, maxKarens: 2,
+      karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'], firstKaren: 25, karenEvery: 40, maxKarens: 2,
       spawnEvery: 6.5, maxCustomers: 20, foods: ['coffee', 'meal'], foodChance: 0.35, events: ['rush', 'outage'], firstEvent: 50,
       register2: true, abilities: abilitiesAt(p.level),
       start: { money: 120, rating: 3, backstock: { drinks: 40, snacks: 40, bento: 30 }, shelves: { drinks: 10, snacks: 10, bento: 8 } },
@@ -277,11 +294,75 @@ export function buildShiftConfig(p: CareerProfile, id: string): ShiftConfig {
   };
 }
 
+// ---------------- daily challenge ----------------
+export const DAILY_ID = 'daily';
+export type DailyModId = 'outages' | 'streamers' | 'chargers' | 'rush' | 'coffee' | 'lowstock' | 'tips';
+export const DAILY_MODS: Record<DailyModId, { name: string; desc: string }> = {
+  outages: { name: '停電頻繁', desc: '每 24 秒就可能停電一次' },
+  streamers: { name: '全是直播主', desc: '奧客只剩直播客，而且多一個' },
+  chargers: { name: '插座保衛戰', desc: '奧客只剩充電霸王，而且多一個' },
+  rush: { name: '雙倍人潮', desc: '客人來得快很多，目標 +15%' },
+  coffee: { name: '咖啡狂熱', desc: '大部分客人都要咖啡，目標 +25%' },
+  lowstock: { name: '缺貨危機', desc: '倉庫庫存只有一半' },
+  tips: { name: '小費日', desc: '小費 +60%，目標 +12%' },
+};
+const DAILY_MOD_IDS = Object.keys(DAILY_MODS) as DailyModId[];
+
+/** Daily challenge opens after the first chapter. */
+export function dailyUnlocked(p: CareerProfile) { return (p.stars['1-5'] ?? 0) > 0; }
+/** Local calendar date as YYYY-MM-DD. */
+export function localDate(d = new Date()) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; }
+function prevDate(date: string) { const t = new Date(date + 'T12:00:00Z'); t.setUTCDate(t.getUTCDate() - 1); return t.toISOString().slice(0, 10); }
+export function dailySeed(date: string) { let h = 2166136261; for (const ch of 'fucustomer-daily-' + date) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
+function seededRng(seed: number) { let a = seed; return () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
+
+/** Same scene and modifiers for everyone on a given date; difficulty follows the player's progress. */
+export function dailyPlan(p: CareerProfile, date: string) {
+  const rng = seededRng(dailySeed(date));
+  const scene = 1 + Math.floor(rng() * CHAPTERS.length);
+  const first = DAILY_MOD_IDS[Math.floor(rng() * DAILY_MOD_IDS.length)];
+  const mods: DailyModId[] = [first];
+  if (rng() < 0.6) {
+    const karenMod = (m: DailyModId) => m === 'streamers' || m === 'chargers';
+    const rest = DAILY_MOD_IDS.filter(m => m !== first && !(karenMod(m) && karenMod(first)));
+    mods.push(rest[Math.floor(rng() * rest.length)]);
+  }
+  let open = 1; for (const c of CHAPTERS) if (chapterUnlocked(p, c.n).ok) open = c.n;
+  return { date, scene, difficulty: Math.min(scene, open), mods };
+}
+
+export function buildDailyConfig(p: CareerProfile, date: string): ShiftConfig {
+  const plan = dailyPlan(p, date);
+  const ch = CHAPTERS[plan.difficulty - 1];
+  const base = ch.shifts[Math.min(2, ch.shifts.length - 1)];
+  const cfg = buildShiftConfig(p, base.id);
+  const sceneCh = CHAPTERS[plan.scene - 1];
+  cfg.id = DAILY_ID; cfg.title = `每日挑戰・${sceneCh.place.split('・')[0]}`;
+  cfg.length = 150;
+  let goal = base.goal * (150 / base.length);
+  for (const m of plan.mods) {
+    if (m === 'outages') { cfg.events = [...new Set([...cfg.events, 'outage' as ShiftEvent])]; cfg.firstEvent = 20; cfg.eventEvery = 24; goal *= 0.95; }
+    if (m === 'streamers') { cfg.karens = ['streamer']; cfg.maxKarens += 1; cfg.firstKaren = 15; goal *= 0.9; }
+    if (m === 'chargers') { cfg.karens = ['charger']; cfg.maxKarens += 1; cfg.firstKaren = 15; }
+    if (m === 'rush') { cfg.spawnEvery *= 0.6; cfg.maxCustomers += 6; goal *= 1.15; }
+    if (m === 'coffee') { cfg.foods = [...new Set([...cfg.foods, 'coffee' as Food])]; cfg.foodChance = 0.75; goal *= 1.25; }
+    if (m === 'lowstock') for (const k of Object.keys(cfg.start.backstock) as Product[]) cfg.start.backstock[k] = Math.ceil(cfg.start.backstock[k] / 2);
+    if (m === 'tips') { cfg.mods = { ...cfg.mods, tips: cfg.mods.tips * 1.6 }; goal *= 1.12; }
+  }
+  if (!cfg.karens.length) { cfg.karens = ['cutter']; cfg.maxKarens = Math.max(1, cfg.maxKarens); }
+  cfg.goal = Math.round(goal / 5) * 5;
+  cfg.hints = [`今日修飾：${plan.mods.map(m => DAILY_MODS[m].name).join('＋')}。每天第一次達標可領獎勵。`];
+  cfg.daily = { date, mods: plan.mods, scene: plan.scene };
+  return cfg;
+}
+
 // ---------------- results & rewards ----------------
 export interface ShiftResult {
   shiftId: string; won: boolean; failReason: string; revenue: number; goal: number; rating: number; chaos: number;
   served: number; angryLeft: number; karensResolved: number; karensFailed: number; ejected: number; cleaned: number; maxCombo: number;
   score?: number; survived?: number; bossDefeated?: boolean;
+  /** Daily challenge date (YYYY-MM-DD). */
+  date?: string;
 }
 export function starsFor(r: ShiftResult) {
   if (r.shiftId === ENDLESS_ID) { const sc = r.score ?? 0; return sc >= 3000 ? 3 : sc >= 1600 ? 2 : sc >= 800 ? 1 : 0; }
@@ -292,7 +373,11 @@ export function starsFor(r: ShiftResult) {
   return s;
 }
 
-export interface Reward { stars: number; exp: number; wallet: number; levels: number[]; firstClear: boolean; newBest: boolean }
+export interface Reward {
+  stars: number; exp: number; wallet: number; levels: number[]; firstClear: boolean; newBest: boolean;
+  /** Daily challenge: reward already taken today (this run paid nothing), current win streak. */
+  daily?: { already: boolean; streak: number };
+}
 /** Applies a finished shift to the profile. EXP: full on first clear, 60% on replays, 35% on a failed attempt. */
 export function applyResult(p: CareerProfile, r: ShiftResult): Reward {
   if (r.shiftId === ENDLESS_ID) {
@@ -305,6 +390,7 @@ export function applyResult(p: CareerProfile, r: ShiftResult): Reward {
     const levels = addExp(p, exp);
     return { stars: starsFor(r), exp, wallet, levels, firstClear: false, newBest: score > prevBest };
   }
+  if (r.shiftId === DAILY_ID) return applyDaily(p, r);
   const f = findShift(r.shiftId);
   const base = f?.chapter.baseExp ?? 100;
   const stars = starsFor(r);
@@ -322,4 +408,30 @@ export function applyResult(p: CareerProfile, r: ShiftResult): Reward {
   if (r.shiftId === '6-3' && r.won && p.title !== '終極打工人') p.title = '奧客剋星';
   const levels = addExp(p, exp);
   return { stars, exp, wallet, levels, firstClear, newBest: stars > prevStars };
+}
+
+function applyDaily(p: CareerProfile, r: ShiftResult): Reward {
+  const date = r.date ?? '';
+  if (p.daily.date !== date) p.daily = { ...p.daily, date, best: 0, rewarded: false };
+  const stars = starsFor(r);
+  const newBest = r.revenue > p.daily.best;
+  p.daily.best = Math.max(p.daily.best, r.revenue);
+  p.stats.shifts++; if (r.won) p.stats.wins++;
+  p.stats.served += r.served; p.stats.ejected += r.ejected; p.stats.karens += r.karensResolved; p.stats.revenue += r.revenue;
+  const already = p.daily.rewarded;
+  let exp = 0, wallet = 0;
+  if (!already) {
+    // difficulty follows progress, so the reward does too: about one shift of the player's newest chapter
+    let open = 1; for (const c of CHAPTERS) if (chapterUnlocked(p, c.n).ok) open = c.n;
+    const base = CHAPTERS[open - 1].baseExp;
+    if (r.won) {
+      exp = Math.round(base * (1 + 0.15 * stars)); wallet = Math.round(r.revenue * 0.25 + 100 + stars * 30);
+      p.daily.rewarded = true; p.daily.wins++;
+      p.daily.streak = p.daily.lastWin === prevDate(date) ? p.daily.streak + 1 : 1;
+      p.daily.lastWin = date;
+    } else { exp = Math.round(base * 0.25); wallet = 15; }
+  }
+  p.wallet += wallet;
+  const levels = addExp(p, exp);
+  return { stars, exp, wallet, levels, firstClear: false, newBest, daily: { already, streak: p.daily.streak } };
 }

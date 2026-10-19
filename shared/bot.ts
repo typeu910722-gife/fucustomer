@@ -156,6 +156,7 @@ export class Bot {
       if (k.kind === 'streamer' && this.role !== 'cashier') return cust(k, 'stopFilm');
       if (k.kind === 'hog') return cust(k, 'checkBag');
       if (k.kind === 'litterer') return cust(k, 'stopLitter');
+      if (k.kind === 'charger' && k.state === 'charge') return cust(k, 'unplug');
     }
     const regs = s.upgrades.register2 > 0 ? REGISTERS : [REGISTERS[0]];
     const tasks: Goal[] = [];

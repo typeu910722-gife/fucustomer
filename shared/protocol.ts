@@ -13,7 +13,7 @@ export type CustomerKind = 'normal' | KarenKind;
 
 export type ActKind =
   | 'checkout' | 'brew' | 'deliver' | 'takeBox' | 'stock' | 'returnBox' | 'takeMop' | 'returnMop'
-  | 'clean' | 'calm' | 'coupon' | 'askQueue' | 'stopFilm' | 'checkBag' | 'pickup' | 'heat' | 'grab' | 'stopLitter';
+  | 'clean' | 'calm' | 'coupon' | 'askQueue' | 'stopFilm' | 'checkBag' | 'pickup' | 'heat' | 'grab' | 'stopLitter' | 'unplug' | 'treat';
 
 /** A target is either a static fixture or a dynamic entity id. */
 export type Target =
@@ -56,7 +56,7 @@ export interface CustomerSnap {
   patience: number; // 0..1
   anger: number; // 0..100 (rager)
   resolved: boolean; revealed: boolean; items: number; want: Food | null; look: number; moving: boolean;
-  y: number; held: boolean; flying: boolean; phase: number;
+  y: number; held: boolean; flying: boolean; phase: number; // boss phase; for 充電霸王 the number of unplugs so far
 }
 export interface Snapshot {
   t: number; // server time ms

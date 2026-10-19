@@ -23,8 +23,8 @@ export class LocalConnection implements GameConnection {
   private playerId = '';
   private timer: number;
   private last = performance.now();
-  constructor(name: string, save: StoreSave | null, shift?: ShiftConfig) {
-    this.room = new Room('SOLO', save, { solo: true, shift });
+  constructor(name: string, save: StoreSave | null, shift?: ShiftConfig, seed?: number) {
+    this.room = new Room('SOLO', save, { solo: true, shift, seed });
     const conn = { send: (m: ServerMsg) => queueMicrotask(() => this.onMessage(m)), close: () => {} };
     const r = this.room.join(conn, name, undefined, 'solo');
     if (r.ok) this.playerId = r.member.playerId;

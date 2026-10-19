@@ -4,7 +4,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { PRODUCT_INFO, PRODUCTS, Product, shelfCapacity, EYE_HEIGHT } from '../../shared/constants.ts';
 import {
   AABB, COFFEE_MACHINE, MICROWAVE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DECOR, DOOR_X0, DOOR_X1, MOP_RACK, REGISTERS, SHELVES,
-  STORE_D, STORE_W, WALLS,
+  OUTLET, STORE_D, STORE_W, WALLS,
 } from '../../shared/map.ts';
 import type { CustomerSnap, Held, PlayerSnap, Snapshot } from '../../shared/protocol.ts';
 import type { Quality } from './storage.ts';
@@ -139,7 +139,7 @@ const SKIN = [0xf1c27d, 0xe0ac69, 0xc68642, 0x8d5524, 0xffdbac];
 const HAIR = [0x2b1b0e, 0x4a3020, 0x111111, 0x8a6a3a, 0xb8b8b8, 0x6b2b14];
 const SHIRT = [0x5c7cfa, 0x94d82d, 0xf783ac, 0x20c997, 0xadb5bd, 0xffa94d, 0x845ef7, 0x868e96];
 
-export type Pose = 'normal' | 'angry' | 'flail' | 'pay' | 'film';
+export type Pose = 'normal' | 'angry' | 'flail' | 'pay' | 'film' | 'sit';
 export interface Look {
   shirt: number; pants: number; skin: number; hair: number; hairStyle: number; scale?: number; apron?: boolean;
   build?: number; height?: number; accessory?: number;
@@ -296,6 +296,9 @@ export class Human {
         break;
       }
       case 'pay': this.armR.rotation.x = -1.3 + Math.sin(this.t * 3) * 0.08; this.armL.rotation.x = -s * 0.8; this.mouth.scale.set(1.3, 1.6, 1); break;
+      case 'sit': // on the floor, legs out, staring at the phone
+        this.legL.rotation.x = -1.45; this.legR.rotation.x = -1.4; this.armR.rotation.x = -1.1; this.armL.rotation.x = -0.9; this.armL.rotation.z = 0.25;
+        this.mouth.scale.set(1.1, 0.8, 1); this.browL.rotation.z = 0.15; this.browR.rotation.z = -0.15; break;
       case 'film': this.armR.rotation.x = -1.9; this.armL.rotation.x = -s * 0.6; this.mouth.scale.set(1.4, 2.5, 1); break;
       default: this.armL.rotation.x = -s * 0.8; this.armR.rotation.x = s * 0.8 + (moving ? 0 : Math.sin(this.t * 1.3) * 0.04);
     }
@@ -346,6 +349,7 @@ function customerLook(c: CustomerSnap) {
   if (c.kind === 'hog') return { ...base, shirt: 0x495057, pants: 0x212529, hairStyle: 2, accessory: 0, build: 1.3 };
   if (c.kind === 'boss') return { ...base, shirt: 0x5f3dc4, pants: 0x212529, hair: 0xf4d58d, hairStyle: 1, scale: 1.35, accessory: 1, build: 1.2, height: 1 };
   if (c.kind === 'litterer') return { ...base, shirt: 0x5c940d, accessory: 3 };
+  if (c.kind === 'charger') return { ...base, shirt: 0x1098ad, pants: 0x343a40, hairStyle: 3, accessory: 4 };
   return base;
 }
 
@@ -362,6 +366,10 @@ function karenAccessory(q: Quality, h: Human, kind: string) {
     const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.17, 0.12, 10, 1, true), gold); crown.position.y = 0.2; h.head.add(crown);
     for (let i = 0; i < 5; i++) { const spike = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.1, 6), gold); const a = (i / 5) * Math.PI * 2; spike.position.set(Math.sin(a) * 0.15, 0.3, Math.cos(a) * 0.15); h.head.add(spike); }
     const cape = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.9, 0.04), mat(0xc92a2a, q)); cape.position.set(0, 1.0, -0.17); h.group.add(cape);
+  }
+  if (kind === 'charger') {
+    const phone = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.15, 0.015), new THREE.MeshBasicMaterial({ color: 0x74c0fc })); phone.position.set(0, -0.62, 0.08); h.armR.add(phone);
+    const bank = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.06, 0.24), mat(0xfab005, q)); bank.position.set(0, -0.66, 0.06); h.armL.add(bank);
   }
   if (kind === 'hog') { const hood = new THREE.Mesh(new THREE.SphereGeometry(0.2, 10, 8, 0, Math.PI * 2, 0, Math.PI * 0.62), mat(0x343a40, q)); hood.position.y = 0.02; hood.rotation.x = -0.2; h.head.add(hood); }
 }
@@ -522,6 +530,10 @@ export class StoreView {
     const sign2 = sign.clone(); sign2.position.set(12, 2.9, STORE_D + 0.32); sign2.rotation.y = 0; sign2.scale.set(1, 1, 1); S.add(sign2);
     const exitSign = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.25), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '出口 EXIT', size: 64, color: '#fff' }], 512, 160, '#2b8a3e')) }));
     exitSign.position.set(12, 2.4, STORE_D - 0.03); exitSign.rotation.y = Math.PI; S.add(exitSign);
+    // wall socket by the window (where 充電霸王 squats)
+    const plate = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.14, 0.03), mat(0xf8f9fa, this.q)); plate.position.set(OUTLET.x, 0.35, OUTLET.z - 0.02); S.add(plate);
+    const chargeSign = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.22), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '🔌 充電座', size: 60, color: '#fff' }], 512, 180, '#1098ad')) }));
+    chargeSign.position.set(OUTLET.x, 0.75, OUTLET.z - 0.03); chargeSign.rotation.y = Math.PI; S.add(chargeSign);
     this.beacon = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.MeshBasicMaterial({ color: 0x5c1a1a }));
     this.beacon.position.set(13.9, 2.9, STORE_D - 0.25); this.beacon.userData.dynamic = true; S.add(this.beacon);
     if (q !== 'low') { this.beaconLight = new THREE.PointLight(0xff3b30, 0, 9, 1.5); this.beaconLight.position.copy(this.beacon.position).add(new THREE.Vector3(0, -0.3, -0.4)); S.add(this.beaconLight); }
@@ -780,12 +792,14 @@ export class StoreView {
       }
       if (c.flying || c.held) { e.s.x = c.x; e.s.z = c.z; } else this.smooth(e.s, c.x, c.z, c.yaw, dt);
       // held: carried sideways at chest height so the view stays clear; flying: tumbling
-      e.h.group.position.set(e.s.x, c.held ? 0.95 : c.y, e.s.z); e.h.group.rotation.y = e.s.yaw;
+      const sitting = c.state === 'charge' && !c.held && !c.flying;
+      e.h.group.position.set(e.s.x, c.held ? 0.95 : sitting ? -0.68 : c.y, e.s.z); e.h.group.rotation.y = e.s.yaw;
       e.h.group.rotation.x = c.flying ? e.h.group.rotation.x + dt * 9 : 0;
       e.h.group.rotation.z = c.held ? Math.PI / 2 + Math.sin(this.time * 12) * 0.15 : 0;
       const pose = c.held || c.flying ? 'flail'
         : (c.kind === 'rager' || (c.kind === 'boss' && c.phase === 2)) && c.state === 'complain' && !c.resolved ? 'angry'
           : (c.kind === 'streamer' || (c.kind === 'boss' && c.phase === 3)) && !c.resolved ? 'film'
+            : sitting ? 'sit'
             : c.state === 'atRegister' ? 'pay'
               : c.state === 'leaving' && c.patience <= 0.01 && c.kind === 'normal' ? 'angry'
                 : (c.state === 'queue' || c.state === 'waitFood') && c.patience < 0.25 ? 'angry' : 'normal';
@@ -804,6 +818,7 @@ export class StoreView {
         else if (c.kind === 'cutter') { key = 'cut'; draw = () => textCanvas([{ text: '⚠ 插隊！', size: 54, color: '#ffe066' }], 512, 128, 'rgba(120,60,0,0.88)'); }
         else if (c.kind === 'streamer') { key = 'str'; draw = () => textCanvas([{ text: '📱 直播亂拍', size: 50, color: '#d0bfff' }], 512, 128, 'rgba(60,20,120,0.88)'); }
         else if (c.kind === 'hog') { key = 'hog'; draw = () => textCanvas([{ text: '❓ 偷吃中', size: 52, color: '#ffe066' }], 512, 128, 'rgba(60,60,60,0.88)'); }
+        else if (c.kind === 'charger') { const v = c.patience; key = 'chg' + Math.round(v * 10) + c.phase; draw = () => textCanvas([{ text: c.phase ? '🔌 又插回去了！' : '🔌 霸佔插座', size: 46, color: '#99e9f2' }], 512, 150, 'rgba(10,60,80,0.9)', { v, color: '#3bc9db' }); }
         else if (c.kind === 'litterer') { key = 'lit'; draw = () => textCanvas([{ text: '🗑 亂丟垃圾', size: 50, color: '#d8f5a2' }], 512, 128, 'rgba(40,70,20,0.88)'); }
       } else if (c.want && (c.state === 'waitFood' || c.state === 'toFood')) {
         const label = c.want === 'meal' ? '🍱 等熱便當' : '☕ 等咖啡';

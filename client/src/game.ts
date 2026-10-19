@@ -387,6 +387,12 @@ export class Game {
       if (c.kind === 'streamer') return { label: `請${name}停止拍攝`, primary: 'stopFilm', target: t, point };
       if (c.kind === 'hog') return { label: `請${name}先結帳`, primary: 'checkBag', target: t, point };
       if (c.kind === 'litterer') return { label: `請${name}不要亂丟`, primary: 'stopLitter', target: t, point };
+      if (c.kind === 'charger') {
+        const treat = hands.includes('coffee') ? '請他喝咖啡' : undefined;
+        return c.state === 'charge'
+          ? { label: `拔掉${name}的插頭${c.phase ? '（再一次！）' : ''}`, primary: 'unplug', alt: 'treat', altLabel: treat, target: t, point }
+          : treat ? { label: name, primary: 'treat', target: t, point } : { label: name, reason: '正走向門口的插座', target: t, point };
+      }
     }
     if (c.state === 'waitFood' && c.want) {
       const name = c.want === 'meal' ? '熱便當' : '咖啡';
@@ -645,7 +651,7 @@ export class Game {
     $('shiftbar').classList.toggle('hidden', !shiftMode);
     document.body.classList.toggle('shiftmode', shiftMode);
     if (shiftMode) {
-      $('sb-title').textContent = `${s.shift.id}・${s.shift.title}`;
+      $('sb-title').textContent = /^\d-\d$/.test(s.shift.id) ? `${s.shift.id}・${s.shift.title}` : s.shift.title;
       $('sb-extra').textContent = `口碑 ★${s.rating.toFixed(1)}・現金 $${s.money}`;
       const elapsed = Math.round(s.shift.length - s.phaseLeft);
       $('sb-time').textContent = s.phase === 'prep' ? `準備 ${Math.ceil(s.phaseLeft)}` : s.phase !== 'open' ? '收尾中' : s.shift.endless ? `🌙 已撐 ${elapsed} 秒` : `⏱ ${Math.ceil(s.phaseLeft)} 秒`;

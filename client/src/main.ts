@@ -8,9 +8,9 @@ import {
 } from './storage.ts';
 import * as UI from './ui.ts';
 import { careerScreen, loadProfile, resultScreen, saveProfile } from './career-ui.ts';
-import { ENDLESS_ID, applyResult, buildShiftConfig, endlessUnlocked, shiftUnlocked } from '../../shared/career.ts';
+import { DAILY_ID, ENDLESS_ID, applyResult, buildDailyConfig, buildShiftConfig, dailySeed, dailyUnlocked, endlessUnlocked, localDate, shiftUnlocked } from '../../shared/career.ts';
 import type { ShiftResult } from '../../shared/career.ts';
-import { unlockedAchievements } from '../../shared/achievements.ts';
+import { updateAchievements } from '../../shared/achievements.ts';
 import { desktop, initPlatform, isApp, onAppPause, onBack, quitApp, reportAchievements } from './platform.ts';
 
 let settings = loadSettings();
@@ -62,20 +62,26 @@ async function online(url: string, intent: Intent) {
 function career() {
   screenDepth = 1;
   const p = loadProfile();
+  // progress made before achievements existed counts too (no pop-ups for these)
+  if (updateAchievements(p).length) saveProfile(p);
   careerScreen(p, { back: () => menu(), play: id => playShift(id) });
 }
 
 function playShift(id: string) {
   const p = loadProfile();
-  if (id === ENDLESS_ID ? !endlessUnlocked(p) : !shiftUnlocked(p, id).ok) return career();
-  const cfg = buildShiftConfig(p, id);
-  startGame(() => new LocalConnection(playerName(), null, cfg), (reason, result) => {
+  const ok = id === ENDLESS_ID ? endlessUnlocked(p) : id === DAILY_ID ? dailyUnlocked(p) : shiftUnlocked(p, id).ok;
+  if (!ok) return career();
+  const date = localDate();
+  const cfg = id === DAILY_ID ? buildDailyConfig(p, date) : buildShiftConfig(p, id);
+  const seed = id === DAILY_ID ? dailySeed(date) : undefined; // same customers for everyone on the same day
+  startGame(() => new LocalConnection(playerName(), null, cfg, seed), (reason, result) => {
     if (!result) { if (reason) UI.message('提示', reason, '回職涯', career); else career(); return; }
     const prof = loadProfile();
     const reward = applyResult(prof, result);
+    const fresh = updateAchievements(prof, result);
     saveProfile(prof);
-    reportAchievements(unlockedAchievements(prof, result));
-    resultScreen(result, reward, prof, { retry: () => playShift(id), next: n => (n ? playShift(n) : career()), career });
+    reportAchievements(prof.achievements);
+    resultScreen(result, reward, prof, fresh, { retry: () => playShift(id), next: n => (n ? playShift(n) : career()), career });
   });
 }
 
@@ -130,4 +136,4 @@ desktop?.onJoinRequest(code => {
   if (current || !/^[A-Z0-9]{5}$/i.test(code)) return;
   online(serverUrl(), { kind: 'join', code: code.toUpperCase(), name: playerName() });
 });
-if (isApp) reportAchievements(unlockedAchievements(loadProfile()));
+if (isApp) { const p = loadProfile(); updateAchievements(p); saveProfile(p); reportAchievements(p.achievements); }

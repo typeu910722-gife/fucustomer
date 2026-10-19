@@ -41,6 +41,9 @@ export const COFFEE_MACHINE = box(15.1, 8.6, 16.1, 9.4, 1.0, 'coffee');
 export const MICROWAVE = box(17.7, 8.7, 18.6, 9.4, 1.0, 'microwave');
 export const COFFEE_PICKUP = { x: 14.2, z: 11.6 };
 export const COMPLAINT_SPOT = { x: 13.2, z: 13.2 };
+/** Wall socket by the front window that the 充電霸王 karen squats at. */
+export const OUTLET = { x: 3.2, z: 16 };
+export const CHARGE_SPOT = { x: 3.2, z: 15.2 };
 export const MOP_RACK = box(0, 12, 0.7, 13.4, 1.5, 'mop');
 export const CRATES: { product: Product; box: AABB }[] = [
   { product: 'drinks', box: box(0.6, 0.6, 1.8, 1.6, 1.1, 'crate') },

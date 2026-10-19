@@ -6,7 +6,7 @@ import {
   UPGRADES, UPGRADE_IDS, UpgradeId, brewTime, checkoutTime, heatTime, shelfCapacity,
 } from './constants.ts';
 import {
-  COFFEE_MACHINE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DOOR_X0, DOOR_X1, ENTRANCE, MICROWAVE, MOP_RACK,
+  CHARGE_SPOT, COFFEE_MACHINE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DOOR_X0, DOOR_X1, ENTRANCE, MICROWAVE, MOP_RACK,
   PLAYER_SPAWNS, QUEUE_SPOTS, REGISTERS, SHELVES, SPAWN_OUTSIDE, STORE_D, clampToStore, distToAABB, findPath,
   resolveCollision, shelfBrowseSpots,
 } from './map.ts';
@@ -37,7 +37,7 @@ export interface PlayerState {
 
 type CState =
   | 'enter' | 'toShelf' | 'browse' | 'toFood' | 'waitFood' | 'queue' | 'toRegister' | 'atRegister'
-  | 'leaving' | 'toComplain' | 'complain' | 'wander' | 'flee' | 'toEat' | 'eat' | 'held' | 'flying' | 'toSummon' | 'summon';
+  | 'leaving' | 'toComplain' | 'complain' | 'wander' | 'flee' | 'toEat' | 'eat' | 'held' | 'flying' | 'toSummon' | 'summon' | 'toCharge' | 'charge';
 
 export interface Flight { vx: number; vy: number; vz: number; y: number; t: number; thrown: boolean; by: string }
 
@@ -286,6 +286,8 @@ function spawnCustomer(w: World, kind: CustomerKind) {
     c.speed = 1.6; c.patienceMax = 200;
   } else if (kind === 'litterer') {
     c.speed = 1.8; c.life = 80; c.knockTimer = 4;
+  } else if (kind === 'charger') {
+    c.speed = 1.6; c.life = 75; c.knockTimer = 5;
   } else if (kind === 'boss') {
     c.speed = 1.9; c.phase = 1; c.patienceMax = 1e9; c.life = 1e9; c.anger = 0;
   }
@@ -311,6 +313,7 @@ function nextStep(w: World, c: Customer) {
   if (c.kind === 'rager' && !c.resolved) { c.state = 'toComplain'; setGoal(c, COMPLAINT_SPOT); return; }
   if ((c.kind === 'streamer' || c.kind === 'litterer') && !c.resolved) { c.state = 'wander'; c.speed = c.kind === 'streamer' ? 2.0 : 1.7; setGoal(c, randomWanderSpot(w)); return; }
   if (c.kind === 'hog' && !c.resolved) { goEat(w, c); return; }
+  if (c.kind === 'charger' && !c.resolved) { c.state = 'toCharge'; setGoal(c, CHARGE_SPOT); return; }
   if (c.shopping.length) {
     c.state = 'toShelf';
     setGoal(c, pick(w, shelfBrowseSpots(c.shopping[0])));
@@ -581,6 +584,22 @@ function updateCustomer(w: World, c: Customer, dt: number) {
       if (arrived) { c.state = 'wander'; c.speed = c.kind === 'boss' ? (c.phase === 5 ? 1.1 : 2.0) : c.kind === 'streamer' ? 2.0 : 1.7; setGoal(c, randomWanderSpot(w)); }
       break;
     }
+    case 'toCharge': if (arrived) { c.state = 'charge'; c.yaw = 0; } break;
+    case 'charge': {
+      // squats at the socket: every few seconds the electricity bill ticks up and the store gets messier
+      if (w.power < 1) {
+        c.resolved = true; w.dayStats.karensResolved++; w.totals.karens++;
+        toast(w, '🔌 停電了，充電霸王摸摸鼻子走人', 'info');
+        leave(w, c, false); break;
+      }
+      c.life -= dt; c.knockTimer -= dt;
+      if (c.knockTimer <= 0) { c.knockTimer = 5; w.money -= 2; adjChaos(w, 1); }
+      if (c.life <= 0) {
+        failKaren(w, c, -0.2, 5, '🔌 充電霸王充飽就走，電費算店裡的（口碑 -0.2）');
+        leave(w, c, false);
+      }
+      break;
+    }
     case 'toEat': if (arrived) { c.state = 'eat'; c.timer = 3.5; c.yaw = faceShelf(c); } break;
     case 'eat':
       c.timer -= dt;
@@ -730,6 +749,14 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
     case 'checkBag':
       if (!c || c.kind !== 'hog' || c.resolved) return { ok: false, reason: '不需要' };
       return { ok: true, dur: 1.0 };
+    case 'unplug':
+      if (!c || c.kind !== 'charger' || c.resolved) return { ok: false, reason: '不需要' };
+      if (c.state !== 'charge') return { ok: false, reason: '他還沒插上插座' };
+      return { ok: true, dur: 1.0 / m.calm };
+    case 'treat':
+      if (!c || c.kind !== 'charger' || c.resolved) return { ok: false, reason: '不需要' };
+      if (p.held?.kind !== 'coffee' && p.held2?.kind !== 'coffee') return { ok: false, reason: '先去煮一杯咖啡' };
+      return { ok: true, dur: 0.3 };
     case 'pickup': {
       if (t.t !== 'item') return { ok: false, reason: '目標錯誤' };
       const it = w.items.find(i => i.id === t.id);
@@ -853,6 +880,18 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
     }
     case 'stopLitter':
       resolveKaren(w, c!, p, 0.1, `🗑 ${p.name} 請亂丟客把垃圾帶走（口碑 +0.1）`);
+      leave(w, c!, false);
+      break;
+    case 'unplug':
+      c!.hits++;
+      ev(w, { e: 'sfx', name: 'pickup', x: c!.x, z: c!.z });
+      if (c!.hits >= 2) { resolveKaren(w, c!, p, 0.08, `🔌 ${p.name} 拔掉插頭，充電霸王悻悻然離開（口碑 +0.08）`); leave(w, c!, false); }
+      else toast(w, '🔌 他又插回去了！再拔一次，或請他喝杯咖啡', 'info');
+      break;
+    case 'treat':
+      if (p.held?.kind === 'coffee') { p.held = p.held2; p.held2 = null; } else p.held2 = null;
+      resolveKaren(w, c!, p, 0.15, `☕ ${p.name} 請充電霸王喝咖啡，他開心地讓出插座（口碑 +0.15）`);
+      ev(w, { e: 'sfx', name: 'deliver', x: c!.x, z: c!.z });
       leave(w, c!, false);
       break;
     case 'checkBag':
@@ -1080,6 +1119,7 @@ export function finishShift(w: World, failReason: string) {
     served: d.served, angryLeft: d.angryLeft, karensResolved: d.karensResolved, karensFailed: d.karensFailed,
     ejected: d.ejected, cleaned: d.spillsCleaned, maxCombo: d.maxCombo,
     score: w.cfg.endless ? score : undefined, survived, bossDefeated: w.cfg.boss ? w.bossDefeated : undefined,
+    date: w.cfg.daily?.date,
   };
   if (w.cfg.endless) w.result.failReason = failReason ? `${failReason}・撐了 ${survived} 秒` : `主動下班・撐了 ${survived} 秒`;
   clearFloor(w);
@@ -1100,7 +1140,7 @@ function updateEvents(w: World, dt: number) {
   }
   w.nextEvent -= dt;
   if (w.nextEvent <= 0) {
-    w.nextEvent = 42;
+    w.nextEvent = w.cfg.eventEvery ?? 42;
     const kind = pick(w, w.cfg.events);
     w.event = { kind, left: kind === 'rush' ? 14 : 11, pulse: 0 };
     if (kind === 'outage') { w.power = 0.35; toast(w, '⚡ 突然停電！備用照明啟動，顧客比較不耐煩', 'bad'); ev(w, { e: 'sfx', name: 'outage' }); }
@@ -1246,10 +1286,10 @@ export function snapshot(w: World, now: number): Snapshot {
     })),
     customers: w.customers.map(c => ({
       id: c.id, kind: c.kind, x: r2(c.x), z: r2(c.z), yaw: r2(c.yaw), state: c.state,
-      patience: Math.max(0, Math.min(1, c.state === 'waitFood' ? c.timer / c.patienceMax : c.patience / c.patienceMax)),
+      patience: Math.max(0, Math.min(1, c.state === 'waitFood' ? c.timer / c.patienceMax : c.kind === 'charger' ? c.life / 75 : c.patience / c.patienceMax)),
       anger: Math.round(c.anger), resolved: c.resolved, revealed: reveal(c), items: c.items.length,
       want: c.want && !c.foodDone && !c.foodFailed ? c.want : null, look: c.look, moving: c.moving,
-      y: c.fly ? r2(c.fly.y) : c.state === 'held' ? 0.25 : 0, held: c.state === 'held', flying: !!c.fly, phase: c.phase,
+      y: c.fly ? r2(c.fly.y) : c.state === 'held' ? 0.25 : 0, held: c.state === 'held', flying: !!c.fly, phase: c.kind === 'charger' ? c.hits : c.phase,
     })),
     spills: w.spills.map(s => ({ id: s.id, x: r2(s.x), z: r2(s.z) })),
     items: w.items.map(i => ({ id: i.id, x: r2(i.x), z: r2(i.z), held: i.held })),

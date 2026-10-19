@@ -1,7 +1,7 @@
 // Balance report: a simulated player at each chapter's expected level/skills/gear plays every shift.
 import { Room } from './shared/room.ts';
 import { Bot, botMessages } from './shared/bot.ts';
-import { CHAPTERS, buildShiftConfig, newProfile, starsFor, GEAR_IDS, ENDLESS_ID } from './shared/career.ts';
+import { CHAPTERS, buildShiftConfig, buildDailyConfig, dailyPlan, newProfile, starsFor, GEAR_IDS, ENDLESS_ID, ShiftConfig } from './shared/career.ts';
 const SEEDS = Number(process.env.SEEDS ?? 4);
 function profileFor(ch: number, level: number) {
   const p = newProfile(); p.level = level;
@@ -9,8 +9,8 @@ function profileFor(ch: number, level: number) {
   for (const g of GEAR_IDS) p.gear[g] = Math.min(3, Math.floor((ch - 1) * 0.6));
   return p;
 }
-function play(id: string, prof: ReturnType<typeof newProfile>, seed: number, maxT: number) {
-  let t = 0; const room = new Room('S', null, { solo: true, now: () => t, shift: buildShiftConfig(prof, id), seed });
+function play(id: string | ShiftConfig, prof: ReturnType<typeof newProfile>, seed: number, maxT: number) {
+  let t = 0; const room = new Room('S', null, { solo: true, now: () => t, shift: typeof id === 'string' ? buildShiftConfig(prof, id) : id, seed });
   const c: any = { snap: null, send(m: any) { if (m.type === 'snap') c.snap = m.s; if (m.type === 'welcome') c.pid = m.playerId; }, close() {} };
   room.join(c, 'bot', undefined); room.startGame();
   const bot = new Bot('any', 0.3); let rid = 0;
@@ -36,4 +36,16 @@ for (const ch of CHAPTERS) for (const sh of ch.shifts) {
 if (!only || only === 'endless') {
   const r = play(ENDLESS_ID, profileFor(7, 30), 1, 900);
   console.log('endless score', r.score, 'survived', r.survived, r.failReason);
+}
+if (!only || only === 'daily') {
+  // daily challenge for a mid-game player (chapters 1-3 cleared, Lv18) over two weeks of dates
+  const prof = profileFor(4, 18);
+  for (const c of CHAPTERS.slice(0, 3)) for (const sh of c.shifts) prof.stars[sh.id] = 2;
+  for (let d = 1; d <= 14; d++) {
+    const date = `2026-11-${String(d).padStart(2, '0')}`;
+    const cfg = buildDailyConfig(prof, date), plan = dailyPlan(prof, date);
+    const rs = Array.from({ length: SEEDS }, (_, i) => play(cfg, prof, i + 1, cfg.length + 60));
+    const avg = rs.reduce((a, r) => a + r.revenue, 0) / rs.length;
+    console.log(`daily ${date} ch${plan.difficulty} ${plan.mods.join('+').padEnd(18)} goal ${String(cfg.goal).padStart(4)} avg ${avg.toFixed(0).padStart(4)} (${(avg / cfg.goal).toFixed(2)}x) win ${rs.filter(r => r.won).length}/${rs.length}`);
+  }
 }

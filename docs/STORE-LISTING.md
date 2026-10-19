@@ -21,10 +21,13 @@
 幫客人結帳、從倉庫搬貨上架、煮咖啡、微波便當、拖乾淨地上的髒污。動作慢，客人會生氣離開；口碑掉了，生意就難做。
 
 😤 各式各樣的奧客
-插隊的、拍片直播的、霸佔座位的、退貨大鬧的、亂丟垃圾的……每種都有不同的處理方式：好好安撫、請保全、拖把旋風、或者——抓起來、對準門口、丟出去。
+插隊的、拍片直播的、在貨架偷吃的、退貨大鬧的、亂丟垃圾的、霸佔插座充電的……每種都有不同的處理方式：好好安撫、拔插頭、請喝咖啡、請保全、拖把旋風、或者——抓起來、對準門口、丟出去。
 
 👑 魔王戰與無限夜班
 第 6 章的「奧客之王」有五個階段，每一階段都要用不同方法破解。通關後解鎖無限夜班，挑戰你能撐多久。
+
+📅 每日挑戰與 20 個成就
+每天一個新班次：不同場景加上「停電頻繁」「全是直播主」「雙倍人潮」等修飾，每天第一次達標領獎勵，連續完成還能拿全勤獎。
 
 👥 最多 5 人合作（測試中）
 用 5 碼房間碼邀請朋友，一起顧店。
@@ -54,7 +57,10 @@ Work your way from a part-time trainee on the day shift to the legendary "Ultima
 Check out customers, haul stock from the back room, brew coffee, microwave bento boxes and mop up spills. Be too slow and customers storm out; let your rating drop and business dries up.
 
 😤 A rogues' gallery of terrible customers
-Line-cutters, ragers demanding refunds, livestreamers filming everything, seat hogs and litterers. Calm them down, call security, spin your mop — or grab them, aim for the door and throw.
+Line-cutters, ragers demanding refunds, livestreamers filming everything, shelf snackers, litterers and outlet hogs. Calm them down, pull the plug, bribe them with coffee, call security, spin your mop — or grab them, aim for the door and throw.
+
+📅 Daily challenge & 20 achievements
+A new shift every day with twists like frequent blackouts, streamer invasions or double crowds. Clear it once a day for rewards and keep your streak going.
 
 👑 Boss fight & endless night shift
 The King of Karens fights in five phases, each needing a different trick. Beat him to unlock the endless night shift.

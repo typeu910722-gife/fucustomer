@@ -183,3 +183,80 @@ test('boss 奧客之王: five phases, cannot be ejected early, defeat required t
   w.burst = 100; requestUltimate(w, 'a', 'u');
   assert.equal(w.bossDefeated, true);
 });
+
+test('充電霸王: walks to the socket, drains money; two unplugs or a coffee resolve him; outage sends him away', () => {
+  // natural spawn path: goes to the socket and starts charging
+  const w = shiftWorld(20, '4-3');
+  const p = addPlayer(w, 'a', 'A', 1);
+  const c = karen(w, 'charger', 3.2, 13); c.life = 75; c.knockTimer = 5; c.speed = 1.6; c.state = 'enter';
+  run(w, 4);
+  assert.equal(c.state, 'charge');
+  const money = w.money; run(w, 5.1); assert.ok(w.money < money, 'electricity bill ticks up');
+  p.x = c.x; p.z = c.z - 0.8;
+  requestAct(w, 'a', 'u1', 'unplug', { t: 'customer', id: c.id }); run(w, 1.2);
+  assert.equal(c.resolved, false); assert.equal(c.hits, 1);
+  requestAct(w, 'a', 'u2', 'unplug', { t: 'customer', id: c.id }); run(w, 1.2);
+  assert.equal(c.resolved, true); assert.equal(c.state, 'leaving');
+
+  // a coffee resolves him at once
+  const w2 = shiftWorld(20, '4-3'); const p2 = addPlayer(w2, 'a', 'A', 1);
+  const c2 = karen(w2, 'charger', 3.2, 15.2); c2.state = 'charge'; c2.life = 75; c2.knockTimer = 5;
+  p2.x = 3.2; p2.z = 14.4; p2.held = { kind: 'coffee' };
+  requestAct(w2, 'a', 't', 'treat', { t: 'customer', id: c2.id }); run(w2, 0.5);
+  assert.equal(c2.resolved, true); assert.equal(p2.held, null);
+  assert.ok(w2.rating > 3);
+
+  // power outage: he gives up on his own
+  const w3 = shiftWorld(20, '4-3');
+  const c3 = karen(w3, 'charger', 3.2, 15.2); c3.state = 'charge'; c3.life = 75; c3.knockTimer = 5;
+  w3.power = 0.35; run(w3, 0.2);
+  assert.equal(c3.resolved, true);
+
+  // ignored until fully charged: counts as a failure
+  const w4 = shiftWorld(20, '4-3');
+  const c4 = karen(w4, 'charger', 3.2, 15.2); c4.state = 'charge'; c4.life = 2; c4.knockTimer = 5;
+  run(w4, 2.5);
+  assert.equal(c4.resolved, true); assert.equal(w4.dayStats.karensFailed, 1);
+});
+
+test('daily challenge: same plan for the same date, modifiers applied, reward once per day, streak', async () => {
+  const { DAILY_ID, buildDailyConfig, dailyPlan, dailyUnlocked } = await import('../shared/career.ts');
+  const p = profileAt(12);
+  assert.equal(dailyUnlocked(p), false);
+  for (let i = 1; i <= 5; i++) p.stars[`1-${i}`] = 1;
+  for (let i = 1; i <= 5; i++) p.stars[`2-${i}`] = 1;
+  assert.equal(dailyUnlocked(p), true);
+  assert.deepEqual(dailyPlan(p, '2026-10-19'), dailyPlan(p, '2026-10-19'));
+  const plans = new Set(['2026-10-19', '2026-10-20', '2026-10-21', '2026-10-22', '2026-10-23'].map(d => JSON.stringify(dailyPlan(p, d).mods)));
+  assert.ok(plans.size > 1, 'modifiers change from day to day');
+  // no two karen-type modifiers at once; difficulty never above what the player has unlocked
+  for (let d = 1; d <= 28; d++) {
+    const plan = dailyPlan(p, `2026-11-${String(d).padStart(2, '0')}`);
+    assert.ok(!(plan.mods.includes('streamers') && plan.mods.includes('chargers')));
+    assert.ok(plan.difficulty <= 3);
+    const cfg = buildDailyConfig(p, `2026-11-${String(d).padStart(2, '0')}`);
+    assert.equal(cfg.id, DAILY_ID); assert.ok(cfg.goal > 0 && cfg.karens.length > 0);
+    if (plan.mods.includes('chargers')) assert.deepEqual(cfg.karens, ['charger']);
+    if (plan.mods.includes('outages')) assert.equal(cfg.eventEvery, 24);
+  }
+  const res = (won: boolean, date: string): ShiftResult => ({ shiftId: DAILY_ID, date, won, failReason: '', revenue: won ? 400 : 100, goal: 300, rating: 3, chaos: 10, served: 20, angryLeft: 0, karensResolved: 2, karensFailed: 0, ejected: 0, cleaned: 0, maxCombo: 0 });
+  const r1 = applyResult(p, res(true, '2026-10-19'));
+  assert.ok(r1.exp > 0 && r1.wallet > 0); assert.equal(p.daily.streak, 1);
+  const r2 = applyResult(p, res(true, '2026-10-19'));
+  assert.equal(r2.exp, 0); assert.equal(r2.wallet, 0); assert.equal(r2.daily?.already, true);
+  applyResult(p, res(true, '2026-10-20')); applyResult(p, res(true, '2026-10-21'));
+  assert.equal(p.daily.streak, 3);
+  applyResult(p, res(true, '2026-10-23'));
+  assert.equal(p.daily.streak, 1, 'a missed day restarts the streak');
+  // the profile survives a save/load round trip, junk is dropped
+  const back = sanitizeProfile(JSON.parse(JSON.stringify({ ...p, achievements: ['BOSS', 'BOSS', '<script>', 5], daily: { ...p.daily, date: 'nope' } })));
+  assert.deepEqual(back.achievements, ['BOSS']); assert.equal(back.daily.date, ''); assert.equal(back.daily.streak, 1);
+});
+
+test('achievements are stored once and reported as new only the first time', async () => {
+  const { updateAchievements } = await import('../shared/achievements.ts');
+  const p = newProfile(); p.stats.wins = 1;
+  assert.deepEqual(updateAchievements(p).map(a => a.id), ['FIRST_SHIFT']);
+  assert.deepEqual(updateAchievements(p), []);
+  assert.deepEqual(p.achievements, ['FIRST_SHIFT']);
+});

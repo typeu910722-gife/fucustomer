@@ -28,7 +28,17 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'COMBO_5', name: '連送五人', desc: '一個班次內連續送走 5 位奧客', check: (_p, r) => (r?.maxCombo ?? 0) >= 5 },
   { id: 'ENDLESS_1600', name: '夜班傳說', desc: '無限夜班拿到 1600 分', check: p => p.endlessBest >= 1600 },
   { id: 'ENDLESS_PLAYED', name: '還沒下班', desc: '挑戰一次無限夜班', check: (p, r) => p.endlessBest > 0 || r?.shiftId === ENDLESS_ID },
+  { id: 'DAILY_FIRST', name: '今日任務', desc: '完成一次每日挑戰', check: p => p.daily.wins >= 1 },
+  { id: 'DAILY_STREAK_3', name: '全勤獎', desc: '連續 3 天完成每日挑戰', check: p => p.daily.streak >= 3 },
 ];
+
+/** Records newly earned achievements in the profile and returns them (in list order). */
+export function updateAchievements(p: CareerProfile, r?: ShiftResult): Achievement[] {
+  const have = new Set(p.achievements);
+  const fresh = ACHIEVEMENTS.filter(a => !have.has(a.id) && a.check(p, r));
+  for (const a of fresh) p.achievements.push(a.id);
+  return fresh;
+}
 
 export function unlockedAchievements(p: CareerProfile, r?: ShiftResult): string[] {
   return ACHIEVEMENTS.filter(a => a.check(p, r)).map(a => a.id);
