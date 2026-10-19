@@ -174,4 +174,4 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 await restoreRooms();
-http.listen(PORT, () => log(`ByeKarens server on :${PORT} (ws path /ws, static ${STATIC_DIR})`));
+http.listen(PORT, () => log(`FUCustomer server on :${PORT} (ws path /ws, static ${STATIC_DIR})`));

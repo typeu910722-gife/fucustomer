@@ -6,10 +6,10 @@ export interface Settings {
   name: string; sensitivity: number; invertY: boolean; quality: Quality; volume: number; serverUrl: string; showFps: boolean; fov: number;
 }
 
-const SETTINGS_KEY = 'byekarens.settings.v1';
-const SOLO_KEY = 'byekarens.store.solo.v1';
-const COOP_KEY = 'byekarens.store.coop.v1';
-const SESSION_KEY = 'byekarens.session.v1';
+const SETTINGS_KEY = 'fucustomer.settings.v1';
+const SOLO_KEY = 'fucustomer.store.solo.v1';
+const COOP_KEY = 'fucustomer.store.coop.v1';
+const SESSION_KEY = 'fucustomer.session.v1';
 
 export const isTouch = typeof window !== 'undefined' && (('ontouchstart' in window) || navigator.maxTouchPoints > 0) && matchMedia('(pointer: coarse)').matches;
 

@@ -1,8 +1,8 @@
 {
-  "name": "byekarens",
+  "name": "fucustomer",
   "version": "0.1.0",
   "private": true,
-  "description": "奧客退散 ByeKarens — first-person co-op store management (1-5 players)",
+  "description": "奧客退散 FUCustomer — first-person co-op store management (1-5 players)",
   "type": "module",
   "scripts": {
     "dev:server": "tsx watch server/index.ts",

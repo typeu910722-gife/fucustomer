@@ -291,7 +291,7 @@ export class StoreView {
     this.doorR = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.55, 0.06), doorM); this.doorR.position.set(DOOR_X1 - 0.75, 1.3, STORE_D + 0.15);
     S.add(this.doorL, this.doorR);
     // sign
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 0.9), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '奧客退散 ByeKarens', size: 70, color: '#fff' }], 1024, 200, '#ff6b6b')) }));
+    const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 0.9), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '奧客退散 FUCustomer', size: 70, color: '#fff' }], 1024, 200, '#ff6b6b')) }));
     sign.position.set(12, 2.7, STORE_D - 0.02); sign.rotation.y = Math.PI; S.add(sign);
     const sign2 = sign.clone(); sign2.position.set(12, 2.9, STORE_D + 0.32); sign2.rotation.y = 0; S.add(sign2);
     const stockSign = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.4), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '倉庫 STOCK', size: 60 }], 512, 128, '#495057')) }));

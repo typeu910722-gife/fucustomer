@@ -26,7 +26,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: Sto
   show(`
     <div class="card">
       <h1 class="title">奧客<span>退散</span></h1>
-      <div class="subtitle">ByeKarens・第一人稱店面經營・1～${MAX_PLAYERS} 人合作</div>
+      <div class="subtitle">FUCustomer・第一人稱店面經營・1～${MAX_PLAYERS} 人合作</div>
       <label class="field">你的名字<input type="text" id="m-name" maxlength="16" placeholder="店員名字" value="${esc(s.name)}"></label>
       ${info.canRejoin ? `<button class="btn good" id="m-rejoin">🔌 重新連線到房間 ${esc(info.canRejoin)}</button>` : ''}
       <h3>單人</h3>

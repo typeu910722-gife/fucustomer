@@ -18,8 +18,8 @@ npm run build && npm start   # PORT=8787
 ## 部署（任一支援 WebSocket 的主機）
 
 ```bash
-docker build -t byekarens .
-docker run -p 8787:8787 -v byekarens-data:/data byekarens
+docker build -t fucustomer .
+docker run -p 8787:8787 -v fucustomer-data:/data fucustomer
 ```
 
 需求：HTTPS/WSS（手機原生 App 與商店審核要求加密連線）、持久化磁碟（檢查點）、單一執行個體（房間在記憶體中，尚未做多節點分流）。
