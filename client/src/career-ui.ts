@@ -10,7 +10,7 @@ import { STORE_FUND, STORE_RESERVE, WAGES, WageMode, canOpenStore, closeStore, h
 import { defaultSave } from '../../shared/sim.ts';
 import { MAPS, getMap } from '../../shared/maps/index.ts';
 import { KAREN_INFO } from '../../shared/constants.ts';
-import { esc, show } from './ui.ts';
+import { confirmTwice, esc, show } from './ui.ts';
 
 const KEY = 'fucustomer.career.v1';
 export function loadProfile(): CareerProfile {
@@ -63,7 +63,8 @@ export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'ch
   on('st-enter', () => h.enterStore());
   on('st-withdraw', () => { withdraw(p); redraw(); });
   on('st-hire', () => { hireStaff(p); redraw(); });
-  on('st-close', () => { if (confirm('確定要收掉這家店嗎？剩下的現金會回到存款。')) { closeStore(p); redraw(); } });
+  const closeBtn = document.getElementById('st-close') as HTMLButtonElement | null;
+  if (closeBtn) closeBtn.onclick = () => confirmTwice(closeBtn, '再按一次收店（現金回到存款）', () => { closeStore(p); redraw(); });
   document.querySelectorAll<HTMLInputElement>('[name="st-wage"]').forEach(r => { r.onchange = () => { if (p.store) { p.store.wage = r.value as WageMode; redraw(); } }; });
   document.querySelectorAll<HTMLButtonElement>('[data-gear]').forEach(b => { b.onclick = () => { if (buyGear(p, b.dataset.gear as GearId)) saveProfile(p); careerScreen(p, h, 'gear'); }; });
 }

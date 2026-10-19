@@ -239,5 +239,15 @@ export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map
     }).join('')}</div></div>`);
   document.getElementById('mp-back')!.onclick = () => h.back();
   document.querySelectorAll<HTMLButtonElement>('[data-map-cont]').forEach(b => { b.onclick = () => h.play(b.dataset.mapCont!, false); });
-  document.querySelectorAll<HTMLButtonElement>('[data-map]').forEach(b => { b.onclick = () => { if (!saves[b.dataset.map!] || confirm('重新開店會覆蓋這間店的進度，確定嗎？')) h.play(b.dataset.map!, true); }; });
+  document.querySelectorAll<HTMLButtonElement>('[data-map]').forEach(b => {
+    b.onclick = () => (saves[b.dataset.map!] ? confirmTwice(b, '再按一次：覆蓋這間店的進度', () => h.play(b.dataset.map!, true)) : h.play(b.dataset.map!, true));
+  });
+}
+
+/** In-page confirmation (works where dialogs are blocked): the first press arms the button, the second one acts. */
+export function confirmTwice(btn: HTMLButtonElement, armedLabel: string, act: () => void) {
+  if (btn.dataset.armed === '1') { act(); return; }
+  btn.dataset.armed = '1'; btn.dataset.label = btn.textContent ?? '';
+  btn.textContent = armedLabel; btn.classList.add('armed');
+  window.setTimeout(() => { if (btn.isConnected && btn.dataset.armed === '1') { btn.dataset.armed = ''; btn.textContent = btn.dataset.label ?? ''; btn.classList.remove('armed'); } }, 4000);
 }
