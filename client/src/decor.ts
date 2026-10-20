@@ -8,7 +8,10 @@ import type { AABB } from '../../shared/map.ts';
 import type { MapDef } from '../../shared/maps/types.ts';
 import type { Quality } from './storage.ts';
 import { UI_FONT } from './labels.ts';
-import { B, CAP, CONE, CYL, DOME, RB, SPH, TOR, basic, geo, mat, put } from './models.ts';
+import { B, CAP, CONE, CYL, DOME, RB as RB0, SPH, TOR, basic, geo, mat, put } from './models.ts';
+
+/** Rounded boxes cost ~108 triangles each; on 'low' quality the props use plain boxes (12) instead. */
+const rbFor = (q: Quality) => q === 'low' ? (w: number, h: number, d: number) => B(w, h, d) : RB0;
 
 export interface DecorCtx {
   scene: THREE.Scene;
@@ -48,6 +51,7 @@ function flatten(S: THREE.Scene, g: THREE.Object3D) {
 
 export function buildStoreDecor(ctx: DecorCtx, d: AABB) {
   const { q, theme: TH } = ctx;
+  const RB = rbFor(q);
   const cx = (d.x0 + d.x1) / 2, cz = (d.z0 + d.z1) / 2;
   let w = d.x1 - d.x0, dp = d.z1 - d.z0;
   const G = new THREE.Group();
@@ -195,6 +199,7 @@ export function buildStoreDecor(ctx: DecorCtx, d: AABB) {
       break;
     }
     case 'cages': { // stacked pet cages (2 × 2): wire fronts, a cat, a bunny, a hamster with its wheel
+      if (cz > 12) turn(Math.PI); // by the front window: open side faces into the store
       p(RB(w, 0.1, dp, 0.02), 0x495057, 0, 0.05, 0);
       const cw = w / 2 - 0.02, ch = (d.h + 0.6 - 0.12) / 2;
       for (let r = 0; r < 2; r++) for (let c = 0; c < 2; c++) {
@@ -478,6 +483,7 @@ export function buildStoreDecor(ctx: DecorCtx, d: AABB) {
       break;
     }
     case 'medcase': { // glass medicine cabinet: wood frame, three shelves of bottles and boxes, a green cross on top
+      if (cz > 12) turn(Math.PI); // by the front window: open side faces into the store
       p(RB(w, 0.12, dp, 0.03), 0xf8f9fa, 0, 0.06, 0);
       const H = 1.7;
       for (const sx of [-1, 1]) for (const sz of [-1, 1]) p(B(0.05, H, 0.05), 0xf8f9fa, sx * (w / 2 - 0.03), H / 2, sz * (dp / 2 - 0.03));
@@ -532,6 +538,7 @@ export function buildStoreDecor(ctx: DecorCtx, d: AABB) {
 /** Overhead / wall extras for a store that need no collision (hung from the ceiling, above everyone's heads). */
 export function buildStoreExtras(ctx: DecorCtx, mapId: string) {
   const { q, theme: TH } = ctx, S = ctx.scene;
+  const RB = rbFor(q);
   if (mapId === 'cinema') {
     // trailer screen hanging over the waiting area
     const x = 5.5, z = 6.7, y = 2.68;
@@ -570,3 +577,111 @@ function screenCanvas() {
   g.fillStyle = '#fff'; g.font = '900 78px sans-serif'; g.fillText('★ KAREN BUSTERS 2 ★', 512, 145, 980);
   return c;
 }
+
+/**
+ * Store-specific machine on top of a food-station cabinet (the cabinet itself is drawn by the caller; its top is at
+ * y ≈ 0.91 and the worker stands on the +z side). Returns false when the store uses the default coffee machine /
+ * microwave look for that station.
+ */
+export function buildStationTop(ctx: DecorCtx, key: string, b: AABB): boolean {
+  const { q, theme: TH } = ctx;
+  const RB = rbFor(q);
+  const G = new THREE.Group(); G.position.set((b.x0 + b.x1) / 2, 0.91, (b.z0 + b.z1) / 2);
+  const w = b.x1 - b.x0, dp = b.z1 - b.z0;
+  const p: P = (g, c, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = sx, sz = sx) =>
+    put(G, g, typeof c === 'number' ? mat(c, q) : c, x, y, z, rx, ry, rz, sx, sy, sz);
+  const glass = (g: THREE.BufferGeometry, x: number, y: number, z: number) => {
+    G.updateMatrixWorld(true);
+    ctx.glass(g, new THREE.Matrix4().multiplyMatrices(G.matrixWorld, new THREE.Matrix4().makeTranslation(x, y, z)));
+  };
+  switch (key) {
+    case 'cinema:coffee': { // popcorn cart: red base, glass cabinet full of popcorn, striped roof
+      p(RB(0.7, 0.2, 0.5, 0.04), 0xc92a2a, 0, 0.1, 0);
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) p(B(0.04, 0.55, 0.04), 0xfcc419, sx * 0.33, 0.47, sz * 0.23);
+      glass(B(0.64, 0.53, 0.44), 0, 0.47, 0);
+      for (let i = 0; i < 14; i++) p(SPH(0.06, 5, 3), 0xfff3bf, -0.26 + (i % 5) * 0.13, 0.25 + Math.floor(i / 5) * 0.06, -0.12 + ((i * 7) % 3) * 0.1);
+      p(CYL(0.1, 0.12, 0.08, 8), 0x868e96, 0, 0.62, 0);
+      p(RB(0.76, 0.08, 0.56, 0.03), 0xc92a2a, 0, 0.78, 0);
+      p(CONE(0.42, 0.18, 4), 0xfcc419, 0, 0.91, 0, 0, Math.PI / 4, 0, 1, 1, 0.75);
+      p(SPH(0.05, 6, 4), 0xc92a2a, 0, 1.02, 0);
+      return add(ctx, G);
+    }
+    case 'cinema:meal': { // hot-dog roller grill under a sneeze guard
+      p(RB(0.9, 0.18, 0.5, 0.04), 0xced4da, 0, 0.09, 0);
+      p(B(0.86, 0.02, 0.46), 0x495057, 0, 0.19, 0);
+      for (let i = 0; i < 6; i++) {
+        p(CYL(0.025, 0.025, 0.82, 6), 0xadb5bd, 0, 0.22, -0.18 + i * 0.072, 0, 0, Math.PI / 2);
+        if (i % 2 === 0) p(CAP(0.028, 0.22, 5), 0xc0582f, -0.2 + (i % 4) * 0.1, 0.25, -0.18 + i * 0.072, 0, 0, Math.PI / 2);
+      }
+      glass(B(0.86, 0.02, 0.4), 0, 0.5, 0.0);
+      for (const s of [-1, 1]) p(B(0.03, 0.3, 0.03), 0xced4da, s * 0.43, 0.35, 0.2);
+      for (let i = 0; i < 4; i++) p(CAP(0.04, 0.12, 5), 0xf4c27a, 0.55 + (i % 2) * 0.1, 0.05 + Math.floor(i / 2) * 0.07, -0.1, 0, 0, Math.PI / 2); // buns
+      return add(ctx, G);
+    }
+    case 'salon:coffee': { // shampoo basin with a faucet, rolled towels
+      p(CYL(0.28, 0.2, 0.2, 12), 0xf8f9fa, 0, 0.1, -0.05);
+      p(CYL(0.22, 0.22, 0.02, 12), 0xd0ebff, 0, 0.19, -0.05);
+      p(CYL(0.02, 0.02, 0.25, 6), 0xced4da, 0, 0.3, -0.33);
+      p(CYL(0.018, 0.018, 0.18, 6), 0xced4da, 0, 0.42, -0.25, Math.PI / 2);
+      p(CAP(0.025, 0.08, 5), 0x212529, 0.15, 0.25, -0.3, 0.6);
+      for (let i = 0; i < 3; i++) p(CAP(0.05, 0.14, 6), [0xffffff, TH.shelf, 0xffffff][i], w / 2 - 0.16, 0.05 + i * 0.1, -0.15 + (i % 2) * 0.03, 0, 0, Math.PI / 2);
+      for (let i = 0; i < 2; i++) p(CYL(0.035, 0.035, 0.16, 6), [0xf783ac, 0x74c0fc][i], -w / 2 + 0.12 + i * 0.09, 0.08, -0.2);
+      return add(ctx, G);
+    }
+    case 'salon:meal': { // styling station: a big round mirror, scissors, comb, sprays and a blow dryer
+      p(B(0.06, 0.6, 0.06), 0xadb5bd, 0, 0.3, -dp / 2 + 0.1);
+      p(CYL(0.4, 0.4, 0.05, 16), TH.accent, 0, 0.75, -dp / 2 + 0.1, Math.PI / 2);
+      p(CYL(0.35, 0.35, 0.01, 16), 0xdbe4ff, 0, 0.75, -dp / 2 + 0.13, Math.PI / 2);
+      for (const s of [-1, 1]) p(TOR(0.03, 0.006, 3, 8), 0x212529, 0.4 + s * 0.035, 0.01, 0.1, Math.PI / 2);
+      p(B(0.012, 0.006, 0.14), 0xced4da, 0.4, 0.01, 0.18);
+      p(B(0.18, 0.01, 0.03), 0x212529, -0.35, 0.01, 0.1, 0, 0.4);
+      for (let i = 0; i < 3; i++) p(CYL(0.03, 0.035, 0.16, 6), [0xf783ac, 0xb197fc, 0xffd43b][i], -0.65 + i * 0.09, 0.08, -0.15);
+      p(CAP(0.05, 0.14, 6), 0x212529, 0.65, 0.06, 0.0, 0, 0, Math.PI / 2);
+      p(CYL(0.022, 0.022, 0.12, 5), 0x212529, 0.6, 0.06, 0.1, Math.PI / 2);
+      return add(ctx, G);
+    }
+    case 'hotpot:coffee': { // soft-serve ice-cream machine with two levers and a cone stack
+      p(RB(0.55, 0.75, 0.45, 0.06, 2), 0xf8f9fa, 0, 0.375, -0.05);
+      p(RB(0.57, 0.12, 0.47, 0.04), TH.accent, 0, 0.7, -0.05);
+      for (const s of [-1, 1]) {
+        p(CYL(0.035, 0.035, 0.1, 6), 0xadb5bd, s * 0.12, 0.38, 0.2);
+        p(B(0.03, 0.14, 0.03), 0x212529, s * 0.12, 0.5, 0.22, 0.3);
+      }
+      p(B(0.4, 0.02, 0.12), 0xadb5bd, 0, 0.08, 0.22);
+      p(CONE(0.04, 0.12, 6), 0xe9b872, 0.4, 0.07, 0.1, Math.PI);
+      p(SPH(0.045, 6, 4), 0xffdeeb, 0.4, 0.15, 0.1);
+      return add(ctx, G);
+    }
+    case 'hotpot:meal': { // two big stock pots (spicy and clear), a ladle
+      for (const [x, c] of [[-0.45, 0xe03131], [0.4, 0xfff4e6]] as [number, number][]) {
+        p(CYL(0.26, 0.26, 0.04, 10), 0x343a40, x, 0.02, 0);
+        p(CYL(0.24, 0.22, 0.34, 12), 0xced4da, x, 0.21, 0);
+        p(CYL(0.22, 0.22, 0.02, 12), c, x, 0.36, 0);
+        for (const s of [-1, 1]) p(B(0.06, 0.03, 0.04), 0x495057, x + s * 0.26, 0.32, 0);
+      }
+      p(CYL(0.012, 0.012, 0.45, 5), 0xadb5bd, -0.35, 0.5, 0.05, 0, 0, -0.5);
+      p(SPH(0.05, 6, 4), 0xadb5bd, -0.45, 0.33, 0.05);
+      return add(ctx, G);
+    }
+    case 'steak:meal': { // teppan griddle: thick black plate, steaks sizzling, a spatula, salt & pepper
+      p(RB(w - 0.15, 0.08, dp - 0.15, 0.02), 0x495057, 0, 0.04, 0);
+      p(B(w - 0.25, 0.02, dp - 0.25), 0x212529, 0, 0.09, 0);
+      for (let i = 0; i < 3; i++) p(RB(0.22, 0.04, 0.15, 0.03), 0x7f3b1a, -0.45 + i * 0.4, 0.12, -0.05 + (i % 2) * 0.1, 0, i * 0.4);
+      p(B(0.12, 0.01, 0.1), 0xced4da, 0.62, 0.11, 0.12, 0, 0.3);
+      p(CYL(0.012, 0.012, 0.18, 5), 0x212529, 0.68, 0.11, 0.24, Math.PI / 2, 0, 0.3);
+      for (let i = 0; i < 2; i++) p(CYL(0.03, 0.03, 0.1, 6), [0xffffff, 0x212529][i], -w / 2 + 0.12 + i * 0.08, 0.05, -dp / 2 + 0.1);
+      return add(ctx, G);
+    }
+    case 'gym:coffee': { // shaker bar: tub of protein powder, a row of shaker cups, a scoop
+      p(CYL(0.13, 0.13, 0.3, 10), 0x212529, -0.25, 0.15, -0.1);
+      p(CYL(0.135, 0.135, 0.05, 10), TH.accent, -0.25, 0.32, -0.1);
+      for (let i = 0; i < 3; i++) {
+        p(CYL(0.05, 0.045, 0.2, 8), [0xfd7e14, 0x1c7ed6, 0x2f9e44][i], 0.05 + i * 0.13, 0.1, 0.05);
+        p(CYL(0.052, 0.052, 0.05, 8), 0x212529, 0.05 + i * 0.13, 0.22, 0.05);
+      }
+      return add(ctx, G);
+    }
+  }
+  return false;
+}
+function add(ctx: DecorCtx, G: THREE.Group) { ctx.scene.add(G); flatten(ctx.scene, G); ctx.scene.remove(G); return true; }

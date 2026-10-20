@@ -14,7 +14,7 @@ import {
 import type { CustomerSnap, Held, PlayerSnap, Snapshot } from '../../shared/protocol.ts';
 import type { Quality } from './storage.ts';
 import { sigDef } from '../../shared/sigkarens.ts';
-import { DecorCtx, STORE_DECOR, buildStoreDecor, buildStoreExtras } from './decor.ts';
+import { DecorCtx, STORE_DECOR, buildStationTop, buildStoreDecor, buildStoreExtras } from './decor.ts';
 import { INK, PillOpts, UI_FONT, isFontReady, labelTexture, pillCanvas, popCanvas, textTexture, whenFontReady } from './labels.ts';
 
 // ---------- helpers ----------
@@ -570,6 +570,7 @@ export class StoreView {
       put(S, RB(B0.x1 - B0.x0, 0.86, B0.z1 - B0.z0, 0.04), cab, cx, 0.43, cz);
       put(S, RB(B0.x1 - B0.x0 + 0.06, 0.05, B0.z1 - B0.z0 + 0.06, 0.02), slab, cx, 0.885, cz);
       put(S, RB(0.4, 0.035, 0.03, 0.012), mat(0xadb5bd, q), cx, 0.7, fz + 0.01); // drawer handle
+      if (!buildStationTop(this.decorCtx(), CURRENT_MAP.id + ':coffee', B0)) {
       // the machine: chunky body, accent cheeks, dark brew bay, drip tray, cup, bean hopper, buttons
       put(S, RB(0.66, 0.62, 0.44, 0.08, 2), dk, cx, 1.22, cz);
       for (const sx of [-0.34, 0.34]) put(S, RB(0.03, 0.5, 0.36, 0.015), mat(TH.accent, q), cx + sx, 1.22, cz);
@@ -582,22 +583,27 @@ export class StoreView {
       const scr = new THREE.Mesh(geo('cmScr', () => new THREE.PlaneGeometry(0.16, 0.08)), this.glowMat(0x96f2d7)); scr.position.set(cx + 0.18, 1.38, cz + 0.222); S.add(scr);
       [0xff8787, 0x69db7c, 0xffd43b].forEach((c, i) => put(S, CYL(0.022, 0.022, 0.02, 8), basic(c), cx + 0.13 + i * 0.05, 1.24, cz + 0.225, Math.PI / 2));
       for (let i = 0; i < 3; i++) put(S, CYL(0.04, 0.03, 0.09, 8), mat([0xffffff, 0xffd8a8, 0xffffff][i], q), cx - 0.3 + i * 0.09, 0.955, cz - 0.28); // cup stack
+      }
     }
     for (let i = 0; i < 3; i++) { const st = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4 })); st.position.copy(cm.position).add(new THREE.Vector3(0, 0.35, 0)); SA(st, hasCoffee); this.coffeeSteam.push(st); }
     if (hasCoffee) this.stationLabel('coffee' + FOOD_INFO.coffee.station, `${FOOD_INFO.coffee.icon} ${FOOD_INFO.coffee.station}`, cm.position.x, 2.15, cm.position.z);
     const mw = new THREE.Group(); mw.position.set((MICROWAVE.x0 + MICROWAVE.x1) / 2, 1.12, (MICROWAVE.z0 + MICROWAVE.z1) / 2);
+    let customMeal = false;
     if (hasMeal) {
       const B0 = MICROWAVE, cx = mw.position.x, cz = mw.position.z, fz = B0.z1 - 0.16;
       put(S, RB(B0.x1 - B0.x0, 0.86, B0.z1 - B0.z0, 0.04), cab, cx, 0.43, cz);
       put(S, RB(B0.x1 - B0.x0 + 0.06, 0.05, B0.z1 - B0.z0 + 0.06, 0.02), slab, cx, 0.885, cz);
+      customMeal = buildStationTop(this.decorCtx(), CURRENT_MAP.id + ':meal', B0);
+      if (!customMeal) {
       put(S, RB(0.8, 0.46, 0.46, 0.07, 2), mat(0xfff9f0, q, { rough: 0.4 }), cx, 1.14, fz - 0.23);
       put(S, RB(0.5, 0.34, 0.03, 0.03), mat(TH.accent, q), cx - 0.08, 1.12, fz - 0.005);
       put(S, RB(0.04, 0.26, 0.04, 0.015), steel, cx + 0.2, 1.12, fz + 0.02);
       for (let i = 0; i < 2; i++) put(S, CYL(0.035, 0.035, 0.03, 10), dk, cx + 0.31, 1.2 - i * 0.12, fz + 0.01, Math.PI / 2);
       for (const sx of [-0.3, 0.3]) put(S, CYL(0.03, 0.03, 0.03, 6), dk, cx + sx, 0.92, fz - 0.05); // feet
+      }
     }
-    const mwDoor = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.27), new THREE.MeshBasicMaterial({ color: 0x212529 })); mwDoor.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.14); mwDoor.rotation.y = 0; SA(mwDoor, hasMeal);
-    this.microwaveGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.28), new THREE.MeshBasicMaterial({ color: 0xffa94d, transparent: true, opacity: 0 })); this.microwaveGlow.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.135); SA(this.microwaveGlow, hasMeal);
+    const mwDoor = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.27), new THREE.MeshBasicMaterial({ color: 0x212529 })); mwDoor.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.14); mwDoor.rotation.y = 0; SA(mwDoor, hasMeal && !customMeal);
+    this.microwaveGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.28), new THREE.MeshBasicMaterial({ color: 0xffa94d, transparent: true, opacity: 0 })); this.microwaveGlow.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.135); SA(this.microwaveGlow, hasMeal && !customMeal);
     if (hasMeal) this.stationLabel('mw' + FOOD_INFO.meal.station, `${FOOD_INFO.meal.icon} ${FOOD_INFO.meal.station}`, mw.position.x, 2.15, mw.position.z);
     const pickupMark = new THREE.Mesh(new THREE.CircleGeometry(0.5, 20), new THREE.MeshBasicMaterial({ color: 0xffd43b, transparent: true, opacity: 0.35 })); pickupMark.rotation.x = -Math.PI / 2; pickupMark.position.set(COFFEE_PICKUP.x, 0.01, COFFEE_PICKUP.z); SA(pickupMark, hasCoffee || hasMeal);
     if (hasCoffee || hasMeal) this.stationLabel('pick', '🛎 取餐區', COFFEE_PICKUP.x, 2.3, COFFEE_PICKUP.z, undefined, '#ffc23d');
@@ -845,16 +851,22 @@ export class StoreView {
     }
   }
 
+  private glassGeos: THREE.BufferGeometry[] = [];
+  private ctx: DecorCtx | null = null;
+  /** Context for the store-specific props in decor.ts (glass pieces are merged into one mesh at the end of buildDecor). */
+  private decorCtx(): DecorCtx {
+    return this.ctx ??= {
+      scene: this.scene, q: this.q, theme: CURRENT_MAP.theme, campSpots: CAMP_SPOTS,
+      glow: c => this.glowMat(c),
+      glass: (g, m) => { const c = g.clone().applyMatrix4(m); for (const k of Object.keys(c.attributes)) if (!['position', 'normal', 'uv'].includes(k)) c.deleteAttribute(k); this.glassGeos.push(c.index ? c.toNonIndexed() : c); },
+      sign: (w, h, draw) => this.atlas.mesh(w, h, draw),
+    };
+  }
+
   /** Map decor (plants, ATM, tables, bars, fitting rooms, mannequins, displays) as chunky toy props. */
   private buildDecor() {
     const q = this.q, S = this.scene, TH = CURRENT_MAP.theme;
-    const glassGeos: THREE.BufferGeometry[] = [];
-    const ctx: DecorCtx = {
-      scene: S, q, theme: TH, campSpots: CAMP_SPOTS,
-      glow: c => this.glowMat(c),
-      glass: (g, m) => { const c = g.clone().applyMatrix4(m); for (const k of Object.keys(c.attributes)) if (!['position', 'normal', 'uv'].includes(k)) c.deleteAttribute(k); glassGeos.push(c.index ? c.toNonIndexed() : c); },
-      sign: (w, h, draw) => this.atlas.mesh(w, h, draw),
-    };
+    const glassGeos = this.glassGeos, ctx = this.decorCtx();
     for (const d of DECOR) {
       if (STORE_DECOR.has(d.kind)) { buildStoreDecor(ctx, d); continue; }
       const cx = (d.x0 + d.x1) / 2, cz = (d.z0 + d.z1) / 2, w = d.x1 - d.x0, dp = d.z1 - d.z0;

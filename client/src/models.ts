@@ -186,7 +186,7 @@ export class Human {
       const lg = new THREE.Group(); lg.position.set(x * Math.min(w, 1.4), HIP_Y, 0);
       put(lg, CAP(0.085, 0.16, seg), pantsM, 0, -0.15, 0, 0, 0, 0, lw, 1, lw).castShadow = true;
       put(lg, RB(0.17, 0.1, 0.25, 0.045), shoeM, 0, -0.35, 0.035, 0, 0, 0, lw, 1, 1);
-      put(lg, RB(0.18, 0.035, 0.26, 0.015), soleM, 0, -0.405, 0.035, 0, 0, 0, lw, 1, 1);
+      put(lg, lo ? B(0.18, 0.035, 0.26) : RB(0.18, 0.035, 0.26, 0.015), soleM, 0, -0.405, 0.035, 0, 0, 0, lw, 1, 1);
       g.add(lg); return lg;
     };
     this.legL = leg(-0.1); this.legR = leg(0.1);
@@ -229,14 +229,15 @@ export class Human {
     this.head = put(this.torso, SPH(HEAD_R, lo ? 12 : 18, lo ? 9 : 13), skinM, 0, HEAD_Y, 0);
     this.head.castShadow = true;
     const H = this.head;
-    for (const s of [-1, 1]) put(H, SPH(0.06, 8, 6), skinM, s * (HEAD_R - 0.01), -0.03, 0, 0, 0, 0, 0.6, 1, 1); // ears
+    const es = lo ? 6 : 8, eh = lo ? 4 : 6; // small spheres: fewer segments on 'low'
+    for (const s of [-1, 1]) put(H, SPH(0.06, es, eh), skinM, s * (HEAD_R - 0.01), -0.03, 0, 0, 0, 0, 0.6, 1, 1); // ears
     const dark = basic(0x2b2230), white = basic(0xffffff);
     const eyeX = 0.115, eyeY = -0.02;
     for (const s of [-1, 1]) {
       const x = s * eyeX;
-      put(H, SPH(0.046, 8, 6), dark, x, eyeY, onHead(x, eyeY) - 0.012, 0, 0, 0, 0.8, 1.1, 0.5);
+      put(H, SPH(0.046, es, eh), dark, x, eyeY, onHead(x, eyeY) - 0.012, 0, 0, 0, 0.8, 1.1, 0.5);
       put(H, SPH(0.014, 6, 4), white, x + 0.014, eyeY + 0.02, onHead(x, eyeY) + 0.008);
-      put(H, SPH(0.05, 8, 5), basic(0xff9eaa), s * 0.19, -0.085, onHead(s * 0.19, -0.085) - 0.018, 0, s * 0.5, 0, 1.1, 0.55, 0.35); // blush
+      put(H, SPH(0.05, es, eh), basic(0xff9eaa), s * 0.19, -0.085, onHead(s * 0.19, -0.085) - 0.018, 0, s * 0.5, 0, 1.1, 0.55, 0.35); // blush
     }
     // hair
     const hs = opts.hairStyle;
@@ -518,8 +519,8 @@ function staffHat(q: Quality, H: THREE.Object3D) {
       break;
     }
     case 'hotpot': { // red bandana tied at the back, white polka dots
-      put(H, DOME(R * 1.08, Math.PI * 0.42, 12, 4), wain, 0, 0.02, -0.02, -0.3);
-      for (const [x, y] of [[-0.12, 0.2], [0.1, 0.22], [0, 0.29], [0.2, 0.12], [-0.21, 0.1]]) put(H, SPH(0.022, 5, 3), white, x, y, onHead(x, y, R * 1.08) - 0.05);
+      put(H, DOME(R * 1.13, Math.PI * 0.46, 12, 4), wain, 0, 0.02, -0.02, -0.18);
+      for (const [x, y] of [[-0.12, 0.2], [0.1, 0.22], [0, 0.29], [0.2, 0.12], [-0.21, 0.1]]) put(H, SPH(0.022, 5, 3), white, x, y, onHead(x, y, R * 1.13) - 0.03);
       for (const s of [-1, 1]) put(H, CONE(0.05, 0.14, 4), wain, s * 0.06, 0.02, -R - 0.03, -0.6, 0, s * 0.6);
       break;
     }
@@ -531,8 +532,9 @@ function staffHat(q: Quality, H: THREE.Object3D) {
       break;
     }
     case 'gym': { // terry sweatband round the forehead
-      put(H, TOR(R * 1.02, 0.045, 4, 16), acc, 0, 0.12, 0, Math.PI / 2 - 0.2);
-      put(H, TOR(R * 1.035, 0.012, 3, 16), white, 0, 0.12, 0, Math.PI / 2 - 0.2);
+      put(H, CYL(R * 1.05, R * 1.06, 0.075, 16, true), acc, 0, 0.12, -0.01, -0.25);
+      put(H, CYL(R * 1.065, R * 1.065, 0.018, 16, true), white, 0, 0.12, -0.01, -0.25);
+      put(H, CYL(0.035, 0.035, 0.01, 8), white, 0.1, 0.13, R * 1.0, Math.PI / 2 - 0.25, 0, 0, 1, 1, 1);
       break;
     }
     case 'steak': { // tall pleated chef's toque with a coloured band
