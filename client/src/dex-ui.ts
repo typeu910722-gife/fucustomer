@@ -18,7 +18,7 @@ export function dexHtml(p: CareerProfile) {
     const d = DEX[k as keyof typeof DEX], n = p.dex[k] ?? 0, got = n > 0;
     const name = KAREN_INFO[k as keyof typeof KAREN_INFO].name;
     return `<div class="dexcard ${got ? 'got' : 'locked'} ${isSig(k) ? 'sig' : ''}">
-      <div class="dexico">${d.icon}</div>
+      <div class="dexico"><span>${d.icon}</span></div>
       <div class="dexbody"><b>${got ? esc(name) : '？？？'}</b><span class="dexwhere">${esc(d.where)}${got ? `・處理 ${n} 次` : ''}</span>
       <p>${got ? `🎤 ${esc(d.note)}` : `🔒 還沒處理過。小林：「去${esc(d.where === '各種店' ? '店裡' : d.where)}上班，遇到就知道了。」`}</p></div></div>`;
   };
