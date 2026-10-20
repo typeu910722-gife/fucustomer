@@ -1,0 +1,201 @@
+diff --git a/.gitignore b/.gitignore
+index c306377..5655925 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -20,3 +20,7 @@ steam_appid.txt
+ # SteamPipe generated scripts / logs (steam/make-vdf.mjs)
+ steam/build/
+ steam/output/
++
++# Release signing secrets (see android/keystore.properties.example)
++android/keystore.properties
++*.jks
+diff --git a/android/app/build.gradle b/android/app/build.gradle
+index b4bda52..146c983 100644
+--- a/android/app/build.gradle
++++ b/android/app/build.gradle
+@@ -1,5 +1,13 @@
+ apply plugin: 'com.android.application'
+ 
++// Release signing is read from android/keystore.properties (gitignored, see keystore.properties.example).
++// Without that file `bundleRelease` still works and produces an UNSIGNED .aab (fine for checking the build,
++// but Play Console only accepts an AAB signed with your upload key).
++def keystorePropsFile = rootProject.file('keystore.properties')
++def keystoreProps = new Properties()
++if (keystorePropsFile.exists()) keystorePropsFile.withInputStream { keystoreProps.load(it) }
++def hasReleaseKey = keystoreProps['storeFile'] && keystoreProps['storePassword'] && keystoreProps['keyAlias'] && keystoreProps['keyPassword']
++
+ android {
+     namespace "tw.yzproject.fucustomer"
+     compileSdk rootProject.ext.compileSdkVersion
+@@ -7,8 +15,8 @@ android {
+         applicationId "tw.yzproject.fucustomer"
+         minSdkVersion rootProject.ext.minSdkVersion
+         targetSdkVersion rootProject.ext.targetSdkVersion
+-        versionCode 1
+-        versionName "0.6.0"
++        versionCode rootProject.ext.appVersionCode
++        versionName rootProject.ext.appVersionName
+         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
+         aaptOptions {
+              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+@@ -16,9 +24,23 @@ android {
+             ignoreAssetsPattern '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+         }
+     }
++    signingConfigs {
++        if (hasReleaseKey) {
++            release {
++                storeFile rootProject.file(keystoreProps['storeFile'])
++                storePassword keystoreProps['storePassword']
++                keyAlias keystoreProps['keyAlias']
++                keyPassword keystoreProps['keyPassword']
++            }
++        }
++    }
+     buildTypes {
+         release {
++            if (hasReleaseKey) signingConfig signingConfigs.release
++            // Kept off on purpose: Capacitor plugins are found by reflection, and the app's code is tiny
++            // (the game is web assets), so R8 would save little and risk stripping plugin classes.
+             minifyEnabled false
++            shrinkResources false
+             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+         }
+     }
+diff --git a/android/app/src/main/AndroidManifest.xml b/android/app/src/main/AndroidManifest.xml
+index c6d1e72..299b8fc 100644
+--- a/android/app/src/main/AndroidManifest.xml
++++ b/android/app/src/main/AndroidManifest.xml
+@@ -1,7 +1,10 @@
+ <?xml version="1.0" encoding="utf-8" ?>
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
++    <!-- appCategory="game": Android 16+ (targetSdk 36) keeps the landscape lock on tablets/foldables only for games. -->
+     <application
+         android:allowBackup="true"
++        android:appCategory="game"
++        android:usesCleartextTraffic="false"
+         android:icon="@mipmap/ic_launcher"
+         android:label="@string/app_name"
+         android:roundIcon="@mipmap/ic_launcher_round"
+diff --git a/android/gradle.properties b/android/gradle.properties
+index 2e87c52..e30f1cf 100644
+--- a/android/gradle.properties
++++ b/android/gradle.properties
+@@ -20,3 +20,6 @@ org.gradle.jvmargs=-Xmx1536m
+ # Android operating system, and which are packaged with your app's APK
+ # https://developer.android.com/topic/libraries/support-library/androidx-rn
+ android.useAndroidX=true
++
++# compileSdk 36 (needed for targetSdk 36) on the Capacitor 7 Android Gradle Plugin 8.7.x; builds fine, this only silences the warning.
++android.suppressUnsupportedCompileSdk=36
+diff --git a/android/variables.gradle b/android/variables.gradle
+index 2c8e408..caecc32 100644
+--- a/android/variables.gradle
++++ b/android/variables.gradle
+@@ -1,7 +1,11 @@
+ ext {
++    // Release version: the ONLY place to bump it. versionCode must go up by 1 on every Play upload.
++    appVersionCode = 2
++    appVersionName = '1.0.0'
+     minSdkVersion = 23
+-    compileSdkVersion = 35
+-    targetSdkVersion = 35
++    // Google Play: new apps / updates must target API 36 (Android 16) from 2026-08-31.
++    compileSdkVersion = 36
++    targetSdkVersion = 36
+     androidxActivityVersion = '1.9.2'
+     androidxAppCompatVersion = '1.7.0'
+     androidxCoordinatorLayoutVersion = '1.2.0'
+diff --git a/client/public/fonts/huninn.woff2 b/client/public/fonts/huninn.woff2
+index 124a43e..739dab7 100644
+Binary files a/client/public/fonts/huninn.woff2 and b/client/public/fonts/huninn.woff2 differ
+diff --git a/client/src/shop-ui.ts b/client/src/shop-ui.ts
+index 3af8c17..c1fa46a 100644
+--- a/client/src/shop-ui.ts
++++ b/client/src/shop-ui.ts
+@@ -7,7 +7,7 @@ import {
+   equipCosmetic, getCosmetic, outfitOf, ownsCosmetic, storeLocked, type Pack, type PlayMode,
+ } from '../../shared/shop.ts';
+ import { getMap } from '../../shared/maps/index.ts';
+-import { billing, devShop, entitlementsFor } from './billing.ts';
++import { billing, devShop, entitlementsFor, storePacksIncluded } from './billing.ts';
+ import { mountPreview } from './cosmetics.ts';
+ import { esc } from './ui.ts';
+ 
+@@ -21,6 +21,13 @@ let lastMsg = '';
+ const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
+ const inFilter = (c: Cosmetic) => filter === 'all' || (filter === 'decor' ? DECOR_SLOTS.includes(c.slot) : c.slot === filter);
+ 
++/**
++ * Store release with every store pack included (free Google Play build or paid Steam edition, VITE_ALL_STORE_PACKS=1)
++ * while no payment provider is wired:
++ * store packs are shown as included and nothing offers a real-money purchase (no price, no buy/restore buttons).
++ */
++const freeEdition = () => storePacksIncluded() && !billing().available();
++
+ /** The pack that blocks this store in this mode for this player (null = playable). */
+ export function lockedPack(p: CareerProfile, mapId: string, mode: PlayMode): Pack | null { return storeLocked(mapId, mode, entitlementsFor(p)); }
+ 
+@@ -32,6 +39,7 @@ function itemHtml(p: CareerProfile, c: Cosmetic, ents: string[]) {
+   if (on) act = `<span class="tag ok">✅ 使用中</span><button class="btn small" data-cos-off="${c.slot}">卸下</button>`;
+   else if (own) act = `<button class="btn small info" data-cos-eq="${c.id}">${DECOR_SLOTS.includes(c.slot) ? '擺上' : '穿上'}</button>`;
+   else if (c.price !== undefined) act = `<button class="btn small primary" data-cos-buy="${c.id}" ${p.wallet >= c.price ? '' : 'disabled'}>💰 ${c.price}</button>`;
++  else if (freeEdition()) act = `<span class="tag lock">🔒 ${esc(pack?.name ?? '限定')}・即將推出</span>`;
+   else act = `<span class="tag lock">🔒限定</span><button class="btn small purple" data-pack-buy="${pack?.id ?? ''}">${esc(pack?.name ?? '')}</button>`;
+   return `<div class="shopitem cos ${on ? 'on' : ''} ${trying[c.slot] === c.id ? 'trying' : ''}" data-try="${c.id}">
+     <div class="cos-icon" style="--c:${hex(c.color)}">${c.icon}</div>
+@@ -40,14 +48,17 @@ function itemHtml(p: CareerProfile, c: Cosmetic, ents: string[]) {
+ }
+ 
+ function packHtml(p: CareerProfile, k: Pack, ents: string[], focus?: string) {
+-  const bought = p.shop.entitlements.includes(k.id), dev = !bought && ents.includes(k.id);
++  const bought = p.shop.entitlements.includes(k.id);
++  const included = !bought && storePacksIncluded() && k.stores.length > 0;
++  const dev = !bought && !included && ents.includes(k.id);
++  const free = freeEdition();
+   const stores = k.stores.map(id => { const m = getMap(id); return `<span class="tag">${m.icon} ${esc(m.name)}</span>`; }).join('');
+   const items = k.items.map(id => { const c = getCosmetic(id); return c ? `<span class="tag">${c.icon} ${esc(c.name)}</span>` : ''; }).join('');
+   return `<div class="shopitem pack ${focus === k.id ? 'focus' : ''}" id="pack-${k.id}">
+-    <b>${k.icon} ${esc(k.name)} ${bought ? '<span class="tag ok">✅ 已擁有</span>' : dev ? '<span class="tag ok">🧪 測試解鎖</span>' : '<span class="tag lock">🔒限定</span>'}</b>
++    <b>${k.icon} ${esc(k.name)} ${bought ? '<span class="tag ok">✅ 已擁有</span>' : included ? '<span class="tag ok">✅ 已包含</span>' : free ? '<span class="tag lock">⏳ 即將推出</span>' : dev ? '<span class="tag ok">🧪 測試解鎖</span>' : '<span class="tag lock">🔒限定</span>'}</b>
+     <span class="muted">${esc(k.desc)}</span>
+     ${stores ? `<div class="pack-tags">${stores}</div>` : ''}<div class="pack-tags">${items}</div>
+-    <div class="row pack-buy"><span class="price">${esc(k.price)}</span>${bought ? '' : `<button class="btn small primary" data-pack-buy="${k.id}">購買</button>`}</div></div>`;
++    ${bought || included || free ? '' : `<div class="row pack-buy"><span class="price">${esc(k.price)}</span><button class="btn small primary" data-pack-buy="${k.id}">購買</button></div>`}</div>`;
+ }
+ 
+ export function shopHtml(p: CareerProfile, focus?: string): string {
+@@ -58,9 +69,9 @@ export function shopHtml(p: CareerProfile, focus?: string): string {
+   const chips = (Object.keys(SLOT_INFO) as CosmeticSlot[]).map(s => { const c = getCosmetic(wearing[s]); return `<span class="tag" title="${SLOT_INFO[s].name}">${c ? c.icon : '・'} ${SLOT_INFO[s].name}</span>`; }).join('');
+   const list = filter === 'packs' ? '' : `<div class="cosgrid">${COSMETICS.filter(inFilter).map(c => itemHtml(p, c, ents)).join('')}</div>`;
+   const packs = filter === 'packs' || filter === 'all'
+-    ? `<h3>🎁 擴充包（真錢購買・${esc(PRICE_NOTE)}）</h3><div class="cosgrid packs">${PACKS.map(k => packHtml(p, k, ents, focus)).join('')}</div>
++    ? `<h3>🎁 擴充包（${freeEdition() ? '這個版本已包含所有店面擴充包' : `真錢購買・${esc(PRICE_NOTE)}`}）</h3><div class="cosgrid packs">${PACKS.map(k => packHtml(p, k, ents, focus)).join('')}</div>
+        <p class="muted">📖 主線劇情永遠免費：擴充包裡的店，在主線第 9、10 章上班時都玩得到；加入朋友開的房間也不用買。擴充包只影響「自由營業／自己開店／自己開房」能不能選這些店，不影響能力數值。</p>
+-       <div class="row"><button class="btn small" id="shop-restore">🔄 恢復購買</button></div>`
++       ${freeEdition() ? '' : '<div class="row"><button class="btn small" id="shop-restore">🔄 恢復購買</button></div>'}`
+     : '';
+   return `${devShop() ? '<div class="devbanner">🧪 測試模式（網址有 ?devshop=1）：所有擴充包暫時解鎖，不會存進存檔</div>' : ''}
+     <div class="shopwrap">
+diff --git a/package.json b/package.json
+index 88479b2..55c20ef 100644
+--- a/package.json
++++ b/package.json
+@@ -19,6 +19,7 @@
+     "balance": "tsx scripts-balance.ts",
+     "cap:sync": "npm run build:client && cap sync",
+     "android:debug": "npm run cap:sync && cd android && ./gradlew assembleDebug",
++    "android:release": "bash scripts/android-release.sh",
+     "desktop:win": "cd desktop && npm install && npm run dist:win",
+     "store:assets": "node store/src/make.mjs",
+     "store:screens": "node store/src/screens.mjs"
+diff --git a/scripts/font-chars.txt b/scripts/font-chars.txt
+index 000f780..e80d5ab 100644
+--- a/scripts/font-chars.txt
++++ b/scripts/font-chars.txt
+@@ -1 +1 @@
+-°×é÷–—…←↑→↓↔−≈≤⌛⏱⏳①②□△▶○★☆⬇⬛⭐　、。〈〉《》「」『』・一七三上下不丐且世丟並中主久之乎乖九乞也乳乾亂了事二互五些交享亮人什今仍仔他付仙代以件任份伍伏休伯伴伺似但位低住佔何佛作你佳使來例供依便係保俠信修倉個倍們倒候值假偏做停健側偷傅備傳僅像價優儲元充兇先光克免入內全兩八公共其具典再冒冠冰冷凌凍凱凳凹出刀分切刑列初判別利刮到制刷券刻則剋前剔剛剩剪副創劇劑力功加助努勁勇勉動務募勤勵勸勾勿包化匯區十千升午半卡印危卷卸卻厚原厭去參又友反叔取受口古句另只叫召叭可台右司叼吃各合同名吐向君否吧含吳吵吹吼呃告周味命和咖咧咬咳品員哥哨哪哲哼售唯商啊問啟啡啦啪喇喔喚喜喝單嗆嗎嗯嗽嘆嘗嘛嘴噓器噴嚇囉四回因固圈圍園圖團在地圾址均坐垂垃型城域執基堅堆報場塊塞填墊增壓壞外多夜夠夢夥大天太失夾套奧奶好如妝始姐姓姨娃婚嫌嬸子字存季孩學它安完官定宛宜客宣室害宵家容寂寄寞察實審寫寵封專尊對導小少尖尚尬就尷尺尾尿局居屑屬峰島巡工左巧差己已巴巷巾市布帝師席帳帶常帽幀幕幣幫平年幹幾底店度座庫庭康廚廢廣廳延建式弟弩張強形彩影往待很律後徒得從復循微徵徽心必忙快念怎怒怕思急恐恕恢恭息悔您悻情惠想惹意愛感態慢慶懂應懷成我或戰戲戴戶房所手才打托扣找承技把抓投抗折抱抽拆拉拍拎拔拖招拜括拿持指按挑捏捷掃掉掌掏排掛採接控推掩揉揍提插換揪揮援損搖搗搞摔摸摺撐撒撞撤撫播撿擁擇擊擋操據擠擦擬擲擴擺攝攤支收改放效敏救敗教敢散敬整敷數文料斬新斷方於施旁旅旋族旗日早明星是時晃晉晚晨普景晶暈暗暫暴曳更書最會月有朋服朝期木未末本材束杯東板析林果架查核根格案桌桶桿條棄棒森椅楚業極概樂標模樣機橫檔檢檯櫃欄次款歉歡止正此步武歪歷歸段殼母每比毛氣水永求汗污決汽沉沒沖沙油治沿況泉法泡波注洗活派流海消涯液涼淇淋淨深混清減渣測湯源準溝溫滅滑滿演漿潔潮濃濕瀏灘灣火炸為烊烘烤焙無然煎煙照煩煮熟熱燈燒營爆爐爛爭爽牆片版牌牙牛牠物特牽狀狂狗獄獎獨獲率王玩珍班現球理環瓶甜生產用由申男界留畜番畫異當疑疫病痕痛療癒登發白百的皇皺盒盟盡監盤目盯直相省眉看真眼眾睛睡督瞬知矩短研破砸硬碎碑碰碳確碼礦示社祝神票禁福禪禮秒租移程稍種稱稿積穩究空穿突窗立站章端笑符第筆等箋箍算管箭箱節範篇簷簽籃籤米粉精糕糖糟系紀約紅紋紙級素累終組結給統經維網緊緒線練縮總績繁繞繳繼續缺罐罩罪置罰罵美群習翻老考者而耐耗耳耶聖聞聯聲職聽肉肯背胎胸能脆脾腦腳腸膜臉臥臨自至與興舊般艦色芬花苔苦英茄茶菠華萬落著董蓋薦薪藍藏藐藝藥蘿處號虹蛋螢蠟血行術街衛衝衡衣表袋被裙補裝裡裹製複褲西要覆見規視親覺覽觀角解言訂計訊記訪設訴評詢試話該誌認語誠誤誦說誰課調請論謊講謝譁證識譜警議護讀變讓讚豆象豪貌貓負財貨責貴買費貼資賓賠賣質賺購贈贊走起趁超越趕趟趣足跌跑距跟跡跤跨路跳踢踩蹲身躲車軟軸較載輕輪輸輿轉辛辣辦辭迎近返迫迷追退送透這通逛逞速造連週進逼逾遇遊運遍過道達違遛遞遠遲選邀還邊邏那部郵都鄰酌配酥醒醫醬重野量金鈕銀銷錄錢錯錶鍋鍵鎖鎮鏡鐘鐵鑑長門閃閉開間閱闆闖關防阻阿附降限院陣除陰陳隊階隔隨隻集雇雖雙雜雞離難雨雲零電需震霓霸靈青靜靠面鞋韓音響頁項順預頓領頭頻顆題額願類顧顯風颱飛食飯飲飼飽飾餅養餐餘館餵首香馨駕騙騰驗髒體高髮鬆鬧魂魔鮮鴨麗麥麵麻麼黃黑默點鼓鼠鼻齊齒龍！＄％（）＋，－．／：；＝？～
+\ No newline at end of file
++°×é÷–—…←↑→↓↔−≈≤⌛⏱⏳①②□△▶○★☆⬇⬛⭐　、。〈〉《》「」『』・一七三上下不丐且世丟並中主久之乎乖九乞也乳乾亂了事二互五些交享亮人什今仍仔他付仙代以件任份伍伏休伯伴伺似但位低住佔何佛作你佳使來例供依便係保俠信修倉個倍們倒候值假偏做停健側偷傅備傳僅像價優儲元充兇先光克免入內全兩八公共其具典再冒冠冰冷凌凍凱凳凹出刀分切刑列初判別利刮到制刷券刻則剋前剔剛剩剪副創劇劑力功加助努勁勇勉動務募勤勵勸勾勿包化匯區十千升午半卡印危即卷卸卻厚原厭去參又友反叔取受口古句另只叫召叭可台右司叼吃各合同名吐向君否吧含吳吵吹吼呃告周味命和咖咧咬咳品員哥哨哪哲哼售唯商啊問啟啡啦啪喇喔喚喜喝單嗆嗎嗯嗽嘆嘗嘛嘴噓器噴嚇囉四回因固圈圍園圖團在地圾址均坐垂垃型城域執基堅堆報場塊塞填墊增壓壞外多夜夠夢夥大天太失夾套奧奶好如妝始姐姓姨娃婚嫌嬸子字存季孩學它安完官定宛宜客宣室害宵家容寂寄寞察實審寫寵封將專尊對導小少尖尚尬就尷尺尾尿局居屑屬峰島巡工左巧差己已巴巷巾市布帝師席帳帶常帽幀幕幣幫平年幹幾底店度座庫庭康廚廢廣廳延建式弟弩張強形彩影往待很律後徒得從復循微徵徽心必忙快念怎怒怕思急恐恕恢恭息悔您悻情惠想惹意愛感態慢慶懂應懷成我或戰戲戴戶房所手才打托扣找承技把抓投抗折抱抽拆拉拍拎拔拖招拜括拿持指按挑捏捷掃掉掌掏排掛採接控推掩揉揍提插換揪揮援損搖搗搞摔摸摺撐撒撞撤撫播撿擁擇擊擋操據擠擦擬擲擴擺攝攤支收改放效敏救敗教敢散敬整敷數文料斬新斷方於施旁旅旋族旗日早明星是時晃晉晚晨普景晶暈暗暫暴曳更書最會月有朋服朝期木未末本材束杯東板析林果架查核根格案桌桶桿條棄棒森椅楚業極概樂標模樣機橫檔檢檯櫃欄次款歉歡止正此步武歪歷歸段殼母每比毛氣水永求汗污決汽沉沒沖沙油治沿況泉法泡波注洗活派流海消涯液涼淇淋淨深混清減渣測湯源準溝溫滅滑滿演漿潔潮濃濕瀏灘灣火炸為烊烘烤焙無然煎煙照煩煮熟熱燈燒營爆爐爛爭爽牆片版牌牙牛牠物特牽狀狂狗獄獎獨獲率王玩珍班現球理環瓶甜生產用由申男界留畜番畫異當疑疫病痕痛療癒登發白百的皇皺盒盟盡監盤目盯直相省眉看真眼眾睛睡督瞬知矩短研破砸硬碎碑碰碳確碼礦示社祝神票禁福禪禮秒租移程稍種稱稿積穩究空穿突窗立站章端笑符第筆等箋箍算管箭箱節範篇簷簽籃籤米粉精糕糖糟系紀約紅紋紙級素累終組結給統經維網緊緒線練縮總績繁繞繳繼續缺罐罩罪置罰罵美群習翻老考者而耐耗耳耶聖聞聯聲職聽肉肯背胎胸能脆脾腦腳腸膜臉臥臨自至與興舊般艦色芬花苔苦英茄茶菠華萬落著董蓋薦薪藍藏藐藝藥蘿處號虹蛋螢蠟血行術街衛衝衡衣表袋被裙補裝裡裹製複褲西要覆見規視親覺覽觀角解言訂計訊記訪設訴評詢試話該誌認語誠誤誦說誰課調請論謊講謝譁證識譜警議護讀變讓讚豆象豪貌貓負財貨責貴買費貼資賓賠賣質賺購贈贊走起趁超越趕趟趣足跌跑距跟跡跤跨路跳踢踩蹲身躲車軟軸較載輕輪輸輿轉辛辣辦辭迎近返迫迷追退送透這通逛逞速造連週進逼逾遇遊運遍過道達違遛遞遠遲選邀還邊邏那部郵都鄰酌配酥醒醫醬重野量金鈕銀銷錄錢錯錶鍋鍵鎖鎮鏡鐘鐵鑑長門閃閉開間閱闆闖關防阻阿附降限院陣除陰陳隊階隔隨隻集雇雖雙雜雞離難雨雲零電需震霓霸靈青靜靠面鞋韓音響頁項順預頓領頭頻顆題額願類顧顯風颱飛食飯飲飼飽飾餅養餐餘館餵首香馨駕騙騰驗髒體高髮鬆鬧魂魔鮮鴨麗麥麵麻麼黃黑默點鼓鼠鼻齊齒龍！＄％（）＋，－．／：；＝？～
+\ No newline at end of file
