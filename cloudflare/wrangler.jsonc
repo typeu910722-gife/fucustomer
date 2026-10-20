@@ -4,6 +4,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "fucustomer-game",
+  "workers_dev": true,
   "main": "src/worker.ts",
   "compatibility_date": "2026-09-01",
   "observability": { "enabled": false },
