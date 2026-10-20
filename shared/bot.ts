@@ -3,6 +3,7 @@
 import { PRODUCTS, Product, SERVER_INTERACT_RANGE, WALK_SPEED, shelfCapacity } from './constants.ts';
 import { COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, findPath, shelfBrowseSpots } from './map.ts';
 import type { ActKind, ClientMsg, CustomerSnap, PlayerSnap, Snapshot, Target } from './protocol.ts';
+import { SIG_KARENS, SigNeed, isSig, sigWaitReason } from './sigkarens.ts';
 
 export interface BotOutput {
   x: number; z: number; yaw: number;
@@ -68,8 +69,9 @@ export class Bot {
     // mop spin when a karen is close and no regular customer would get hit
     if (open && ab.includes('spin') && me.spinCd <= 0 && me.grabbing == null && this.cooldown <= 0) {
       const near = (r: number) => s.customers.filter(c => !c.flying && !c.held && Math.hypot(c.x - me.x, c.z - me.z) < r);
-      const hit = near(3.2);
-      if (hit.length && hit.every(c => c.kind !== 'normal' && c.kind !== 'boss') && hit.some(c => !c.resolved)) { out.spin = true; this.cooldown = 0.5; return out; }
+      // gear widens the whirlwind up to ~4.3 m, so look that far for bystanders
+      const hit = near(3.2), reach = near(4.5);
+      if (hit.length && reach.every(c => c.kind !== 'normal' && c.kind !== 'boss') && hit.some(c => !c.resolved)) { out.spin = true; this.cooldown = 0.5; return out; }
     }
     // carrying someone: walk to the door and throw them out
     if (me.grabbing != null) {
@@ -136,6 +138,20 @@ export class Bot {
     const C = s.customers;
     const cust = (c: CustomerSnap, kind: ActKind): Goal => ({ pos: { x: c.x, z: c.z }, kind, target: { t: 'customer', id: c.id }, key: kind + c.id });
     const held = me.held;
+    // store-signature karens: fetch what they need (mop, a drink, a hot meal, a box of stock), then do the action
+    const canGrabNow = !!s.shift?.abilities.includes('grab') && !me.held && !me.held2;
+    const sig = C.find(c => isSig(c.kind) && !c.resolved && c.revealed && c.state !== 'leaving' && !c.flying && !c.held && !sigWaitReason(c.kind, c.state));
+    if (sig && !(canGrabNow && (!sig.heavy || sig.stun > 0))) {
+      const d = SIG_KARENS[sig.kind as keyof typeof SIG_KARENS];
+      const has = (n: SigNeed) => n === 'box' || n === 'mop' ? held?.kind === n : held?.kind === n || me.held2?.kind === n;
+      if (!d.need || has(d.need)) return cust(sig, 'sigAct');
+      if (d.need === 'mop' && !held && s.mopsOnRack > 0) return { pos: { x: MOP_RACK.x1 + 0.6, z: (MOP_RACK.z0 + MOP_RACK.z1) / 2 }, kind: 'takeMop', target: { t: 'mop' }, key: 'tm' };
+      if (d.need === 'box' && !held) {
+        const p = PRODUCTS.find(x => s.backstock[x] > 0);
+        if (p) { const cr = CRATES.find(c => c.product === p)!; return { pos: { x: (cr.box.x0 + cr.box.x1) / 2, z: cr.box.z1 + 0.7 }, kind: 'takeBox', target: { t: 'crate', product: p }, key: 'tb' + p }; }
+      }
+      if ((d.need === 'coffee' || d.need === 'meal') && (!held || ((held.kind === 'coffee' || held.kind === 'meal') && !me.held2)) && (d.need === 'coffee' || s.backstock.bento > 0)) return foodGoal(d.need);
+    }
     if (held?.kind === 'box') {
       const p = held.product;
       if (s.shelves[p] < shelfCapacity(s.upgrades.shelves)) return shelfGoal(me, p, 'stock');

@@ -7,6 +7,7 @@ import {
 import { CURRENT_MAP, COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, AABB, clampToStore, resolveCollision } from '../../shared/map.ts';
 import type { ShiftResult } from '../../shared/career.ts';
 import { BOSS_HOW, BOSS_PHASES } from '../../shared/constants.ts';
+import { NEED_LABEL, SIG_KARENS, SigNeed, isSig, sigWaitReason } from '../../shared/sigkarens.ts';
 import { Tutorial, TutorialView } from './tutorial.ts';
 import type { ActKind, ClientMsg, CustomerSnap, GameEvent, LobbyState, ServerMsg, Snapshot, Target } from '../../shared/protocol.ts';
 import { audio } from './audio.ts';
@@ -445,6 +446,7 @@ export class Game {
           : { label: `向${name}推薦招牌`, primary: 'recommend', target: t, point };
       }
       if (c.kind === 'tryhard') return c.state === 'tryon' ? { label: `請${name}限試穿 3 件`, primary: 'limitTry', target: t, point } : { label: name, reason: '正走向試衣間', target: t, point };
+      if (isSig(c.kind)) return sigCandidate(c, hands, money, t, point);
       if (c.kind === 'charger') {
         const treat = hands.includes('coffee') ? `請他喝${FOOD_INFO.coffee.name}` : undefined;
         return c.state === 'charge'
@@ -798,8 +800,28 @@ export class Game {
   }
 }
 
+/** Interaction prompt for a store-signature karen, built from its data (sigkarens.ts). */
+function sigCandidate(c: CustomerSnap, hands: (string | null)[], money: number, t: Target, point: Candidate['point']): Candidate {
+  const d = SIG_KARENS[c.kind as keyof typeof SIG_KARENS];
+  const wait = sigWaitReason(c.kind, c.state);
+  if (wait) return { label: d.name, reason: wait, target: t, point };
+  const needName = (n: SigNeed) => n === 'coffee' ? FOOD_INFO.coffee.name || NEED_LABEL.coffee : n === 'meal' ? FOOD_INFO.meal.name || NEED_LABEL.meal : NEED_LABEL[n];
+  const presses = d.presses ?? 1;
+  const count = presses > 1 ? `（${Math.min(c.phase, presses - 1) + 1}/${presses}）` : '';
+  const heat = d.tpl === 'haggle' ? `・火氣 ${c.anger}` : '';
+  const altOk = d.alt && (!d.altNeed || hands.includes(d.altNeed)) && (!d.altCost || money >= d.altCost);
+  const alt = altOk ? { alt: 'sigAlt' as ActKind, altLabel: d.alt } : {};
+  // 照片魔人 style: holding what he ordered → hand it over, the explanation is the second choice
+  if (d.tpl === 'redo' && hands.includes(c.want ?? '')) return { label: `交付${FOOD_INFO[c.want!].name}（第 ${c.phase + 1} 次）`, primary: 'deliver', alt: 'sigAct', altLabel: d.act, target: t, point };
+  if (d.need && !hands.includes(d.need)) {
+    if (altOk) return { label: `${d.alt}（${d.name}）`, primary: 'sigAlt', target: t, point };
+    return { label: d.name, reason: `先拿${needName(d.need)}過來，再「${d.act}」`, target: t, point };
+  }
+  return { label: `${d.act}${count}${heat}`, primary: 'sigAct', ...alt, target: t, point };
+}
+
 function shortLabel(k: ActKind) {
-  const m: Partial<Record<ActKind, string>> = { knock: '打翻', heckle: '嗆人', checkout: '結帳', brew: FOOD_INFO.coffee.verb, deliver: '交付', takeBox: '拿貨', stock: '上架', returnBox: '放回', takeMop: '拿拖把', returnMop: '放回', clean: '清理', calm: '安撫', coupon: '折價券', askQueue: '請排隊', stopFilm: '制止', checkBag: '請結帳', pickup: '撿起' };
+  const m: Partial<Record<ActKind, string>> = { knock: '打翻', heckle: '嗆人', checkout: '結帳', brew: FOOD_INFO.coffee.verb, deliver: '交付', takeBox: '拿貨', stock: '上架', returnBox: '放回', takeMop: '拿拖把', returnMop: '放回', clean: '清理', calm: '安撫', coupon: '折價券', askQueue: '請排隊', stopFilm: '制止', checkBag: '請結帳', pickup: '撿起', sigAct: '處理', sigAlt: '另一招' };
   return m[k] ?? '互動';
 }
 

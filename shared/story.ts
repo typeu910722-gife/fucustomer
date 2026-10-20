@@ -78,9 +78,45 @@ export const SCENES: Record<string, Scene> = {
     { who: 'me', text: '改單、改甜度、試穿一百件……聽起來都很可怕。' },
     { who: 'lin', text: '我正在做專題「全台奧客圖鑑」，你去哪我就跟去哪。' },
   ] },
-  'ch7-outro': { id: 'ch7-outro', title: '決定了', lines: [
-    { who: 'me', text: '每種店都走過一輪了。我知道自己想開哪一種店了。' },
-    { who: 'fen', text: '去「我的店」分頁吧。記得：開店會倒閉，員工要照顧，下班要鎖門。' },
+  'ch7-outro': { id: 'ch7-outro', title: '圖鑑才寫了四頁', lines: [
+    { who: 'me', text: '早餐店、手搖飲、服飾店、雞排店都走過一輪了。我好像知道自己想開哪一種店了。' },
+    { who: 'lin', text: '等等！我的「全台奧客圖鑑」才寫了四頁。藥妝店、書店、電影院、郵局……每一種店都有自己的招牌奧客。' },
+    { who: 'fen', text: '想開店隨時可以去「我的店」分頁。不過多看幾種店，開店時才不會被嚇到。' },
+  ] },
+  'ch8-intro': { id: 'ch8-intro', title: '第 8 章・商圈見習週', lines: [
+    { who: 'fen', text: '這週我幫你排了商圈見習：藥妝店、書店、麵包店、超市、寵物店、咖啡廳，一天一間。' },
+    { who: 'lin', text: '每間店我都採訪好了。藥妝店的試用品、書店坐地上看書的、麵包店用手摸的……你負責處理，我負責拍照。' },
+    { who: 'boss', text: '（打電話來）聽說你在別人的店打工？哼，我的店也缺人，時薪照舊，扣薪……也照舊。' },
+    { who: 'me', text: '錢董，我現在是去學東西的。不用扣了，謝謝。' },
+  ] },
+  'ch8-outro': { id: 'ch8-outro', title: '圖鑑第二集', lines: [
+    { who: 'lin', text: '「試吃狂、狗狗試吃團、一杯坐整天」——第二集的稿子寫好了！讀者留言都說「我們店也有」。' },
+    { who: 'fen', text: '你發現了嗎？每種店的奧客都不一樣，可是處理的道理是一樣的：先看懂他要什麼。' },
+    { who: 'me', text: '有的要遞夾子、有的要續杯、有的只要好好說兩次。……我好像越來越會了。' },
+    { who: 'lin', text: '那接下來去晚上的店。電影院、吃到飽、加油站——夜生活的奧客，才是真正的大魔王。' },
+  ] },
+  'ch9-intro': { id: 'ch9-intro', title: '第 9 章・夜生活', lines: [
+    { who: 'lin', text: '晚上的店我都約好了：電影院、火鍋吃到飽、加油站、健身房、牛排館，最後回雞排店吃宵夜。' },
+    { who: 'fen', text: '吃到飽要注意偷打包的，他們不會讓你看見。加油站拖把記得帶著，有人會要你擦車窗。' },
+    { who: 'me', text: '……用拖把擦車窗？' },
+    { who: 'fen', text: '別問。客人開心就好。' },
+  ] },
+  'ch9-outro': { id: 'ch9-outro', title: '宵夜時間', lines: [
+    { who: 'me', text: '（雞排店打烊，三個人坐在路邊吃雞排。）' },
+    { who: 'lin', text: '回鍋魔人說他下次還要來。我想他是喜歡你。' },
+    { who: 'fen', text: '我做了十年才知道一件事：大部分客人都是好人，只是有時候累了。真正的奧客，是少數。' },
+    { who: 'boss', text: '（打電話來）總公司說要做「全台奧客圖鑑」聯名活動，在我的店辦。你……要不要回來幫忙一天？時薪照舊。' },
+  ] },
+  'ch10-intro': { id: 'ch10-intro', title: '第 10 章・全台奧客圖鑑', lines: [
+    { who: 'lin', text: '最後幾頁：3C 賣場的拆封退貨、美髮院的照片魔人、郵局的一袋零錢、藥局、飯店。寫完就出版！' },
+    { who: 'fen', text: '出版那天，錢董要在店裡辦簽書會。他說圖鑑裡的奧客都會「被邀請」來。' },
+    { who: 'me', text: '把全台灣最難搞的奧客找到同一間店……這不是簽書會，這是期末考。' },
+  ] },
+  'ch10-outro': { id: 'ch10-outro', title: '結局：我的店', lines: [
+    { who: 'lin', text: '《全台奧客圖鑑》第一刷賣完了！封面人物——就是你。' },
+    { who: 'boss', text: '幹得好！要不要回來當我的合夥人？分紅照……照規定給。' },
+    { who: 'me', text: '錢董，謝謝。可是我想開自己的店。我知道每一種店的奧客長什麼樣子了。' },
+    { who: 'fen', text: '去吧。記得：開店會倒閉，員工要照顧，下班要鎖門。還有——奧客退散。' },
   ] },
   'store-open': { id: 'store-open', title: '開幕', lines: [
     { who: 'me', text: '鐵門拉起來的聲音，從來沒有這麼好聽過。這是我的店。' },
@@ -102,7 +138,7 @@ export const SCENES: Record<string, Scene> = {
 
 /** Scene to show before starting a shift (chapter intro on its first shift). */
 export function sceneBefore(shiftId: string): string | null {
-  const m = /^(\d)-1$/.exec(shiftId);
+  const m = /^(\d+)-1$/.exec(shiftId);
   return m ? `ch${m[1]}-intro` : null;
 }
 /** Scene to show after winning a shift (chapter outro after its last shift). */

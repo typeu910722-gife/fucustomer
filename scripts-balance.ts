@@ -26,7 +26,7 @@ function play(id: string | ShiftConfig, prof: ReturnType<typeof newProfile>, see
 const only = process.argv[2];
 for (const ch of CHAPTERS) for (const sh of ch.shifts) {
   if (only && !sh.id.startsWith(only)) continue;
-  const prof = profileFor(ch.n, ch.minLevel + 2);
+  const prof = profileFor(ch.n, Math.min(30, ch.minLevel + 2));
   const rs = Array.from({ length: SEEDS }, (_, i) => play(sh.id, prof, i + 1, sh.length + 60));
   const avg = rs.reduce((a, r) => a + r.revenue, 0) / rs.length;
   const wins = rs.filter(r => r.won).length;

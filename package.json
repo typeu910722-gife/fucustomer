@@ -12,7 +12,7 @@
     "build": "npm run build:client && npm run build:server",
     "start": "node dist-server/index.js",
     "typecheck": "tsc --noEmit",
-    "test": "node --import tsx --test tests/sim.test.ts tests/career.test.ts tests/achievements.test.ts tests/story.test.ts tests/ownstore.test.ts tests/maps.test.ts tests/mapkarens.test.ts tests/friends.test.ts tests/font.test.ts tests/auth.test.ts",
+    "test": "node --import tsx --test tests/sim.test.ts tests/career.test.ts tests/achievements.test.ts tests/story.test.ts tests/ownstore.test.ts tests/maps.test.ts tests/mapkarens.test.ts tests/sigkarens.test.ts tests/friends.test.ts tests/font.test.ts tests/auth.test.ts",
     "test:net": "node --import tsx --test --test-concurrency=1 tests/net.test.ts",
     "test:e2e": "node tests/e2e/solo-smoke.mjs && node tests/e2e/multi-browser.mjs && node tests/e2e/career.mjs && node tests/e2e/round3.mjs && node tests/e2e/offline.mjs && node tests/e2e/round7.mjs && node tests/e2e/round8.mjs && node tests/e2e/round9.mjs && node tests/e2e/round10.mjs && node tests/e2e/maps.mjs && node tests/e2e/round11.mjs && node tests/e2e/round12.mjs",
     "test:all": "npm run typecheck && npm test && npm run test:net",

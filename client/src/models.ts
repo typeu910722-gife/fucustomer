@@ -92,7 +92,9 @@ export function mergeInto(root: THREE.Object3D, skip: Set<THREE.Object3D> = new 
       const m = c as THREE.Mesh;
       if (m.isMesh && !Array.isArray(m.material) && !(m as THREE.InstancedMesh).isInstancedMesh) {
         const g = m.geometry.clone().applyMatrix4(m4.multiplyMatrices(inv, m.matrixWorld));
-        for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+        // (already-merged vertex-coloured parts keep their colours)
+        const keep = (m.material as THREE.Material).vertexColors ? ['position', 'normal', 'uv', 'color'] : ['position', 'normal', 'uv'];
+        for (const k of Object.keys(g.attributes)) if (!keep.includes(k)) g.deleteAttribute(k);
         if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
         // plain coloured materials collapse into one shared vertex-coloured material (one draw call for many colours)
         let key = m.material as THREE.Material;
@@ -165,7 +167,7 @@ export class Human {
   body: THREE.Mesh; head: THREE.Mesh; legL: THREE.Group; legR: THREE.Group; armL: THREE.Group; armR: THREE.Group;
   hand: THREE.Group;
   /** Name tag (staff) and status / karen tag (customers); both shrink when close and fade right in front of the camera. */
-  label = new Label({ k: 0.0026, maxScreen: 0.045, fade: [0.9, 1.9], fadeMin: 0.15 }); icon = new Label({ k: 0.0026, maxScreen: 0.05, fade: [0.9, 2.1], fadeMin: 0.15 });
+  label = new Label({ k: 0.0026, maxScreen: 0.055, minScreen: 0.04, fade: [0.9, 1.9], fadeMin: 0.15 }); icon = new Label({ k: 0.0026, maxScreen: 0.065, minScreen: 0.042, fade: [0.9, 2.1], fadeMin: 0.15 });
   phase = 0; heldKey = ''; private t = Math.random() * 10;
   private face: THREE.Mesh; private faceKey = ''; private basket: THREE.Object3D | null = null;
   private torso = new THREE.Group();

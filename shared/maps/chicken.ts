@@ -33,7 +33,7 @@ export const CHICKEN: MapDef = {
   ],
   decor: [box(5, 15.3, 9.5, 15.7, 1.1, 'bar'), box(23.4, 13.5, 24, 15.5, 1.3, 'plant')],
   rope: { x0: 18.2, x1: 22.2, z: 13.85 },
-  karens: ['custom'],
+  karens: ['refry', 'custom'],
   playerSpawns: [{ x: 18, z: 9.9 }, { x: 12, z: 9.5 }, { x: 4, z: 7 }, { x: 18, z: 6 }, { x: 8, z: 11 }],
   wander: [{ x: 6, z: 12 }, { x: 18, z: 6 }, { x: 11, z: 8 }, { x: 12, z: 12 }],
 };

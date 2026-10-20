@@ -13,7 +13,7 @@ import {
 } from '../../shared/map.ts';
 import type { CustomerSnap, Held, PlayerSnap, Snapshot } from '../../shared/protocol.ts';
 import type { Quality } from './storage.ts';
-import { INK, PillOpts, isFontReady, labelTexture, pillCanvas, popCanvas, textTexture, whenFontReady } from './labels.ts';
+import { INK, PillOpts, UI_FONT, isFontReady, labelTexture, pillCanvas, popCanvas, textTexture, whenFontReady } from './labels.ts';
 
 // ---------- helpers ----------
 export { textCanvas };
@@ -24,6 +24,67 @@ function boxMesh(b: AABB, h: number, m: THREE.Material, y0 = 0) {
   mesh.position.set((b.x0 + b.x1) / 2, y0 + h / 2, (b.z0 + b.z1) / 2);
   mesh.castShadow = true; mesh.receiveShadow = true;
   return mesh;
+}
+
+/** Chalk-style menu (food shops) or price list (clothes shop) built from the map's own products. */
+function menuBoardCanvas(): HTMLCanvasElement {
+  const M = CURRENT_MAP, c = document.createElement('canvas'); c.width = 512; c.height = 282;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#2f3b35'; g.fillRect(0, 0, 512, 282);
+  g.fillStyle = 'rgba(255,255,255,0.04)'; for (let i = 0; i < 60; i++) g.fillRect(Math.random() * 512, Math.random() * 282, 40, 2);
+  g.fillStyle = hex(M.theme.accent); g.beginPath(); g.roundRect(150, 12, 212, 50, 25); g.fill();
+  g.lineWidth = 5; g.strokeStyle = '#2a1f3d'; g.stroke();
+  g.fillStyle = '#fff'; g.font = `900 34px ${UI_FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
+  g.fillText(M.coffee || M.meal ? 'MENU' : 'PRICE', 256, 38);
+  const rows: [string, number][] = PRODUCTS.map(p => [M.products[p].name, M.products[p].price]);
+  if (M.coffee) rows.push([M.coffee.food, M.coffee.price]);
+  if (M.meal) rows.push([M.meal.food, M.meal.price]);
+  const lh = Math.min(42, 200 / rows.length);
+  rows.forEach(([n, pr], i) => {
+    const y = 92 + i * lh;
+    g.font = `900 ${Math.round(lh * 0.7)}px ${UI_FONT}`; g.textAlign = 'left'; g.fillStyle = i % 2 ? '#fff3bf' : '#f8f9fa'; g.fillText(n, 36, y);
+    g.textAlign = 'right'; g.fillStyle = '#ffd43b'; g.fillText('$' + pr, 476, y);
+    g.fillStyle = 'rgba(255,255,255,0.25)'; const w0 = 44 + g.measureText(n).width * 0 + 150; for (let x = w0; x < 410; x += 14) g.fillRect(x, y + 4, 6, 3);
+  });
+  return c;
+}
+
+/** Little framed artworks in the shop's colours (no text). */
+function artCanvas(kind: number): HTMLCanvasElement {
+  const TH = CURRENT_MAP.theme, c = document.createElement('canvas'); c.width = 256; c.height = 256;
+  const g = c.getContext('2d')!, acc = hex(TH.accent), wain = hex(TH.wainscot);
+  const pal = CURRENT_MAP.products.drinks.palette.concat(CURRENT_MAP.products.snacks.palette).map(hex);
+  const stroke = () => { g.lineWidth = 7; g.strokeStyle = '#2a1f3d'; g.stroke(); };
+  switch (kind % 4) {
+    case 0: { // sunny hills
+      const sky = g.createLinearGradient(0, 0, 0, 256); sky.addColorStop(0, '#9ed8ff'); sky.addColorStop(1, '#fff6e5');
+      g.fillStyle = sky; g.fillRect(0, 0, 256, 256);
+      g.fillStyle = '#ffc23d'; g.beginPath(); g.arc(190, 70, 34, 0, Math.PI * 2); g.fill(); stroke();
+      g.fillStyle = '#7bd389'; g.beginPath(); g.ellipse(70, 250, 150, 110, 0, Math.PI, 0); g.fill(); stroke();
+      g.fillStyle = '#39c96b'; g.beginPath(); g.ellipse(220, 260, 140, 80, 0, Math.PI, 0); g.fill(); stroke();
+      break;
+    }
+    case 1: { // polka still life in the product colours
+      g.fillStyle = '#fff6e5'; g.fillRect(0, 0, 256, 256);
+      for (let i = 0; i < 7; i++) { g.fillStyle = pal[i % pal.length]; g.beginPath(); g.arc(40 + (i % 3) * 88 + (i > 2 ? 44 : 0), 50 + Math.floor(i / 3) * 80, 30, 0, Math.PI * 2); g.fill(); stroke(); }
+      break;
+    }
+    case 2: { // big heart on stripes
+      for (let i = 0; i < 8; i++) { g.fillStyle = i % 2 ? '#fff6e5' : wain; g.fillRect(i * 32, 0, 32, 256); }
+      g.fillStyle = acc; g.beginPath(); g.moveTo(128, 210); g.bezierCurveTo(20, 140, 40, 40, 128, 90); g.bezierCurveTo(216, 40, 236, 140, 128, 210); g.fill(); stroke();
+      break;
+    }
+    default: { // cat face
+      g.fillStyle = acc; g.fillRect(0, 0, 256, 256);
+      g.fillStyle = '#fff6e5';
+      g.beginPath(); g.moveTo(50, 110); g.lineTo(70, 40); g.lineTo(110, 80); g.lineTo(146, 80); g.lineTo(186, 40); g.lineTo(206, 110); g.arc(128, 150, 85, -0.2, Math.PI + 0.2); g.closePath(); g.fill(); stroke();
+      g.fillStyle = '#2a1f3d'; for (const x of [95, 161]) { g.beginPath(); g.arc(x, 145, 11, 0, Math.PI * 2); g.fill(); }
+      g.fillStyle = '#ff9eaa'; for (const x of [78, 178]) { g.beginPath(); g.ellipse(x, 172, 14, 8, 0, 0, Math.PI * 2); g.fill(); }
+      g.lineWidth = 5; g.beginPath(); g.moveTo(116, 175); g.quadraticCurveTo(128, 186, 128, 172); g.quadraticCurveTo(128, 186, 140, 175); g.stroke();
+    }
+  }
+  g.lineWidth = 10; g.strokeStyle = '#2a1f3d'; g.strokeRect(0, 0, 256, 256);
+  return c;
 }
 
 /**
@@ -139,13 +200,17 @@ function floorTexture(style: 'tile' | 'wood' | 'concrete' = 'tile', base: [numbe
   return t;
 }
 
-function windowsTexture(base: string) {
-  const c = document.createElement('canvas'); c.width = 128; c.height = 256;
+/** Lit-window facades, one 128 px column per wall colour (all buildings share the texture → one draw call). */
+function windowsTexture(bases: string[]) {
+  const c = document.createElement('canvas'); c.width = 128 * bases.length; c.height = 256;
   const g = c.getContext('2d')!;
-  g.fillStyle = base; g.fillRect(0, 0, 128, 256);
-  for (let y = 12; y < 250; y += 28) for (let x = 10; x < 120; x += 28) {
-    g.fillStyle = Math.random() < 0.35 ? '#ffe8a3' : 'rgba(40,50,70,0.75)'; g.fillRect(x, y, 16, 18);
-  }
+  bases.forEach((base, i) => {
+    const ox = i * 128;
+    g.fillStyle = base; g.fillRect(ox, 0, 128, 256);
+    for (let y = 12; y < 250; y += 28) for (let x = 10; x < 120; x += 28) {
+      g.fillStyle = Math.random() < 0.35 ? '#ffe8a3' : 'rgba(40,50,70,0.75)'; g.fillRect(ox + x, y, 16, 18);
+    }
+  });
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
@@ -248,6 +313,9 @@ export class StoreView {
   private viewHeldKey = '';
   private time = 0;
   private clockHands: THREE.Object3D[] = [];
+  /** Soft round shadows under every character (instanced: one draw call); characters cast no real shadows. */
+  private blobs: THREE.InstancedMesh;
+  private shadowSig = '';
   private atlas = new SignAtlas();
   private coffeeSteam: THREE.Mesh[] = [];
   private spillGeo = new THREE.CircleGeometry(0.45, 20);
@@ -274,6 +342,8 @@ export class StoreView {
     this.renderer.toneMapping = quality === 'low' ? THREE.NoToneMapping : THREE.ACESFilmicToneMapping;
     this.renderer.shadowMap.enabled = quality === 'high';
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // only static things cast shadows, so the shadow map is re-rendered just when they change (see update())
+    this.renderer.shadowMap.autoUpdate = false; this.renderer.shadowMap.needsUpdate = true;
     this.camera = new THREE.PerspectiveCamera(fov, 1, 0.05, 120);
     this.camera.rotation.order = 'YXZ';
     this.scene.add(this.camera);
@@ -285,6 +355,9 @@ export class StoreView {
     const ring = new THREE.Mesh(new THREE.RingGeometry(0.45, 0.6, 28), new THREE.MeshBasicMaterial({ color: 0xffd43b, side: THREE.DoubleSide, transparent: true, opacity: 0.7 }));
     ring.rotation.x = -Math.PI / 2; ring.position.y = -2.2;
     this.guide.add(cone, ring); this.guide.visible = false; this.scene.add(this.guide);
+    this.blobs = new THREE.InstancedMesh(new THREE.CircleGeometry(0.42, 18).rotateX(-Math.PI / 2),
+      new THREE.MeshBasicMaterial({ color: 0x2a1f3d, transparent: true, opacity: 0.2, depthWrite: false }), 96);
+    this.blobs.count = 0; this.blobs.frustumCulled = false; this.blobs.renderOrder = 1; this.scene.add(this.blobs);
     this.highlight = new THREE.Box3Helper(new THREE.Box3(), new THREE.Color(0xffe066));
     this.highlight.visible = false;
     this.scene.add(this.highlight);
@@ -300,6 +373,7 @@ export class StoreView {
     const pr = q === 'high' ? Math.min(devicePixelRatio, 2) : q === 'medium' ? Math.min(devicePixelRatio, 1.25) : Math.min(devicePixelRatio, 0.85);
     this.renderer.setPixelRatio(pr);
     this.renderer.shadowMap.enabled = q === 'high';
+    this.renderer.shadowMap.needsUpdate = true;
     this.resize();
   }
 
@@ -550,11 +624,134 @@ export class StoreView {
     poster.position.set(12, 2.0, 0.02); S.add(poster);
     put(S, RB(2.32, 1.22, 0.02, 0.008), mat(0xf8f9fa, q), 12, 2.0, 0.0);
     this.buildDetails();
+    this.buildWallDecor();
+  }
+
+  /**
+   * Cheap wall dressing (all merged into the static meshes, no collisions): crown moulding, an analog clock, AC units,
+   * a menu / price board, framed pictures, a staff notice board and light switches. Spots that something tall stands
+   * in front of (shelves, fridges, fitting rooms, the ATM) or that already carry a poster/sign are skipped.
+   */
+  private buildWallDecor() {
+    const q = this.q, S = this.scene, TH = CURRENT_MAP.theme;
+    type Face = 'N' | 'W' | 'E' | 'SS' | 'SN';
+    // posters / signs already on the walls: [face, t0, t1, y0]
+    const reserved: [Face, number, number, number][] = [['N', 7.9, 9.3, 1.9], ['N', 10.8, 13.2, 1.3], ['N', 14.9, 16.3, 1.9], ['SS', 2.5, 4.3, 0]];
+    const blocked = (f: Face, t0: number, t1: number, y0: number) => {
+      for (const b of SOLIDS) {
+        if (b.kind === 'wall') continue;
+        const h = b.kind === 'atm' ? 2.2 : b.h; // the ATM's sign sits above it
+        const [near, s0, s1] = f === 'N' ? [b.z0 < 1.2, b.x0, b.x1] : f === 'W' ? [b.x0 < 1.2, b.z0, b.z1] : f === 'E' ? [b.x1 > STORE_W - 1.2, b.z0, b.z1]
+          : f === 'SS' ? [b.z0 < 6.4 && b.z1 > 5.25, b.x0, b.x1] : [b.z1 > 3.9 && b.z0 < 5, b.x0, b.x1];
+        if (near && s1 > t0 - 0.1 && s0 < t1 + 0.1 && h > y0 - 0.05) return true;
+      }
+      return reserved.some(([rf, a, b, ry]) => rf === f && b > t0 && a < t1 && y0 >= ry - 1.2);
+    };
+    /** Position + yaw of a point `off` metres out from a wall face. */
+    const at = (f: Face, t: number, off: number): [number, number, number] =>
+      f === 'N' ? [t, off, 0] : f === 'W' ? [off, t, Math.PI / 2] : f === 'E' ? [STORE_W - off, t, -Math.PI / 2] : f === 'SS' ? [t, 5.25 + off, 0] : [t, 5 - off, Math.PI];
+    const place = (cands: [Face, number][], w: number, y0: number, y1: number) => {
+      const c = cands.find(([f, t]) => !blocked(f, t - w / 2, t + w / 2, y0));
+      if (c) reserved.push([c[0], c[1] - w / 2, c[1] + w / 2, y0 + 1.2]);
+      return c ?? null;
+    };
+    const box = (f: Face, t: number, y: number, off: number, g: THREE.BufferGeometry, m: THREE.Material, rz = 0) => {
+      const [x, z, ry] = at(f, t, off); return put(S, g, m, x, y, z, 0, ry, rz);
+    };
+    const ink = basic(0x2a1f3d), white = mat(0xffffff, q), accent = mat(TH.accent, q);
+
+    // crown moulding along the top of the solid walls
+    const trim = mat(0xfffaf0, q), e = 0.025;
+    for (const w of WALLS) if (w.z0 < STORE_D - 0.01) S.add(boxMesh({ ...w, x0: w.x0 - e, x1: w.x1 + e, z0: w.z0 - e, z1: w.z1 + e }, 0.09, trim, 3.06));
+
+    // analog wall clock (hands follow the game clock)
+    const ck = place([['N', 18.5], ['N', 20.2], ['E', 10]], 0.62, 2.15, 2.85);
+    if (ck) {
+      const [f, t] = ck, y = 2.5;
+      box(f, t, y, 0.03, CYL(0.3, 0.3, 0.05, 24), accent, 0).rotateX(Math.PI / 2);
+      box(f, t, y, 0.06, CYL(0.25, 0.25, 0.02, 24), white).rotateX(Math.PI / 2);
+      for (let i = 0; i < 12; i++) {
+        const a = i / 12 * Math.PI * 2, r = 0.205, [x, z, ry] = at(f, t, 0.075);
+        const o = new THREE.Object3D(); o.rotation.y = ry; o.updateMatrix();
+        const p = new THREE.Vector3(Math.sin(a) * r, Math.cos(a) * r, 0).applyMatrix4(o.matrix);
+        put(S, B(i % 3 ? 0.014 : 0.026, i % 3 ? 0.035 : 0.06, 0.01), ink, x + p.x, y + p.y, z + p.z, 0, ry, -a);
+      }
+      const [x, z, ry] = at(f, t, 0.085);
+      const hands = new THREE.Group(); hands.position.set(x, y, z); hands.rotation.y = ry; S.add(hands);
+      const hand = (len: number, wd: number, zo: number) => {
+        const pv = new THREE.Group(); pv.position.z = zo; hands.add(pv);
+        put(pv, B(wd, len, 0.008), ink, 0, len / 2 - 0.02, 0); return pv;
+      };
+      this.clockHands = [hand(0.13, 0.026, 0), hand(0.19, 0.016, 0.008)];
+      put(hands, CYL(0.022, 0.022, 0.02, 10), basic(TH.accent), 0, 0, 0.012, Math.PI / 2);
+    }
+
+    // AC units high on the wall (white body, dark vent slot, a green power light)
+    for (const ac of [place([['N', 17.1], ['N', 21.9], ['N', 9.9]], 1.1, 2.5, 3.0), place([['E', 5], ['E', 12.5], ['W', 6]], 1.1, 2.5, 3.0)]) {
+      if (!ac) continue;
+      const [f, t] = ac;
+      box(f, t, 2.76, 0.13, RB(1.05, 0.32, 0.24, 0.06, 2), mat(0xf8f9fa, q, { rough: 0.5 }));
+      box(f, t, 2.65, 0.255, B(0.9, 0.035, 0.012), mat(0x495057, q));
+      for (let i = 0; i < 3; i++) box(f, t, 2.84 - i * 0.045, 0.252, B(0.86, 0.01, 0.006), mat(0xdee2e6, q));
+      const [x, z, ry] = at(f, t, 0.256); const o = new THREE.Vector3(0.43, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), ry);
+      put(S, SPH(0.012, 6, 4), basic(0x51cf66), x + o.x, 2.7, z + o.z);
+    }
+
+    // menu / price board in the shop's colours
+    const mb = place([['N', 20.9], ['N', 17.3], ['E', 10.6], ['E', 12.4]], 1.7, 1.75, 2.8);
+    if (mb) {
+      const [f, t] = mb;
+      box(f, t, 2.3, 0.025, RB(1.72, 1.0, 0.05, 0.02), mat(0x8d6e63, q));
+      const m = this.atlas.mesh(1.6, 0.88, () => menuBoardCanvas());
+      const [x, z, ry] = at(f, t, 0.055); m.position.set(x, 2.3, z); m.rotation.y = ry; S.add(m);
+    }
+
+    // framed pictures (procedural art, no text)
+    const pics: [[Face, number][], number, number, number][] = [
+      [[['E', 12.6], ['E', 10.4], ['W', 14.4]], 0.8, 0.6, 1.75],
+      [[['W', 14.4], ['W', 5.9], ['E', 14.6]], 0.6, 0.75, 1.8],
+      [[['N', 7.35], ['SS', 1.3], ['E', 9.1]], 0.5, 0.62, 1.75],
+      [[['SS', 1.3], ['SS', 0.7], ['W', 11.6]], 0.6, 0.5, 1.7],
+    ];
+    const frameM = [mat(0x8d6e63, q), mat(0xfffaf0, q), mat(0x2a1f3d, q), accent];
+    pics.forEach(([cands, w, h, y], i) => {
+      const pc = place(cands, w + 0.1, y - h / 2 - 0.05, y + h / 2 + 0.05);
+      if (!pc) return;
+      const [f, t] = pc;
+      box(f, t, y, 0.02, RB(w + 0.1, h + 0.1, 0.04, 0.015), frameM[i % frameM.length]);
+      const m = this.atlas.mesh(w - 0.02, h - 0.02, () => artCanvas(i));
+      const [x, z, ry] = at(f, t, 0.042); m.position.set(x, y, z); m.rotation.y = ry; S.add(m);
+    });
+
+    // staff notice board: cork with pinned notes, by the stockroom
+    const nb = place([['SS', 5.35], ['SS', 1.2], ['E', 9.3]], 1.15, 1.05, 1.95);
+    if (nb) {
+      const [f, t] = nb;
+      box(f, t, 1.5, 0.02, RB(1.15, 0.8, 0.04, 0.02), mat(0x6d4c41, q));
+      box(f, t, 1.5, 0.035, B(1.03, 0.68, 0.02), mat(0xd4a373, q));
+      const notes: [number, number, number, number, number][] = [[-0.34, 0.12, 0.26, 0.3, 0xfff9db], [-0.02, 0.15, 0.24, 0.22, 0xd0ebff], [0.3, 0.1, 0.24, 0.32, 0xffffff],
+        [-0.3, -0.18, 0.3, 0.2, 0xffdeeb], [0.05, -0.14, 0.26, 0.26, 0xd3f9d8], [0.34, -0.2, 0.2, 0.16, 0xfff3bf]];
+      const pins = [0xff5d5d, 0x48a6ff, 0xffc23d, 0x39c96b];
+      notes.forEach(([dx, dy, w, h, c], i) => {
+        const [x, z, ry] = at(f, t, 0.048); const v = new THREE.Vector3(dx, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), ry);
+        put(S, B(w, h, 0.006), mat(c, q), x + v.x, 1.5 + dy, z + v.z, 0, ry, ((i * 37) % 7 - 3) * 0.03);
+        for (let l = 0; l < 3; l++) put(S, B(w * (0.75 - l * 0.12), 0.012, 0.004), basic(0xadb5bd), x + v.x * 1.0, 1.5 + dy + h * 0.2 - l * 0.05, z + v.z, 0, ry, 0);
+        const [px, pz] = at(f, t, 0.058); const pv = new THREE.Vector3(dx, 0, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), ry);
+        put(S, SPH(0.018, 6, 4), basic(pins[i % pins.length]), px + pv.x, 1.5 + dy + h / 2 - 0.03, pz + pv.z);
+      });
+    }
+
+    // light switches beside the stockroom doorway (both sides of the wall)
+    for (const [f, t] of [['SS', 4.45], ['SN', 4.45]] as [Face, number][]) {
+      if (blocked(f, t - 0.1, t + 0.1, 1.1)) continue;
+      box(f, t, 1.25, 0.012, RB(0.09, 0.13, 0.02, 0.008), white);
+      box(f, t, 1.25, 0.024, RB(0.03, 0.05, 0.012, 0.005), mat(0xdee2e6, q));
+    }
   }
 
   /** Floating station name (cream pill). Hidden when the camera is right next to it: the interaction prompt says it then. */
   private stationLabel(key: string, text: string, x: number, y: number, z: number, on: () => boolean = () => true, bg?: string) {
-    const l = new Label({ k: 0.0022, maxScreen: 0.036, minScreen: 0.02, fade: [1.3, 2.3] });
+    const l = new Label({ k: 0.0024, maxScreen: 0.05, minScreen: 0.034, fade: [1.3, 2.3] });
     l.set(key, () => pillCanvas({ text, size: 46, bg }));
     l.sprite.position.set(x, y, z); l.sprite.userData.dynamic = true; this.scene.add(l.sprite);
     this.stationLabels.push({ l, on });
@@ -831,7 +1028,8 @@ export class StoreView {
       o.updateMatrixWorld(true);
       const g = o.geometry.index ? o.geometry.clone() : o.geometry.clone();
       g.applyMatrix4(o.matrixWorld);
-      for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
+      const keep = m.vertexColors ? ['position', 'normal', 'uv', 'color'] : ['position', 'normal', 'uv'];
+      for (const k of Object.keys(g.attributes)) if (!keep.includes(k)) g.deleteAttribute(k);
       // plain colours share one vertex-coloured material (glow materials keep theirs: they dim with the power)
       const vc = glowSet.has(m) ? null : vertexColorMat(m);
       if (vc) paint(g, (m as THREE.MeshBasicMaterial).color);
@@ -880,10 +1078,12 @@ export class StoreView {
     }
     // buildings across the street with lit windows
     const cols = ['#c9ada7', '#9a8c98', '#b5838d', '#6d6875', '#a3b18a'];
+    const bm = new THREE.MeshLambertMaterial({ map: windowsTexture(cols) });
     for (let i = 0; i < 7; i++) {
-      const hgt = 7 + (i * 37) % 10;
-      const tex = windowsTexture(cols[i % cols.length]);
-      const b = new THREE.Mesh(new THREE.BoxGeometry(7, hgt, 6), new THREE.MeshLambertMaterial({ map: tex }));
+      const hgt = 7 + (i * 37) % 10, col = i % cols.length;
+      const bg = new THREE.BoxGeometry(7, hgt, 6), uv = bg.attributes.uv as THREE.BufferAttribute;
+      for (let k = 0; k < uv.count; k++) uv.setX(k, (col + 0.02 + uv.getX(k) * 0.96) / cols.length);
+      const b = new THREE.Mesh(bg, bm);
       b.position.set(-12 + i * 8, hgt / 2, 32); S.add(b);
     }
     // a couple of parked scooters
@@ -949,6 +1149,9 @@ export class StoreView {
       }
     }
     this.mopsOnRack.forEach((m, i) => { m.visible = i < snap.mopsOnRack; });
+    // re-render the shadow map only when something that casts a shadow changed (stock levels, crates, 2nd register)
+    const sig = PRODUCTS.map(p => this.shelfInst.get(p)!.mesh.count + ':' + this.crateStacks.get(p)!.userData.n).join(',') + (snap.upgrades.register2 > 0 ? 'r' : '');
+    if (sig !== this.shadowSig) { this.shadowSig = sig; this.renderer.shadowMap.needsUpdate = true; }
     this.reg2On = snap.upgrades.register2 > 0;
     this.register2.forEach(o => { o.visible = this.reg2On; });
     // analog wall clock follows the in-game time
@@ -1030,6 +1233,17 @@ export class StoreView {
       if (Math.abs(e.s.x - 12) < 2.2 && Math.abs(e.s.z - 16) < 2.2) doorNear = true;
     }
     for (const [id, e] of this.players) if (!seenP.has(id)) { this.scene.remove(e.h.group); this.players.delete(id); }
+    // blob shadows: shrink and fade-ish (smaller) while someone is lifted or flying
+    let nb = 0;
+    const m4 = new THREE.Matrix4();
+    const blob = (x: number, z: number, y: number, s: number) => {
+      if (nb >= this.blobs.instanceMatrix.count) return;
+      const k = s * Math.max(0.35, 1 - Math.max(0, y) * 0.35);
+      this.blobs.setMatrixAt(nb++, m4.makeScale(k, 1, k).setPosition(x, 0.018, z));
+    };
+    for (const c of snap.customers) { const e = this.customers.get(c.id); if (e) blob(e.s.x, e.s.z, c.held ? 0.9 : c.flying ? c.y : 0, e.h.group.scale.x * (c.state === 'charge' && !c.held ? 1.2 : 1)); }
+    for (const e of this.players.values()) blob(e.s.x, e.s.z, 0, 1);
+    this.blobs.count = nb; this.blobs.instanceMatrix.needsUpdate = true;
 
     // outage dims the lights, microwave glows while someone heats food
     this.power += (snap.power - this.power) * Math.min(1, dt * 4);

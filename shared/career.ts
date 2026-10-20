@@ -273,6 +273,43 @@ export const CHAPTERS: ChapterDef[] = [
       S({ id: '7-6', title: '宵夜大雞排', map: 'chicken', length: 180, goal: 370, karens: ['custom', 'streamer', 'litterer', 'charger'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage'], spawnEvery: 5.2 }),
     ],
   },
+  // 第 8–10 章：每一班換一種店，主角是那種店的「招牌奧客」(shared/sigkarens.ts)
+  {
+    n: 8, title: '商圈見習週', place: '藥妝店・書店・麵包店・超市・寵物店・咖啡廳', minLevel: 27, baseExp: 820, register2: true,
+    story: '小林的專題「全台奧客圖鑑」要出續集，阿芬姐幫你排了一週的商圈見習：一天一種店，一種店一種奧客。',
+    shifts: [
+      S({ id: '8-1', title: '試用品風暴', map: 'drugstore', length: 150, goal: 430, karens: ['sampler', 'cutter'], maxKarens: 2, spawnEvery: 5.6, hints: ['藥妝店的「試用品掃貨客」會一排一排狂用試用品：追上去「收走試用品」，他換一排還要再收一次。'] }),
+      S({ id: '8-2', title: '打烊前的書店', map: 'bookstore', length: 160, goal: 345, karens: ['reader', 'litterer'], maxKarens: 2, foods: ['coffee'], spawnEvery: 5.6, hints: ['「白看書魔人」坐在書架前一直翻：對他「請他到櫃台結帳」要講久一點，他會買走那本。'] }),
+      S({ id: '8-3', title: '出爐時間', map: 'bakery', length: 160, goal: 285, karens: ['toucher', 'hog'], maxKarens: 2, foods: ['coffee'], events: ['rush'], spawnEvery: 5.4, hints: ['「徒手摸麵包」一靠近就閃人：追上去「遞夾子托盤」，他就乖乖夾一個去結帳。'] }),
+      S({ id: '8-4', title: '週末試吃大會', map: 'supermarket', length: 170, goal: 370, karens: ['taster', 'cutter', 'rager'], maxKarens: 3, foods: ['meal'], events: ['rush'], spawnEvery: 5.2, hints: ['「試吃狂」站在試吃台吃個不停，每幾秒就燒掉試吃成本：「一人一份喔」說兩次（他會換一個試吃台）。'] }),
+      S({ id: '8-5', title: '毛孩日', map: 'petshop', length: 170, goal: 330, karens: ['dogfeed', 'litterer', 'streamer'], maxKarens: 3, spawnEvery: 5.2, hints: ['「狗狗試吃團」拆零食給狗吃還尿在地上：去倉庫拿一箱貨，拿著貨箱對他「遞一包試吃包」，他就會買。'] }),
+      S({ id: '8-6', title: '筆電森林', map: 'cafe', length: 180, goal: 340, karens: ['squatter', 'charger', 'rager'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage'], spawnEvery: 5.2, hints: ['「一杯坐整天」霸佔座位燒翻桌率：提醒兩次，或沖一杯咖啡「幫他續杯」直接解決（還多賺一杯）。'] }),
+    ],
+  },
+  {
+    n: 9, title: '夜生活', place: '電影院・火鍋吃到飽・加油站・健身房・牛排館・雞排店', minLevel: 28, baseExp: 840, register2: true,
+    story: '見習週結束，小林說晚上的奧客才精彩。電影院、吃到飽、加油站、健身房……一路做到宵夜場。',
+    shifts: [
+      S({ id: '9-1', title: '午夜場', map: 'cinema', length: 160, goal: 265, karens: ['kicker', 'streamer'], maxKarens: 2, foods: ['coffee', 'meal'], spawnEvery: 5.4, hints: ['「踢椅背大叔」坐在等候區吵鬧，他附近的客人耐心掉超快：去「請他坐好小聲」兩次。'] }),
+      S({ id: '9-2', title: '吃到飽之夜', map: 'hotpot', length: 170, goal: 315, karens: ['packer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], spawnEvery: 5.2, hints: ['「偷打包客」要靠近才看得到，他會把肉盤塞進保鮮盒：「檢查打包盒」逼他結帳，放他走店裡要賠。'] }),
+      S({ id: '9-3', title: '深夜加油', map: 'gas', length: 160, goal: 420, karens: ['wiper', 'cutter', 'charger'], maxKarens: 3, foods: ['coffee'], events: ['outage'], spawnEvery: 5.4, hints: ['「免費擦車哥」在收銀台不擦車不付錢：去西側牆邊拿拖把，拿著拖把對他「幫他擦車窗」。'] }),
+      S({ id: '9-4', title: '下班後的健身房', map: 'gym', length: 170, goal: 430, karens: ['benchhog', 'streamer', 'litterer'], maxKarens: 3, foods: ['coffee'], events: ['rush'], spawnEvery: 5.2, hints: ['「器材霸主」霸佔器材時，全店排隊的人耐心都掉得快：「請他讓出器材」要說三次。'] }),
+      S({ id: '9-5', title: '情人節牛排', map: 'steak', length: 180, goal: 440, karens: ['doneness', 'custom', 'rager'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 5.2, hints: ['「熟度魔人」坐著大罵不是五分熟：到鐵板重煎一份，拿著它對他「送上重煎的」，他會付錢。'] }),
+      S({ id: '9-6', title: '回鍋宵夜', map: 'chicken', length: 180, goal: 350, karens: ['refry', 'custom', 'streamer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage'], spawnEvery: 5.2, hints: ['雞排店的「回鍋魔人」在收銀台嫌不夠酥：炸一塊現炸的，拿著它對他「換一塊現炸的」。'] }),
+    ],
+  },
+  {
+    n: 10, title: '全台奧客圖鑑', place: '3C 賣場・美髮院・郵局・藥局・飯店・便利商店', minLevel: 29, baseExp: 880, register2: true,
+    story: '圖鑑只差最後幾頁：退貨、剪髮、寄包裹、買藥、住飯店。最後，圖鑑裡的奧客一起回到了錢董的便利商店。',
+    shifts: [
+      S({ id: '10-1', title: '開箱退貨潮', map: 'electronics', length: 160, goal: 820, karens: ['unboxer', 'cutter', 'hog'], maxKarens: 2, spawnEvery: 5.4, hints: ['「拆封退貨王」在服務台要退自己摔壞的耳機：「檢查拆封痕跡」兩次，或直接退款 $40；放著不管會被迫退 $80。'] }),
+      S({ id: '10-2', title: '婚禮前一天', map: 'salon', length: 170, goal: 520, karens: ['photo', 'rager', 'charger'], maxKarens: 3, foods: ['coffee', 'meal'], spawnEvery: 5.2, hints: ['「照片魔人」剪好兩次都說不像：可以一直重剪，或「拿照片比對」好好說明。'] }),
+      S({ id: '10-3', title: '月初領年金', map: 'post', length: 170, goal: 280, karens: ['coins', 'cutter', 'rager'], maxKarens: 3, events: ['rush'], spawnEvery: 5.2, hints: ['「一袋零錢阿伯」在櫃台倒出一整袋硬幣：要「幫他數零錢」三次才結得了帳，第二台收銀機先顧著。'] }),
+      S({ id: '10-4', title: '流感季', map: 'pharmacy', length: 170, goal: 430, karens: ['rx', 'cutter', 'charger'], maxKarens: 3, events: ['rush'], spawnEvery: 5.2, hints: ['「無處方硬要藥」在櫃台越講越大聲：「堅持要處方箋」讓他降火，或「推薦成藥」；火氣滿了會大鬧。'] }),
+      S({ id: '10-5', title: '連假客滿', map: 'hotel', length: 180, goal: 420, karens: ['upgrader', 'rager', 'charger'], maxKarens: 3, foods: ['coffee'], events: ['rush'], spawnEvery: 5.2, hints: ['「硬要升等」堅持自己是 VIP：「說明今天客滿」三次，或花 $25「送早餐券」。'] }),
+      S({ id: '10-6', title: '圖鑑大集合', length: 200, goal: 445, karens: ['coins', 'unboxer', 'toucher', 'kicker', 'upgrader', 'taster', 'wiper'], maxKarens: 3, karenEvery: 34, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5, expMul: 1.5, hints: ['圖鑑裡的奧客全部來到錢董的便利商店！每一種都用它自己的方法處理，記得看畫面上方的提示。'] }),
+    ],
+  },
 ];
 export function allShifts() { return CHAPTERS.flatMap(c => c.shifts.map(s => ({ ...s, chapter: c.n }))); }
 export function findShift(id: string) {
@@ -361,7 +398,8 @@ function seededRng(seed: number) { let a = seed; return () => { a = (a + 0x6d2b7
 /** Same scene and modifiers for everyone on a given date; difficulty follows the player's progress. */
 export function dailyPlan(p: CareerProfile, date: string) {
   const rng = seededRng(dailySeed(date));
-  const scene = 1 + Math.floor(rng() * CHAPTERS.length);
+  // scenes (and difficulty) come from the convenience-store chapters 1–7; chapters 8+ are other stores' own goals
+  const scene = 1 + Math.floor(rng() * 7);
   // a different kind of store each day
   const map = MAPS[Math.floor(rng() * MAPS.length)].id;
   const md = MAPS.find(m => m.id === map);

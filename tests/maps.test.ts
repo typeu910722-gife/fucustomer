@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { MAPS } from '../shared/maps/index.ts';
 import {
   CELL, CHARGE_SPOT, COFFEE_MACHINE, COFFEE_PICKUP, COMPLAINT_SPOT, CRATES, CURRENT_MAP, ENTRANCE, GD, GW, MICROWAVE, PLAYER_SPAWNS,
-  QUEUE_SPOTS, REGISTERS, SHELVES, SOLIDS, WANDER_SPOTS, applyMap, distToAABB, isBlockedCell, shelfBrowseSpots,
+  QUEUE_SPOTS, REGISTERS, SHELVES, SOLIDS, WANDER_SPOTS, CAMP_SPOTS, TRYON_SPOTS, applyMap, distToAABB, isBlockedCell, shelfBrowseSpots,
 } from '../shared/map.ts';
 import { FOOD_INFO, PRODUCT_INFO, PRODUCTS } from '../shared/constants.ts';
 import { Room } from '../shared/room.ts';
@@ -42,13 +42,27 @@ for (const m of MAPS) {
     free(COFFEE_PICKUP, 'pickup'); free(COMPLAINT_SPOT, 'complaint'); free(CHARGE_SPOT, 'charge spot');
     for (const p of PLAYER_SPAWNS) free(p, 'player spawn');
     for (const w of WANDER_SPOTS) free(w, 'wander spot');
+    for (const w of CAMP_SPOTS) free(w, 'camp spot');
+    for (const w of TRYON_SPOTS) free(w, 'try-on spot');
     for (const sh of SHELVES) for (const s of shelfBrowseSpots(sh.product)) free(s, `${sh.product} browse`, 0.2);
+    // no two pieces of furniture overlap (walls excluded: the stockroom walls touch the north wall)
+    const furniture = SOLIDS.filter(b => b.kind !== 'wall');
+    for (let i = 0; i < furniture.length; i++) for (let j = i + 1; j < furniture.length; j++) {
+      const a = furniture[i], b = furniture[j];
+      const overlap = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0) > 0.01 && Math.min(a.z1, b.z1) - Math.max(a.z0, b.z0) > 0.01;
+      assert.ok(!overlap, `${a.kind} ${JSON.stringify(a)} overlaps ${b.kind} ${JSON.stringify(b)}`);
+    }
+    for (const b of furniture) for (const wl of SOLIDS.filter(x => x.kind === 'wall')) {
+      const overlap = Math.min(b.x1, wl.x1) - Math.max(b.x0, wl.x0) > 0.01 && Math.min(b.z1, wl.z1) - Math.max(b.z0, wl.z0) > 0.01;
+      assert.ok(!overlap, `${b.kind} ${JSON.stringify(b)} sticks into a wall`);
+    }
     // customers walk in from the door; workers move between stockroom, shelves, stations and registers
     const fromDoor = reachableFrom(ENTRANCE);
     for (const sh of SHELVES) assert.ok(shelfBrowseSpots(sh.product).some(fromDoor), `${sh.product} shelf unreachable`);
     for (const r of REGISTERS) { assert.ok(fromDoor(r.customer), `register ${r.idx} unreachable for customers`); assert.ok(fromDoor(r.cashier), `register ${r.idx} unreachable for staff`); }
     for (const q of QUEUE_SPOTS) assert.ok(fromDoor(q), 'queue unreachable');
     assert.ok(fromDoor(COFFEE_PICKUP) && fromDoor(COMPLAINT_SPOT) && fromDoor(CHARGE_SPOT));
+    for (const w of [...WANDER_SPOTS, ...CAMP_SPOTS, ...PLAYER_SPAWNS]) assert.ok(fromDoor(w), `spot (${w.x},${w.z}) unreachable`);
     for (const c of CRATES) assert.ok(fromDoor({ x: (c.box.x0 + c.box.x1) / 2, z: c.box.z1 + 0.7 }), 'crate unreachable');
     if (m.coffee) assert.ok(fromDoor({ x: (COFFEE_MACHINE.x0 + COFFEE_MACHINE.x1) / 2, z: COFFEE_MACHINE.z1 + 0.6 }), 'coffee station unreachable');
     if (m.meal) assert.ok(fromDoor({ x: (MICROWAVE.x0 + MICROWAVE.x1) / 2, z: MICROWAVE.z1 + 0.6 }), 'meal station unreachable');
