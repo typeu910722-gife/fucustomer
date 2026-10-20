@@ -2,8 +2,8 @@
 import { CAST, SCENES } from '../../shared/story.ts';
 import type { Incident } from '../../shared/career.ts';
 import {
-  APPEAL_COST, JUDGES, JudgeKind, PROTESTS, Protest, Verdict, allJustified, baseFine, dinoVerdict, fairVerdict, pickJudge,
-  protest, questions, sleepyVerdict,
+  APPEAL_COST, JUDGES, JudgeKind, PROTESTS, Protest, Verdict, allJustified, baseFine, cameraLevel, dinoVerdict, fairVerdict, pickJudge,
+  policeReview, protest, protestOptions, questions, sleepyVerdict,
 } from '../../shared/court.ts';
 import { esc, show } from './ui.ts';
 import { audio } from './audio.ts';
@@ -42,14 +42,15 @@ export function playLines(title: string, lines: DialogLine[], done: () => void, 
   render();
 }
 
-export interface CourtResult { fine: number; extraCost: number; judge: JudgeKind; text: string }
+/** judge null: the police dropped the case after watching the 監視器 footage. */
+export interface CourtResult { fine: number; extraCost: number; judge: JudgeKind | null; text: string }
 
 /** Police → case → judge → (questions | absurd verdict + protest | sleepy verdict) → final fine. */
 export function courtScreen(incidents: Incident[], chapter: number, done: (r: CourtResult) => void, rng: () => number = Math.random) {
   let extraCost = 0, appealed = false, coughed = false;
   const facts = incidents.map(i => `<li class="${i.legal ? 'ok' : 'bad'}">${i.legal ? '✅ 佔理' : '❌ 不佔理'}・${esc(i.who)}：${esc(i.why)}${i.vip ? '（💼 有背景）' : ''}</li>`).join('');
   const header = (j: JudgeKind | null) => `<div class="court-head"><span class="judge">${j ? JUDGES[j].icon : '👮'}</span><div><b>${j ? `審訊・${JUDGES[j].name}` : '警察局'}</b><div class="muted">${j ? esc(JUDGES[j].intro) : '有人報案說你在店裡動手打人'}</div></div></div>`;
-  const finish = (fine: number, text: string, judge: JudgeKind) => {
+  const finish = (fine: number, text: string, judge: JudgeKind | null) => {
     audio.play(fine === 0 ? 'win' : 'lose');
     show(`<div class="card wide court">${header(judge)}
       <div class="verdict ${fine === 0 ? 'free' : ''}">${esc(text)}</div>
@@ -67,7 +68,7 @@ export function courtScreen(incidents: Incident[], chapter: number, done: (r: Co
       return;
     }
     // 恐龍法官: the verdict is absurd, so the player gets to fight back
-    const opts = (Object.keys(PROTESTS) as Protest[]).filter(k => k !== 'appeal' || !appealed);
+    const opts = protestOptions(incidents, appealed);
     show(`<div class="card wide court">${header(judge)}<div class="verdict bad">🦖 ${esc(v.text)}</div>
       <p class="muted">你要怎麼做？</p>
       <div class="grid2">${opts.map(k => `<button class="btn protest" data-p="${k}"><b>${PROTESTS[k].label}</b><small>${esc(PROTESTS[k].desc)}</small></button>`).join('')}</div></div>`);
@@ -99,12 +100,15 @@ export function courtScreen(incidents: Incident[], chapter: number, done: (r: Co
       document.getElementById('ct-go')!.onclick = () => verdictScreen(judge, v);
     } else verdictScreen(judge, v);
   };
-  // 1) police + case facts
+  // 1) police + case facts (+ the store's 監視器 footage, watched before anything else)
   const base = baseFine(incidents, chapter);
+  const cam = cameraLevel(incidents), review = policeReview(incidents, rng);
+  const camHtml = review ? `<div class="verdict cctv ${review.dismissed ? 'free' : ''}" id="ct-cctv">📹 監視器 Lv${cam}：${esc(review.text)}</div>` : '';
   show(`<div class="card wide court">${header(null)}
-    <p>案情：</p><ul class="facts">${facts}</ul>
-    <p class="muted">${allJustified(incidents) ? '每一筆都是正當防衛，只是對方有背景……你是佔理的一方。' : `依規定可能罰款約 $${base}。`}</p>
-    <button class="btn primary" id="ct-next">前往法院 ▶</button></div>`);
+    <p>案情：</p><ul class="facts">${facts}</ul>${camHtml}
+    ${review?.dismissed ? '' : `<p class="muted">${allJustified(incidents) ? '每一筆都是正當防衛，只是對方有背景……你是佔理的一方。' : `依規定可能罰款約 $${base}。`}</p>`}
+    ${review?.dismissed ? '<button class="btn primary" id="ct-free">🎉 離開警察局</button>' : '<button class="btn primary" id="ct-next">前往法院 ▶</button>'}</div>`);
+  if (review?.dismissed) { document.getElementById('ct-free')!.onclick = () => finish(0, review.text, null); return; }
   document.getElementById('ct-next')!.onclick = () => {
     const j = pickJudge(rng);
     show(`<div class="card wide court">${header(j)}<p>今天的法官是……<b>${JUDGES[j].icon} ${JUDGES[j].name}</b></p><button class="btn primary" id="ct-go">開庭</button></div>`);

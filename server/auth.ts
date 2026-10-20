@@ -3,6 +3,7 @@
 // We keep only a SHA-256 hash of the Google account id, never the e-mail address.
 import { createHash, createPublicKey, randomBytes, randomInt, timingSafeEqual, verify, type JsonWebKeyInput } from 'node:crypto';
 import { getCosmetic } from '../shared/shop.ts';
+import { applyWeekBadges, viewWeekBadges } from '../shared/license-card.ts';
 type JsonWebKey = JsonWebKeyInput['key'];
 
 export interface GoogleClaims { sub: string; aud: string; iss: string; exp: number; name?: string }
@@ -49,6 +50,8 @@ export interface LicenseCard {
   stars: number; achievements: number; storeName: string; quote: string; updatedAt: number;
   /** 商城: equipped hat id and the supporter badge (cosmetic only; not verified against a store receipt yet). */
   hat?: string; supporter?: boolean;
+  /** 每週挑戰週章: newest week ids (≤8, e.g. "2026-W43") and how many in total. Old cards: none. */
+  weekBadges?: string[]; weekBadgeCount?: number;
 }
 interface LicenseRecord extends LicenseCard { owner: string; sessions: string[]; createdAt: number }
 
@@ -186,6 +189,7 @@ export class LicenseRegistry {
     if ('storeName' in b) r.storeName = str(b.storeName, 16, r.storeName);
     if ('hat' in b) r.hat = typeof b.hat === 'string' && getCosmetic(b.hat)?.slot === 'hat' ? b.hat : '';
     if ('supporter' in b) r.supporter = b.supporter === true;
+    applyWeekBadges(r, b);
     if ('quote' in b) r.quote = str(b.quote, 40, r.quote);
     r.updatedAt = this.now(); this.persist(r);
     return { ok: true, value: this.view(r) };
@@ -194,6 +198,6 @@ export class LicenseRegistry {
   get(no: string): R<LicenseCard> { const r = this.byNo.get(no); return r ? { ok: true, value: this.view(r) } : { ok: false, status: 404, error: '查無此證照' }; }
   view(r: LicenseRecord): LicenseCard {
     const { no, name, level, rank, title, avatar, stars, achievements, storeName, quote, updatedAt, hat, supporter } = r;
-    return { no, name, level, rank, title, avatar, stars, achievements, storeName, quote, updatedAt, hat: hat ?? '', supporter: supporter === true };
+    return { no, name, level, rank, title, avatar, stars, achievements, storeName, quote, updatedAt, hat: hat ?? '', supporter: supporter === true, ...viewWeekBadges(r) };
   }
 }

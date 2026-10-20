@@ -6,7 +6,8 @@ import {
 } from '../../shared/constants.ts';
 import { applyMap, CURRENT_MAP, COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, AABB, clampToStore, resolveCollision } from '../../shared/map.ts';
 import type { ShiftResult } from '../../shared/career.ts';
-import { BOSS_HOW, BOSS_PHASES } from '../../shared/constants.ts';
+import { BOSS_HOW, BOSS_PHASES, EMPTY_SHELF_GRACE } from '../../shared/constants.ts';
+import { NEAR_EMPTY, ShelfWatch } from './shelfwatch.ts';
 import { NEED_LABEL, SIG_KARENS, SigNeed, isSig, sigWaitReason } from '../../shared/sigkarens.ts';
 import { DEX_SPEAKER, aftermathLine } from '../../shared/karendex.ts';
 import { Tutorial, TutorialView } from './tutorial.ts';
@@ -82,6 +83,9 @@ export class Game {
   private tutorial: Tutorial | null = null;
   private tut: TutorialView | null = null;
   private flags = loadFlags();
+  private shelfWatch = new ShelfWatch();
+  private shelfGuide: { x: number; z: number } | null = null;
+  private stockHtml = '';
   private introTimers: number[] = [];
 
   constructor(private conn: GameConnection, private settings: Settings, private touch: boolean, private onExit: (reason?: string, result?: ShiftResult | null) => void) {
@@ -359,6 +363,20 @@ export class Game {
       this.afTimers.push(window.setTimeout(() => el.classList.add('fade'), 5200), window.setTimeout(() => el.classList.add('hidden'), 5700));
     }, delay)];
   }
+  /** Empty / low shelf: short rate-limited toast for a low shelf, guide arrow to the crate, and a one-time tip (chapters 1–3). */
+  private shelfWarnings(s: Snapshot, me: Snapshot['players'][number]) {
+    const now = performance.now();
+    const ch = this.shelfWatch.update(s, now);
+    for (const p of ch.low) {
+      if (s.backstock[p] > 0) this.toast(`⚠ ${PRODUCT_INFO[p].name}貨架快空了（剩 ${s.shelves[p]}），去倉庫拿${PRODUCT_INFO[p].name}貨箱`, 'info', 2200);
+    }
+    if (ch.empty.length && !this.tut && s.shift.mode === 'shift' && s.shift.chapter <= 3 && !this.flags.shelfTipDone) {
+      this.flags.shelfTipDone = true; saveFlags(this.flags);
+      this.showHint(`貨架空了！${EMPTY_SHELF_GRACE} 秒內補上就不扣口碑：跟著黃色箭頭到倉庫拿貨箱，再對貨架按 ${this.touch ? '「互動」' : keyOf('interact')} 上架`);
+    }
+    this.shelfGuide = this.tut ? null : this.shelfWatch.guide(s, me, now);
+  }
+
   private showHint(text: string) {
     const el = $('hintbar'); el.textContent = '💡 ' + text; el.classList.remove('hidden');
     this.hintUntil = performance.now() + 7000;
@@ -724,9 +742,9 @@ export class Game {
     this.view.setHighlight(tb);
     if (!this.tutorial && s.shift.id === '1-1' && !this.flags.tutorialDone) this.tutorial = new Tutorial(this.touch, () => keyOf('interact'));
     this.tut = this.tutorial ? this.tutorial.update(s, me, this.pos, now) : null;
-    this.view.setGuide(this.tut?.target ?? null);
+    this.view.setGuide(this.tut?.target ?? this.shelfGuide);
     this.view.render();
-    this.minimap.draw(s, this.selfId, { x: this.pos.x, z: this.pos.z, yaw: this.yaw }, now / 1000, this.tut?.target ?? null);
+    this.minimap.draw(s, this.selfId, { x: this.pos.x, z: this.pos.z, yaw: this.yaw }, now / 1000, this.tut?.target ?? this.shelfGuide);
 
     this.hudT -= dt;
     if (this.hudT <= 0) { this.hudT = 0.1; this.updateHud(s, me); }
@@ -755,10 +773,18 @@ export class Game {
     const nBots = s.players.filter(p => p.bot).length;
     $('h-players').textContent = `👥 ${s.players.filter(p => p.connected && !p.bot).length}/5${nBots ? ` +🤖${nBots}` : ''}`;
     const cap = shelfCapacity(s.upgrades.shelves);
-    $('h-stock').innerHTML = PRODUCTS.map(p => {
+    this.shelfWarnings(s, me);
+    const nowMs = performance.now();
+    const stockHtml = PRODUCTS.map(p => {
       const r = s.shelves[p] / cap;
-      return `<div class="stockrow"><span>${PRODUCT_INFO[p].name}</span><span>${s.shelves[p]}/${cap}・倉 ${s.backstock[p]}</span></div><div class="bar"><i style="width:${r * 100}%;background:${r < 0.3 ? '#ff6b6b' : '#4dabf7'}"></i></div>`;
+      // empty / nearly empty shelves flash; an empty one shows how long until bare-shelf customers cost rating
+      const warn = (s.phase === 'open' || s.phase === 'closing') && !s.raid && s.shelves[p] <= NEAR_EMPTY;
+      const g = this.shelfWatch.isEmpty(p) ? this.shelfWatch.graceLeft(p, nowMs) : -1;
+      const tag = g < 0 ? '' : g > 0 ? `<b class="shelfwarn">空了！${g}s</b>` : '<b class="shelfwarn">空架扣口碑中</b>';
+      return `<div class="stockrow${warn ? ' warn' : ''}"><span>${PRODUCT_INFO[p].name}${tag}</span><span>${s.shelves[p]}/${cap}・倉 ${s.backstock[p]}</span></div><div class="bar${warn ? ' warn' : ''}"><i style="width:${r * 100}%;background:${r < 0.3 ? '#ff6b6b' : '#4dabf7'}"></i></div>`;
     }).join('') + `<div class="stockrow"><span>🧹 拖把</span><span>${s.mopsOnRack}/2</span></div><div class="stockrow"><span>💧 髒污</span><span>${s.spills.length}</span></div>`;
+    // only touch the DOM when something changed (keeps the empty-shelf flash animation running smoothly)
+    if (stockHtml !== this.stockHtml) { this.stockHtml = stockHtml; $('h-stock').innerHTML = stockHtml; }
     $('h-team').innerHTML = s.players.map(p => {
       const held = p.held ? (p.held.kind === 'box' ? '📦' : p.held.kind === 'coffee' ? '☕' : '🧹') : '';
       const st = !p.connected ? '📶' : p.away ? '💤' : p.busy ? '⏳' : '';

@@ -353,6 +353,17 @@ test('Google sign-in + licence cards over HTTP (worker + LicenseDO)', { skip: !!
   const b = await api('POST', '/api/auth/google', { credential: idToken({ ...goodClaims(), sub: '999', name: '別人' }) });
   assert.notEqual(b.data.no, a.data.no);
   assert.equal(b.data.card.name, '別人');
+  // 每週挑戰週章 on the public card: old cards have none; only valid week ids, newest 8; bad values ignored
+  assert.deepEqual(b.data.card.weekBadges, []); assert.equal(b.data.card.weekBadgeCount, 0);
+  const weeks = Array.from({ length: 10 }, (_, i) => `2026-W${String(30 + i).padStart(2, '0')}`);
+  const wb = await api('PUT', '/api/license', { weekBadges: [...weeks, '<b>x</b>', 3, '2026-W77'], weekBadgeCount: 10 }, undefined, b.data.session);
+  assert.equal(wb.status, 200); assert.deepEqual(wb.data.weekBadges, weeks.slice(-8)); assert.equal(wb.data.weekBadgeCount, 10);
+  const wpub = await api('GET', `/api/license/${b.data.no}`);
+  assert.deepEqual(wpub.data.weekBadges, weeks.slice(-8), 'friends see the badges'); assert.equal(wpub.data.weekBadgeCount, 10);
+  await api('PUT', '/api/license', { weekBadges: 'x', weekBadgeCount: 'lots' }, undefined, b.data.session);
+  const wkeep = await api('GET', `/api/license/${b.data.no}`);
+  assert.deepEqual(wkeep.data.weekBadges, weeks.slice(-8)); assert.equal(wkeep.data.weekBadgeCount, 10, 'bad values ignored');
+  assert.equal((await api('PUT', '/api/license', { weekBadgeCount: 1e9 }, undefined, b.data.session)).data.weekBadgeCount, 520, 'count capped');
 });
 
 test('link via browser (app sign-in) over HTTP: start → complete → poll once (worker + LicenseDO)', { skip: !!process.env.CF_URL }, async () => {

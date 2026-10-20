@@ -10,12 +10,15 @@ import { DurableObject } from 'cloudflare:workers';
 import { randomToken, sha256Hex } from './auth.ts';
 import type { Env } from './env.ts';
 import { getCosmetic } from '../../shared/shop.ts';
+import { applyWeekBadges, viewWeekBadges } from '../../shared/license-card.ts';
 
 export interface LicenseCard {
   no: string; name: string; level: number; rank: string; title: string; avatar: string;
   stars: number; achievements: number; storeName: string; quote: string; updatedAt: number;
   /** 商城: equipped hat id and the supporter badge (cosmetic only; not verified against a store receipt yet). */
   hat?: string; supporter?: boolean;
+  /** 每週挑戰週章: newest week ids (≤8, e.g. "2026-W43") and how many in total. Old cards: none. */
+  weekBadges?: string[]; weekBadgeCount?: number;
 }
 interface LicenseRecord extends LicenseCard { owner: string; createdAt: number }
 type R<T> = { ok: true; value: T } | { ok: false; status: number; error: string };
@@ -49,7 +52,7 @@ const int = (v: unknown, lo: number, hi: number, d: number) => (typeof v === 'nu
 const rnd4 = () => 1000 + (crypto.getRandomValues(new Uint32Array(1))[0] % 9000);
 function view(r: LicenseRecord): LicenseCard {
   const { no, name, level, rank, title, avatar, stars, achievements, storeName, quote, updatedAt, hat, supporter } = r;
-  return { no, name, level, rank, title, avatar, stars, achievements, storeName, quote, updatedAt, hat: hat ?? '', supporter: supporter === true };
+  return { no, name, level, rank, title, avatar, stars, achievements, storeName, quote, updatedAt, hat: hat ?? '', supporter: supporter === true, ...viewWeekBadges(r) };
 }
 
 export class LicenseDO extends DurableObject<Env> {
@@ -174,6 +177,7 @@ export class LicenseDO extends DurableObject<Env> {
     if ('storeName' in b) r.storeName = str(b.storeName, 16, r.storeName);
     if ('hat' in b) r.hat = typeof b.hat === 'string' && getCosmetic(b.hat)?.slot === 'hat' ? b.hat : '';
     if ('supporter' in b) r.supporter = b.supporter === true;
+    applyWeekBadges(r, b);
     if ('quote' in b) r.quote = str(b.quote, 40, r.quote);
     r.updatedAt = Date.now(); this.put(r);
     return { ok: true, value: view(r) };

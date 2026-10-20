@@ -39,6 +39,8 @@ export const FOOD_INFO = {
   meal: { name: '熱便當', station: '微波爐', verb: '加熱便當', icon: '🍱', price: 18, uses: '便當' },
 };
 export const BOX_SIZE = 6;
+/** Seconds a shelf may stand empty before customers who find it bare cost rating/chaos (they only grumble before that). */
+export const EMPTY_SHELF_GRACE = 10;
 export const COFFEE_PRICE = 10;
 export const MEAL_PRICE = 18;
 export const BURST_MAX = 100;
@@ -55,7 +57,7 @@ export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
   scanner: { icon: '📟', name: '快速掃碼機', desc: '結帳時間縮短', costs: [180, 320] },
   coffee: { icon: '☕', name: '咖啡機升級', desc: '煮咖啡時間縮短', costs: [200, 360] },
   shelves: { icon: '🧊', name: '加大貨架／大冰箱', desc: '每個貨架可放更多商品', costs: [220, 400], levels: ['每格貨架 +5（15 個）', '每格貨架 +10（20 個）'] },
-  camera: { icon: '📹', name: '監視器', desc: '偷吃奧客直接顯示，奧客怒氣上升較慢；第 2 級全程錄影，奧客比較快冷靜', costs: [350, 520], levels: ['偷吃奧客現形、怒氣上升 -30%', '再加：安撫／勸導速度 +25%'] },
+  camera: { icon: '📹', name: '監視器', desc: '偷吃奧客現形、怒氣上升較慢；在自己的店出手被報警時，畫面就是證據（佔理多半不起訴；先動手的話……監視器很誠實）', costs: [350, 520], levels: ['偷吃奧客現形、怒氣上升 -30%、正當防衛 60% 直接不起訴', '再加：安撫／勸導速度 +25%、不起訴 80%、法庭可「播放全程錄影」'] },
   mopbot: { icon: '🤖', name: '掃地機器人', desc: '每隔一段時間自動清掉一灘髒污', costs: [420] },
   ads: { icon: '🪧', name: '廣告看板', desc: '顧客來店頻率提高', costs: [160, 300, 480] },
   selfcheck: { icon: '🏧', name: '自助結帳機', desc: '排隊中買 2 件以下的客人會自己去自助結帳（沒有小費）', costs: [380, 600], levels: ['每 22 秒自助結帳一位', '每 14 秒自助結帳一位'] },

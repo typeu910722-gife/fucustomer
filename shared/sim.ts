@@ -2,7 +2,7 @@
 // browser for solo/career play. All transactions (money, stock, items, karen outcomes) happen here.
 import type { Outfit } from './shop.ts';
 import {
-  BOSS_PHASES, BOX_SIZE, BURST_MAX, CHAOS_MAX, CLOSE_MINUTE, CLOSING_MAX_SECONDS, FOOD_INFO, DAILY_RENT, DAY_OPEN_SECONDS, KAREN_INFO,
+  BOSS_PHASES, BOX_SIZE, BURST_MAX, EMPTY_SHELF_GRACE, CHAOS_MAX, CLOSE_MINUTE, CLOSING_MAX_SECONDS, FOOD_INFO, DAILY_RENT, DAY_OPEN_SECONDS, KAREN_INFO,
   KarenKind, OPEN_MINUTE, PREP_SECONDS, PRODUCTS, ALL_PRODUCTS, type StockIn, PRODUCT_INFO, Product, RUN_SPEED, SERVER_INTERACT_RANGE,
   UPGRADES, UPGRADE_IDS, UpgradeId, brewTime, checkoutTime, heatTime, shelfCapacity, matSkip, selfcheckEvery, doorbellBoost, cameraCalm,
 } from './constants.ts';
@@ -99,6 +99,8 @@ export interface World {
   bossSpawned: boolean; bossDefeated: boolean; bossTimer: number; rampTimer: number; openTime: number;
   /** Kind of the last karen spawned this shift ('' = none yet). */
   lastKaren?: string;
+  /** World time each currently-empty shelf ran out (cleared when restocked); drives the empty-shelf grace period. */
+  emptySince: Partial<Record<Product, number>>;
   /** Karens handled today, by kind (goes into the shift result for the 奧客圖鑑). */
   handled: Record<string, number>;
 }
@@ -169,7 +171,7 @@ export function createWorld(save: StoreSave = defaultSave(), seed = Date.now(), 
     emptyShelfToastAt: -99, saveOut: null, difficultyPlayers: 1,
     incidents: [], raid: cfg.raid ? { score: 0, watched: 0, caught: false, knocked: 0, litter: 0, heckled: 0 } : null, chaos: 0, chaosTimer: 0, burst: 0, combo: 0, comboUntil: 0, power: 1, event: null, nextEvent: cfg.firstEvent,
     guardTimer: guardInterval(cfg.mods.guard), hintQueue: cfg.hints.map((text, i) => ({ at: 1 + i * 16, text })), result: null,
-    bossSpawned: false, bossDefeated: false, bossTimer: 0, rampTimer: 0, openTime: 0, handled: {},
+    bossSpawned: false, bossDefeated: false, bossTimer: 0, rampTimer: 0, openTime: 0, handled: {}, emptySince: {},
   };
   // shifts start with one visible spill so cleaning is discoverable (as in v0.4)
   if (shift && cfg.chapter === 1) w.spills.push({ id: w.nextId++, x: 11.4, z: 9.2, born: 0 });
@@ -320,7 +322,43 @@ function failKaren(w: World, c: Customer, rating: number, chaos: number, text: s
 }
 
 // ---------------- customers ----------------
-function spawnCustomer(w: World, kind: CustomerKind) {
+/** A shelf that ran out less than EMPTY_SHELF_GRACE seconds ago: customers who find it bare don't cost rating yet. */
+export function inShelfGrace(w: World, p: Product) {
+  const t = w.emptySince[p];
+  return t != null && w.time - t < EMPTY_SHELF_GRACE;
+}
+
+/** Track when each shelf ran out (grace period) and warn once per run-out (rate-limited). */
+function trackEmptyShelves(w: World) {
+  for (const p of PRODUCTS) {
+    if (w.shelves[p] > 0) { delete w.emptySince[p]; continue; }
+    if (w.emptySince[p] != null) continue;
+    w.emptySince[p] = w.time;
+    if (w.time - w.emptyShelfToastAt > 8) {
+      toast(w, `📦 ${PRODUCT_INFO[p].name}貨架空了！${EMPTY_SHELF_GRACE} 秒內補上不扣口碑，去倉庫拿${PRODUCT_INFO[p].name}貨箱`, 'bad');
+      w.emptyShelfToastAt = w.time;
+    }
+  }
+}
+
+/** Opening of a business day / shift: the first customer comes straight to the till and a delivery box waits by the door. */
+function openStore(w: World) {
+  w.emptySince = {};
+  if (w.raid) return;
+  // the morning delivery isn't shelved yet: part of the fullest shelf waits in a box by the door, so total stock is
+  // unchanged and the store is back to its usual opening stock once someone carries it in
+  const p = [...PRODUCTS].sort((a, b) => w.shelves[b] - w.shelves[a])[0];
+  const qty = Math.min(BOX_SIZE, Math.floor(w.shelves[p] / 2));
+  if (qty > 0) {
+    w.shelves[p] -= qty;
+    const pos = resolveCollision(ENTRANCE.x - 1.2, ENTRANCE.z - 0.7, 0.35);
+    w.items.push({ id: w.nextId++, x: pos.x, z: pos.z, held: { kind: 'box', product: p, qty } });
+    toast(w, `📦 早班進貨還在門口：把這箱${PRODUCT_INFO[p].name}搬上貨架`, 'info');
+  }
+  spawnCustomer(w, 'normal', true);
+}
+
+function spawnCustomer(w: World, kind: CustomerKind, express = false) {
   const n = activePlayers(w);
   const m = w.cfg.mods;
   const c: Customer = {
@@ -336,6 +374,13 @@ function spawnCustomer(w: World, kind: CustomerKind) {
     const extra = PRODUCTS.includes('extra');
     for (let i = 0; i < count; i++) c.shopping.push(extra && w.rng() < 0.25 ? 'extra' : w.rng() < 0.4 ? 'drinks' : w.rng() < 0.6 ? 'snacks' : 'bento');
     if (w.cfg.foods.length && w.rng() < w.cfg.foodChance) c.want = pick(w, w.cfg.foods);
+    if (express) {
+      // the day's first customer grabbed their things by the door on the way in and heads straight for the till
+      c.want = null;
+      for (const p of c.shopping.slice(0, 2)) if (w.shelves[p] > 0) { w.shelves[p]--; c.items.push(p); }
+      if (!c.items.length) { const p = PRODUCTS.find(q => w.shelves[q] > 0); if (p) { w.shelves[p]--; c.items.push(p); } }
+      c.shopping = []; c.speed = 2;
+    }
     c.patienceMax = (55 + w.rating * 6) * m.patience;
     // 自動門鈴: greeted at the door, ordinary customers start happier and wait longer
     const bell = doorbellBoost(w.upgrades.doorbell ?? 0);
@@ -593,9 +638,10 @@ function updateCustomer(w: World, c: Customer, dt: number) {
       if (c.timer <= 0) {
         const p = c.shopping.shift()!;
         if (w.shelves[p] > 0) { w.shelves[p]--; c.items.push(p); }
+        else if (inShelfGrace(w, p)) c.mood -= 15; // only just ran out: the customer grumbles, no rating loss yet
         else {
           c.mood -= 30; adjRating(w, -0.02); adjChaos(w, 1);
-          if (w.time - w.emptyShelfToastAt > 8) { toast(w, `📦 ${PRODUCT_INFO[p].name}貨架空了！快去倉庫補貨`, 'bad'); w.emptyShelfToastAt = w.time; }
+          if (w.time - w.emptyShelfToastAt > 8) { toast(w, `📦 ${PRODUCT_INFO[p].name}貨架空太久，客人買不到（口碑下降）！快去倉庫拿${PRODUCT_INFO[p].name}貨箱`, 'bad'); w.emptyShelfToastAt = w.time; }
         }
         if (w.rng() < (0.025 + 0.01 * n) * (w.cfg.spillMul ?? 1)) addSpill(w, c.x, c.z);
         nextStep(w, c);
@@ -1421,7 +1467,7 @@ export function requestHit(w: World, playerId: string, rid: string, id: number) 
   ev(w, { e: 'sfx', name: 'hit', x: c.x, z: c.z });
   if (c.kind === 'normal') {
     adjRating(w, -0.3); adjChaos(w, 8);
-    w.incidents.push({ who: name, legal: false, vip: !!c.vip, normal: true, why: '打了一般顧客' });
+    w.incidents.push({ who: name, legal: false, vip: !!c.vip, normal: true, why: '打了一般顧客', ...camTag(w) });
     toast(w, '😱 你打了一般顧客！口碑大跌，他要去報警了', 'bad');
     angryLeave(w, c);
     return;
@@ -1429,7 +1475,7 @@ export function requestHit(w: World, playerId: string, rid: string, id: number) 
   adjBurst(w, legal ? 10 : 5);
   if (legal) {
     if (c.kind === 'rager') c.anger = Math.max(0, c.anger - 45);
-    if (c.vip) w.incidents.push({ who: name, legal: true, vip: true, normal: false, why: '對方先失控（正當防衛），但他有背景' });
+    if (c.vip) w.incidents.push({ who: name, legal: true, vip: true, normal: false, why: '對方先失控（正當防衛），但他有背景', ...camTag(w) });
     if (wasStunned && c.kind !== 'boss' && !c.resolved) {
       resolveKaren(w, c, p, 0, `🥊 ${p.name} 制伏了失控的${name}，他摸摸鼻子走了`);
       leave(w, c, false);
@@ -1437,10 +1483,13 @@ export function requestHit(w: World, playerId: string, rid: string, id: number) 
   } else {
     adjRating(w, -0.1);
     if (c.kind === 'rager') c.anger = Math.min(99, c.anger + 15);
-    w.incidents.push({ who: name, legal: false, vip: !!c.vip, normal: false, why: c.vip ? '先動手打了有背景的奧客' : '對方沒有失控，你先動手' });
+    w.incidents.push({ who: name, legal: false, vip: !!c.vip, normal: false, why: c.vip ? '先動手打了有背景的奧客' : '對方沒有失控，你先動手', ...camTag(w) });
     toast(w, c.vip ? `💼 糟了！你先動手打了有背景的${name}，下班警察一定會來` : `⚠ 你先動手了！${name}沒有失控，這可能會惹上麻煩`, 'bad');
   }
 }
+
+/** 監視器 footage of a hit: the store's camera level goes with the incident to court (shared/court.ts). */
+function camTag(w: World): { cam?: number } { const cam = w.upgrades.camera ?? 0; return cam > 0 ? { cam } : {}; }
 
 export function requestUltimate(w: World, playerId: string, rid: string) {
   const p = w.players.get(playerId);
@@ -1626,6 +1675,9 @@ export function tick(w: World, dt: number) {
         w.openTime = w.time; w.bossTimer = w.cfg.bossAt; w.rampTimer = 0;
         toast(w, shift ? `🏪 ${w.cfg.title}：開始上班！目標營業額 $${w.cfg.goal}` : `🏪 第 ${w.day} 天開始營業！`, 'good');
         ev(w, { e: 'sfx', name: 'open' });
+        openStore(w);
+        // the express customer stands in for the first regular arrival, so the second one comes on the usual schedule
+        w.spawnTimer = 2 + w.cfg.spawnEvery;
       }
       break;
     case 'open': {
@@ -1700,6 +1752,7 @@ export function tick(w: World, dt: number) {
   }
 
   if (w.phase === 'open' || w.phase === 'closing') {
+    trackEmptyShelves(w);
     adjRating(w, -0.0008 * Math.min(6, w.spills.length) * dt);
     w.chaosTimer += dt;
     if (w.chaosTimer >= 8) {

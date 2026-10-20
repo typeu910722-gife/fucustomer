@@ -71,6 +71,8 @@ export class LocalConnection implements GameConnection {
   /** The employee quit: they leave the store. */
   dismissStaff() { if (this.staff) { this.room.handle(this.staff.id, { type: 'leave' }); this.staff = null; } }
   setStaffPace(p: number) { if (this.staff) this.staff.bot.pace = p; }
+  /** Hits that may bring the police (own store: checked when you close up). */
+  incidents() { return [...(this.room.world?.incidents ?? [])]; }
 
   send(msg: ClientMsg) { this.room.handle(this.playerId, msg); }
   close() { clearInterval(this.timer); }

@@ -7,6 +7,8 @@ export interface LicenseCard {
   stars: number; achievements: number; storeName: string; quote: string; updatedAt: number;
   /** 商城: equipped hat id and supporter badge. */
   hat?: string; supporter?: boolean;
+  /** 每週挑戰週章: newest week ids (≤8, e.g. "2026-W43") and the total count. Old cards: missing. */
+  weekBadges?: string[]; weekBadgeCount?: number;
 }
 interface Account { no: string; session: string }
 const KEY = 'fucustomer.account.v1';
@@ -53,7 +55,7 @@ function loadGis(): Promise<Gis> {
  *  Inside the iOS/Android app Google refuses to sign in from the WebView, so there it becomes a "sign in with the
  *  browser" button instead (see applink.ts). */
 export async function renderGoogleButton(el: HTMLElement, onSignedIn: (card: LicenseCard) => void, onError: (msg: string) => void): Promise<void> {
-  if (isNativeApp()) { const { renderAppLinkButton } = await import('./applink.ts'); renderAppLinkButton(el, onSignedIn); return; }
+  if (isNativeApp() || isStandaloneWeb()) { const { renderAppLinkButton } = await import('./applink.ts'); renderAppLinkButton(el, onSignedIn); return; }
   const id = await googleClientId();
   if (!id) { onError('Google 登入還沒設定（需要遊戲伺服器設定 Google 用戶端 ID）'); return; }
   try {
@@ -90,6 +92,12 @@ export const getLicense = (no: string) => call<LicenseCard>('GET', `/api/license
 /** Web page the app opens in the system browser: …/#link=CODE (the published test build). */
 export const LINK_WEB_BASE = 'https://fucustomer.yzprojecttw.com/beta/';
 export const isNativeApp = () => !!(window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.();
+/** Home-screen web app (iOS profile web clip / "Add to Home Screen" in full-screen mode). Google's popup sign-in
+ *  can't hand the result back there, so it uses the same "sign in with the browser" link flow as the app. */
+export const isStandaloneWeb = () => {
+  try { return (navigator as unknown as { standalone?: boolean }).standalone === true || window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches; }
+  catch { return false; }
+};
 export interface LinkStart { code: string; pollToken: string; expiresIn: number }
 export type LinkPoll = { pending: true; expiresIn: number } | { no: string; session: string; card: LicenseCard };
 /** App: ask for a code (shown to the player / put in the URL) and a secret poll token (never leaves the app). */
@@ -109,7 +117,7 @@ export async function completeAppLink(code: string): Promise<R<{ no: string }>> 
 }
 
 // A page opened as …/#link=CODE (from the app) shows the "bring the sign-in back to the app" card.
-if (typeof window !== 'undefined' && !isNativeApp()) {
+if (typeof window !== 'undefined' && !isNativeApp() && !isStandaloneWeb()) {
   const check = () => { if (/[#&]link=/.test(location.hash)) void import('./applink.ts').then(m => m.checkLinkHash()); };
   window.addEventListener('hashchange', check);
   check();

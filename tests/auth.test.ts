@@ -53,6 +53,28 @@ test('licence cards: one per Google account, session-protected updates, public l
   assert.ok(saved.length >= 5);
 });
 
+test('licence cards: weekly badges are week ids only, bounded, and old cards still load', () => {
+  const reg = new LicenseRegistry();
+  const a = reg.login('42', '週章王');
+  // a card from before the field existed
+  const old = reg.get(a.no); assert.ok(old.ok); if (old.ok) { assert.deepEqual(old.value.weekBadges, []); assert.equal(old.value.weekBadgeCount, 0); }
+  const legacy = { ...reg.byNo.get(a.no)! } as Record<string, unknown>; delete legacy.weekBadges; delete legacy.weekBadgeCount;
+  assert.deepEqual(reg.view(legacy as never).weekBadges, [], 'stored record without the field');
+  const weeks = Array.from({ length: 12 }, (_, i) => `2026-W${String(30 + i).padStart(2, '0')}`);
+  const u = reg.update(a.session, { weekBadges: [...weeks, '2026-W31', '<img src=x>', 'evil', 7, '2026-W99'], weekBadgeCount: 12 });
+  assert.ok(u.ok); if (u.ok) {
+    assert.deepEqual(u.value.weekBadges, weeks.slice(-8), 'valid, de-duplicated, newest 8');
+    assert.equal(u.value.weekBadgeCount, 12);
+  }
+  const pub = reg.get(a.no); assert.ok(pub.ok); if (pub.ok) assert.deepEqual(pub.value.weekBadges, weeks.slice(-8), 'friends see them');
+  // bad values are ignored (the card keeps what it had)
+  for (const bad of ['2026-W40', { a: 1 }, null, Array(600).fill('2026-W01')]) reg.update(a.session, { weekBadges: bad });
+  for (const bad of ['5', NaN, Infinity, null]) reg.update(a.session, { weekBadgeCount: bad });
+  const after = reg.get(a.no); assert.ok(after.ok); if (after.ok) { assert.deepEqual(after.value.weekBadges, weeks.slice(-8)); assert.equal(after.value.weekBadgeCount, 12); }
+  const big = reg.update(a.session, { weekBadgeCount: 1e9 }); assert.ok(big.ok); if (big.ok) assert.equal(big.value.weekBadgeCount, 520, 'count capped');
+  const low = reg.update(a.session, { weekBadgeCount: -3 }); assert.ok(low.ok); if (low.ok) assert.equal(low.value.weekBadgeCount, 8, 'never below the listed badges');
+});
+
 test('link via browser (app sign-in): start → complete in the browser → poll once, code alone is useless', () => {
   let t = 1_000_000;
   const reg = new LicenseRegistry(() => {}, () => t);

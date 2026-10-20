@@ -9,6 +9,7 @@ import {
 import * as UI from './ui.ts';
 import { careerScreen, loadProfile, resultScreen, saveProfile } from './career-ui.ts';
 import { loadAccount, syncLicense } from './account.ts';
+import { CARD_WEEK_BADGES_MAX } from '../../shared/license-card.ts';
 import { rankOf, dailyPlan, DAILY_MODS, DAILY_ID, ENDLESS_ID, applyResult, buildDailyConfig, buildShiftConfig, dailySeed, dailyUnlocked, endlessUnlocked, localDate, shiftUnlocked } from '../../shared/career.ts';
 import type { ShiftResult } from '../../shared/career.ts';
 import { updateAchievements } from '../../shared/achievements.ts';
@@ -151,10 +152,23 @@ function playStore() {
       if (out.bankrupt) { bankrupt = out.reason; current?.toast(`💸 ${out.reason}……店撐不下去了`, 'bad', 5000); window.setTimeout(() => current?.exit(), 2500); }
     },
   })), () => {
-    if (!bankrupt) return lockReminder();
-    playScene('store-bankrupt', () => UI.message('倒閉了', `${bankrupt}。投入的錢全部賠光了，回去打工重新存吧。`, '回職涯', () => career('store')));
+    // hit someone today? the police were waiting outside (the store's 監視器 footage goes with the case)
+    const incidents = conn?.incidents() ?? [];
+    const after = () => {
+      if (!bankrupt) return lockReminder();
+      playScene('store-bankrupt', () => UI.message('倒閉了', `${bankrupt}。投入的錢全部賠光了，回去打工重新存吧。`, '回職涯', () => career('store')));
+    };
+    if (!needsCourt(incidents)) return after();
+    const prof = loadProfile();
+    sceneOnce('first-court', () => courtScreen(incidents, ownStoreChapter(prof.level), cr => {
+      const paid = payFine(prof, cr.fine, cr.extraCost);
+      saveProfile(prof);
+      UI.message('⚖ 審訊結束', paid ? `罰款從存款扣了 $${paid}。下次出手前，先看看是誰先失控。` : '無罪！一毛都不用付，回店裡繼續拚。', '好', after);
+    }), prof);
   }, look);
 }
+/** How heavy the fines are for your own store (same scale as the career chapters). */
+const ownStoreChapter = (level: number) => Math.max(1, Math.min(7, Math.ceil(level / 5)));
 
 /** Leaving your own store with the door unlocked: friends could walk right in. */
 function lockReminder() {
@@ -314,7 +328,8 @@ function menu(error?: string) {
   const canRejoin = last && Date.now() - last.at < 125_000 ? last.code : null;
   const account = loadAccount();
   const b = badge();
-  if (account) void syncLicense({ name: playerName(), avatar: UI.loadAvatar(), level: b.level, rank: b.rank, title: b.title, stars: b.stars, achievements: b.achievements, storeName: b.storeName, hat: b.hat, supporter: b.supporter });
+  const prof0 = loadProfile();
+  if (account) void syncLicense({ name: playerName(), avatar: UI.loadAvatar(), level: b.level, rank: b.rank, title: b.title, stars: b.stars, achievements: b.achievements, storeName: b.storeName, hat: b.hat, supporter: b.supporter, weekBadges: prof0.weekly.badges.slice(-CARD_WEEK_BADGES_MAX), weekBadgeCount: prof0.weekly.badges.length });
   audio.startMusic(8);
   const prof = loadProfile();
   let next: { id: string; title: string; map: string } | null = null;

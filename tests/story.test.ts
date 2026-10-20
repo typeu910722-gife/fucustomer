@@ -3,7 +3,10 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { ShiftResult, applyResult, buildShiftConfig, newProfile, payTotal, sanitizeProfile, shiftPay, Incident } from '../shared/career.ts';
 import { addPlayer, createWorld, defaultSave, isViolent, requestAct, requestHit, requestSpin, tick, World, Customer } from '../shared/sim.ts';
-import { allJustified, baseFine, dinoVerdict, fairVerdict, minFine, needsCourt, payFine, protest, questions } from '../shared/court.ts';
+import {
+  CAMERA_HONESTY, allJustified, baseFine, cameraLevel, caseKind, dinoVerdict, fairVerdict, minFine, needsCourt, payFine, policeReview, protest,
+  protestOptions, questions,
+} from '../shared/court.ts';
 import { SCENES, sceneAfter, sceneBefore } from '../shared/story.ts';
 
 function world(level = 20, id = '4-1') {
@@ -131,6 +134,66 @@ test('court: verdicts, protests against the dinosaur judge, fines never push sav
   const p = newProfile(); p.wallet = 50;
   assert.equal(payFine(p, 400, 80), 50); assert.equal(p.wallet, 0); assert.equal(p.court.trials, 1);
   payFine(p, 0); assert.equal(p.court.acquittals, 1);
+});
+
+test('監視器 evidence: the store camera level is recorded with each hit by the sim', () => {
+  for (const cam of [0, 1, 2]) {
+    const p = newProfile(); p.level = 20;
+    const save = defaultSave(); save.upgrades.camera = cam;
+    const w = createWorld(save, 7, buildShiftConfig(p, '4-1')); w.phase = 'open'; w.phaseLeft = 999;
+    const pl = addPlayer(w, 'a', 'A', 1); pl.x = 12; pl.z = 8;
+    const k = karen(w, 'rager', 12, 9, { state: 'complain', anger: 40 });
+    requestHit(w, 'a', 'h', k.id);
+    assert.equal(w.incidents.length, 1);
+    assert.equal(w.incidents[0].cam, cam || undefined, `Lv${cam}`);
+    assert.equal(cameraLevel(w.incidents), cam);
+  }
+});
+
+test('監視器 evidence in court: outcomes by camera level × provoked / unprovoked / mixed', () => {
+  const inc = (legal: boolean, cam: number): Incident => ({ who: '退貨大鬧', legal, vip: true, normal: false, why: '', ...(cam ? { cam } : {}) });
+  const lo = () => 0.01, hi = () => 0.99, mid = () => 0.7;
+  for (const cam of [0, 1, 2]) {
+    const provoked = [inc(true, cam)], unprovoked = [inc(false, cam)], mixed = [inc(true, cam), inc(false, cam)];
+    assert.equal(caseKind(provoked), 'provoked'); assert.equal(caseKind(unprovoked), 'unprovoked'); assert.equal(caseKind(mixed), 'mixed');
+    // police station
+    const rv = policeReview(provoked, lo);
+    if (cam === 0) { assert.equal(rv, null, 'no camera: classic flow'); assert.equal(policeReview(unprovoked, lo), null); }
+    else {
+      assert.equal(rv?.dismissed, true, `Lv${cam}: self-defence on tape → dropped (lucky roll)`);
+      assert.equal(policeReview(provoked, hi)?.dismissed, false, 'connections can still drag you to court');
+      assert.equal(policeReview(provoked, mid)?.dismissed, cam >= 2, 'Lv2 is likelier to get it dropped than Lv1');
+      assert.equal(policeReview(unprovoked, lo)?.dismissed, false, 'hitting first is never dropped');
+      assert.equal(policeReview(mixed, lo)?.dismissed, false);
+    }
+    // the camera is honest: hitting first costs more the better the camera
+    assert.equal(baseFine(unprovoked, 1), Math.round(200 * CAMERA_HONESTY[cam]));
+    assert.equal(baseFine(provoked, 1), 0);
+    // fair judge: "he started it!" is worth more with a camera when true, and worse when it's a lie
+    const blameTrue = questions(provoked)[0].answers[1], blameLie = questions(unprovoked)[0].answers[1];
+    assert.ok(blameTrue.mod < 0 && blameLie.mod > 0);
+    if (cam) { assert.ok(blameTrue.mod < questions([inc(true, 0)])[0].answers[1].mod); assert.ok(blameLie.mod > questions([inc(false, 0)])[0].answers[1].mod); }
+    // 恐龍法官: Lv2 gets the full recording instead of the old camera stills
+    const opts = protestOptions(provoked, false);
+    assert.equal(opts.includes('footage'), cam >= 2); assert.equal(opts.includes('cctv'), cam < 2);
+    assert.ok(!protestOptions(provoked, true).includes('appeal'));
+  }
+  // Lv2 footage vs the dinosaur judge
+  const P = [inc(true, 2)], U = [inc(false, 2)], M = [inc(true, 2), inc(false, 2)];
+  const vP = dinoVerdict(P, 3, lo), vU = dinoVerdict(U, 3, lo), vM = dinoVerdict(M, 3, lo);
+  assert.equal(protest('footage', vP, P, 3, lo).fine, 0, 'self-defence on tape: acquitted');
+  assert.equal(protest('footage', vP, P, 3, hi).fine, vP.fine, '…unless the judge only watches landscape videos');
+  assert.equal(protest('footage', vM, M, 3, lo).fine, minFine(baseFine(M, 3)), 'mixed: minimum fine');
+  assert.ok(protest('footage', vM, M, 3, hi).fine > vM.fine);
+  assert.equal(protest('footage', vU, U, 3, lo).fine, Math.round(vU.fine * 1.5), 'hit first: the tape convicts you');
+  assert.equal(protest('footage', vU, U, 3, hi).fine, Math.round(vU.fine * 1.5));
+  // "most of the time": over many seeded rolls a self-defence case wins ~90%
+  let s = 1; const rng = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+  let wins = 0; for (let i = 0; i < 2000; i++) if (protest('footage', vP, P, 3, rng).fine === 0) wins++;
+  assert.ok(wins > 1700 && wins < 1900, `footage wins ${wins}/2000`);
+  // old saves / incidents without the field behave as before
+  assert.equal(cameraLevel([{ who: 'x', legal: false, vip: false, normal: false, why: '' }]), 0);
+  assert.equal(cameraLevel([{ who: 'x', legal: false, vip: false, normal: false, why: '', cam: 99 }]), 2, 'clamped');
 });
 
 test('story: chapter intro/outro scenes exist, profile keeps story and court records safely', () => {

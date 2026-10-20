@@ -5,6 +5,7 @@ import type { LobbyState, Snapshot, StoreSave } from '../../shared/protocol.ts';
 import type { Settings } from './storage.ts';
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from '../../shared/difficulty.ts';
 import { getLicense, renderGoogleButton, signOut } from './account.ts';
+import { weekBadge } from '../../shared/weekly.ts';
 import { NOTICES, randomQuote } from './quotes.ts';
 import { getCosmetic } from '../../shared/shop.ts';
 import { backupScreen } from './backup-ui.ts';
@@ -82,8 +83,9 @@ export function loadAvatar() { try { const a = localStorage.getItem(AVATAR_KEY);
 function saveAvatar(a: string) { try { localStorage.setItem(AVATAR_KEY, a); } catch { /* ignore */ } }
 
 /** The 高級社畜證照 card (also used to show a friend's card). */
-export function licenseHtml(c: { name: string; avatar: string; level: number; rank: string; title?: string; no?: string | null; stars: number; achievements: number; storeName?: string; hat?: string; supporter?: boolean; weekBadges?: { icon: string; name: string }[] }, editable: boolean) {
+export function licenseHtml(c: { name: string; avatar: string; level: number; rank: string; title?: string; no?: string | null; stars: number; achievements: number; storeName?: string; hat?: string; supporter?: boolean; weekBadges?: { icon: string; name: string }[]; weekBadgeCount?: number }, editable: boolean) {
   const wb = Array.isArray(c.weekBadges) ? c.weekBadges : [];
+  const wbn = Math.max(wb.length, typeof c.weekBadgeCount === 'number' ? c.weekBadgeCount : 0);
   const hat = getCosmetic(c.hat);
   return `<div class="license ${c.supporter ? 'supporter' : ''}">
     <div class="lic-head"><span>🪪 高級社畜證照</span><small>CERTIFIED WAGE WORKER</small></div>
@@ -94,7 +96,7 @@ export function licenseHtml(c: { name: string; avatar: string; level: number; ra
         <div class="lic-row"><span class="lic-lv">Lv.${c.level}</span><b>${esc(c.rank)}</b>${c.title ? `<span class="tag ok">${esc(c.title)}</span>` : ''}${c.supporter ? '<span class="tag gold">💛 贊助者</span>' : ''}</div>
         <div class="lic-row muted">證號 <b class="lic-no">${c.no ? esc(c.no) : '未登入・只存在這台裝置'}</b></div>
         <div class="lic-row muted">★ ${c.stars}・🏆 ${c.achievements}${c.storeName ? `・🏪 ${esc(c.storeName)}` : ''}</div>
-        ${wb.length ? `<div class="lic-row lic-badges" id="lic-badges" title="每週挑戰週章">🏅 週章 ×${wb.length} ${wb.slice(-6).map(x => `<span title="${esc(x.name)}">${esc(x.icon)}</span>`).join('')}</div>` : ''}
+        ${wbn ? `<div class="lic-row lic-badges" id="lic-badges" title="每週挑戰週章">🏅 週章 ×${wbn} ${wb.slice(-6).map(x => `<span title="${esc(x.name)}">${esc(x.icon)}</span>`).join('')}</div>` : ''}
       </div>
       <div class="lic-stamp">認證<br>社畜</div>
     </div>
@@ -222,7 +224,7 @@ export function friendLicenseScreen(onBack: () => void) {
     const raw = val('fl-no').replace(/\D/g, ''); const no = raw.length === 8 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : val('fl-no').trim();
     const out = document.getElementById('fl-out')!; out.innerHTML = '<p class="muted">查詢中…</p>';
     const r = await getLicense(no);
-    out.innerHTML = r.ok ? licenseHtml(r.data, false) + (r.data.quote ? `<p class="muted">「${esc(r.data.quote)}」</p>` : '') : `<p class="err">${esc(r.error)}</p>`;
+    out.innerHTML = r.ok ? licenseHtml({ ...r.data, weekBadges: (r.data.weekBadges ?? []).map(w => weekBadge(w)), weekBadgeCount: r.data.weekBadgeCount }, false) + (r.data.quote ? `<p class="muted">「${esc(r.data.quote)}」</p>` : '') : `<p class="err">${esc(r.error)}</p>`;
   };
   on('fl-go', 'click', () => void go());
   on('fl-no', 'keydown', e => { if ((e as KeyboardEvent).key === 'Enter') void go(); });

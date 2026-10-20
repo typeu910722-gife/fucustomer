@@ -94,11 +94,11 @@ export function defaultServerUrl(): string {
 }
 
 /** One-time UI flags: tutorial finished/skipped and which karen intro cards were already shown. */
-export interface Flags { tutorialDone: boolean; seenKarens: string[]; seenMaps: string[] }
+export interface Flags { tutorialDone: boolean; seenKarens: string[]; seenMaps: string[]; shelfTipDone?: boolean }
 const FLAGS_KEY = 'fucustomer.flags.v1';
 export function loadFlags(): Flags {
   const f = read<Partial<Flags>>(FLAGS_KEY) ?? {};
   const list = (v: unknown) => (Array.isArray(v) ? v.filter((k): k is string => typeof k === 'string').slice(0, 64) : []);
-  return { tutorialDone: f.tutorialDone === true, seenKarens: list(f.seenKarens), seenMaps: list(f.seenMaps) };
+  return { tutorialDone: f.tutorialDone === true, seenKarens: list(f.seenKarens), seenMaps: list(f.seenMaps), shelfTipDone: f.shelfTipDone === true };
 }
 export function saveFlags(f: Flags) { write(FLAGS_KEY, f); }
