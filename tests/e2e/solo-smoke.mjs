@@ -11,7 +11,7 @@ page.on('pageerror', e => errors.push(String(e)));
 page.on('console', m => { if (m.type() === 'error') errors.push(m.text()); });
 await page.goto(URL);
 await page.fill('#m-name', '測試店員');
-await page.click('#m-solo-new');
+await page.click('#m-career'); await page.click('[data-tab="free"]');
 await page.click('[data-map="convenience"]'); // free play: pick a store type
 await page.waitForFunction(() => window.__game?.started, null, { timeout: 15000 });
 await page.waitForTimeout(800);

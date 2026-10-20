@@ -88,7 +88,7 @@ export interface LobbyState {
 // ---- messages ----
 export type ClientMsg =
   | { type: 'hello'; v: number; platform: string }
-  | { type: 'create'; name: string; save?: StoreSave | null; map?: string }
+  | { type: 'create'; name: string; save?: StoreSave | null; map?: string; difficulty?: string }
   | { type: 'join'; code: string; name: string; token?: string }
   | { type: 'ready'; ready: boolean }
   | { type: 'start' }

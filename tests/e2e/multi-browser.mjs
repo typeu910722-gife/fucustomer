@@ -16,12 +16,12 @@ async function client(name, opts = {}) {
   return page;
 }
 const host = await client('房主A');
-await host.click('#m-create');
+await host.click('#m-mp'); await host.click('#m-create');
 await host.waitForSelector('#l-code');
 const code = (await host.textContent('#l-code')).trim();
 // second player uses a phone-sized touch context
 const phone = await client('手機B', { viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
-await phone.fill('#m-code', code);
+await phone.click('#m-mp'); await phone.fill('#m-code', code);
 await phone.click('#m-join');
 await phone.waitForSelector('#l-ready');
 await phone.click('#l-ready');

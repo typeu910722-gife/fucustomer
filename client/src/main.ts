@@ -8,7 +8,8 @@ import {
 } from './storage.ts';
 import * as UI from './ui.ts';
 import { careerScreen, loadProfile, resultScreen, saveProfile } from './career-ui.ts';
-import { DAILY_ID, ENDLESS_ID, applyResult, buildDailyConfig, buildShiftConfig, dailySeed, dailyUnlocked, endlessUnlocked, localDate, shiftUnlocked } from '../../shared/career.ts';
+import { loadAccount, syncLicense } from './account.ts';
+import { rankOf, DAILY_ID, ENDLESS_ID, applyResult, buildDailyConfig, buildShiftConfig, dailySeed, dailyUnlocked, endlessUnlocked, localDate, shiftUnlocked } from '../../shared/career.ts';
 import type { ShiftResult } from '../../shared/career.ts';
 import { updateAchievements } from '../../shared/achievements.ts';
 import { CHAPTERS } from '../../shared/career.ts';
@@ -80,8 +81,8 @@ async function online(url: string, intent: Intent) {
     const { WsConnection, roomMap } = await import('./net-ws.ts');
     // build the 3D store for the room's store type
     if (intent.kind === 'join' && !intent.map) intent = { ...intent, map: await roomMap(url, intent.code) };
-    startGame(() => new WsConnection(url, intent, platform));
-  } catch { menu('無法載入連線模組，請檢查網路'); }
+    startGame(() => new WsConnection(url, intent, platform), reason => (reason ? multiplayer(reason) : menu()));
+  } catch { multiplayer('無法載入連線模組，請檢查網路'); }
 }
 
 // ---------------- career (single-player main story) ----------------
@@ -94,6 +95,7 @@ function career(tab?: Parameters<typeof careerScreen>[2]) {
     back: () => menu(), play: id => playShift(id), enterStore: () => playStore(),
     opened: () => sceneOnce('store-open', () => career('store')),
     raid: code => void raidFriend(code),
+    freePlay: () => freePlay(),
   }, tab);
 }
 
@@ -227,7 +229,7 @@ function freePlay() {
   const saves: Record<string, ReturnType<typeof loadSoloSave>> = {};
   for (const m of MAPS) saves[m.id] = loadSoloSave(m.id);
   UI.mapPicker(saves, {
-    back: () => menu(),
+    back: () => career(),
     play: (map, fresh) => {
       if (fresh) clearSoloSave(map);
       const save = fresh ? null : loadSoloSave(map);
@@ -236,37 +238,56 @@ function freePlay() {
   });
 }
 
+function badge(): UI.CareerBadge {
+  const p = loadProfile();
+  return { level: p.level, rank: rankOf(p.level), title: p.title, stars: Object.values(p.stars).reduce((a, b) => a + b, 0), achievements: p.achievements.length, storeName: p.store?.name ?? '' };
+}
+
 function menu(error?: string) {
   screenDepth = 0;
   const last = loadLastSession();
   const canRejoin = last && Date.now() - last.at < 125_000 ? last.code : null;
+  const account = loadAccount();
+  const b = badge();
+  if (account) void syncLicense({ name: playerName(), avatar: UI.loadAvatar(), level: b.level, rank: b.rank, title: b.title, stars: b.stars, achievements: b.achievements, storeName: b.storeName });
+  audio.startMusic(8);
   UI.mainMenu(settings, {
     setName: n => { settings = { ...settings, name: n }; saveSettings(settings); },
     career: () => career(),
-    solo: () => freePlay(),
-    create: (cont, map) => online(serverUrl(), { kind: 'create', name: playerName(), save: cont ? loadCoopSave() : null, map }),
-    join: code => online(serverUrl(), { kind: 'join', code, name: playerName() }),
+    multiplayer: () => multiplayer(),
     rejoin: () => {
       const l = loadLastSession(); if (!l) return menu();
       online(l.url, { kind: 'join', code: l.code, name: playerName(), token: l.token });
     },
+    refresh: () => menu(),
     quit: isApp ? () => quitApp() : undefined,
     firstDay: loadProfile().stats.shifts === 0 ? () => playShift('1-1') : undefined,
     settings: () => { screenDepth = 1; return UI.settingsMenu(settings, s => { settings = s; saveSettings(s); audio.setVolume(s.volume); audio.setMusicVolume(s.music); menu(); }); },
-  }, { soloSave: loadSoloSave(), coopSave: loadCoopSave(), canRejoin, server: serverUrl(), platform, error });
+  }, { coopSave: loadCoopSave(), canRejoin, server: serverUrl(), platform, error, badge: b, account });
+}
+
+/** 打工人的號角: multiplayer with a store type and difficulty. */
+function multiplayer(error?: string, code?: string) {
+  screenDepth = 1;
+  UI.multiplayerMenu({
+    back: () => menu(),
+    create: (cont, map, difficulty) => online(serverUrl(), { kind: 'create', name: playerName(), save: cont ? loadCoopSave() : null, map, difficulty }),
+    join: c => online(serverUrl(), { kind: 'join', code: c, name: playerName() }),
+  }, { coopSave: loadCoopSave(), error });
+  if (code) { const el = document.getElementById('m-code') as HTMLInputElement | null; if (el) el.value = code; }
 }
 
 // Deep link: ?join=CODE (used by share links and Steam rich-presence "connect" strings)
 const params = new URLSearchParams(location.search);
 const deepJoin = params.get('join');
 if (deepJoin && /^[A-Z0-9]{5}$/i.test(deepJoin)) {
-  menu();
-  const codeInput = document.getElementById('m-code') as HTMLInputElement | null;
-  if (codeInput) codeInput.value = deepJoin.toUpperCase();
+  multiplayer(undefined, deepJoin.toUpperCase());
 } else menu();
 
-window.addEventListener('pointerdown', () => audio.unlock(), { once: true });
-window.addEventListener('keydown', () => audio.unlock(), { once: true });
+// browsers only allow sound after the first tap/key: unlock, then start the menu music if we're still on a menu
+const firstInput = () => { audio.unlock(); if (!current) audio.startMusic(8); };
+window.addEventListener('pointerdown', firstInput, { once: true });
+window.addEventListener('keydown', firstInput, { once: true });
 
 // Offline support: cache the game files so solo play opens without a connection (web only).
 if ('serviceWorker' in navigator && !isApp && (location.protocol === 'https:' || location.hostname === 'localhost')) {

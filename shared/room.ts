@@ -6,11 +6,12 @@ import {
 import type { ClientMsg, GameEvent, LobbyState, ServerMsg, StoreSave, Target } from './protocol.ts';
 import {
   World, addPing, addPlayer, applyInput, createWorld, playerDisconnected, removePlayer, requestAct, requestBuy, requestDrop,
-  finishShift, requestSpin, requestHit, requestThrow, requestUltimate, sanitizeSave, setReady, snapshot, tick,
+  finishShift, requestSpin, requestHit, requestThrow, requestUltimate, sanitizeSave, setReady, snapshot, tick, dayConfig,
 } from './sim.ts';
 import type { ShiftConfig } from './career.ts';
 import { applyMap } from './map.ts';
 import { getMap } from './maps/index.ts';
+import { Difficulty, isDifficulty, withDifficulty } from './difficulty.ts';
 
 export interface Conn { send(msg: ServerMsg): void; close(reason: string): void }
 
@@ -20,7 +21,7 @@ export interface Member {
 }
 
 export interface RoomCheckpoint {
-  code: string; save: StoreSave; hostId: string; started: boolean; savedAt: number; map?: string;
+  code: string; save: StoreSave; hostId: string; started: boolean; savedAt: number; map?: string; difficulty?: Difficulty;
   members: { playerId: string; name: string; token: string; color: number; platform: string; joinOrder: number }[];
 }
 
@@ -35,6 +36,8 @@ export interface RoomOptions {
   seed?: number;
   /** Store type for the business-day loop (multiplayer rooms). Career shifts carry their own. */
   map?: string;
+  /** Difficulty of the business-day loop (multiplayer rooms). */
+  difficulty?: Difficulty;
 }
 
 const ACT_KINDS = new Set(['checkout', 'brew', 'deliver', 'takeBox', 'stock', 'returnBox', 'takeMop', 'returnMop', 'clean', 'calm', 'coupon', 'askQueue', 'stopFilm', 'checkBag', 'pickup', 'heat', 'grab', 'stopLitter', 'unplug', 'treat', 'repeatOrder', 'recommend', 'limitTry', 'knock', 'heckle']);
@@ -93,11 +96,15 @@ export class Room {
     this.now = opts.now ?? (() => Date.now());
     this.rid = opts.randomId ?? defaultRandomId;
     this.mapId = getMap(opts.shift?.map ?? opts.map).id;
+    this.difficulty = isDifficulty(opts.difficulty) ? opts.difficulty : 'normal';
   }
+  readonly difficulty: Difficulty;
+  /** Business-day config for this room's map and difficulty (career shifts use their own config). */
+  private dayCfg() { return this.opts.shift ?? withDifficulty(dayConfig(), this.difficulty); }
   private useMap() { applyMap(this.mapId); }
 
   static restore(cp: RoomCheckpoint, opts: RoomOptions = {}) {
-    const r = new Room(cp.code, cp.save, { ...opts, map: cp.map ?? opts.map });
+    const r = new Room(cp.code, cp.save, { ...opts, map: cp.map ?? opts.map, difficulty: cp.difficulty ?? opts.difficulty });
     r.hostId = cp.hostId;
     const now = r.now();
     for (const m of cp.members) {
@@ -108,7 +115,8 @@ export class Room {
     }
     if (cp.started) {
       r.started = true;
-      r.world = createWorld(r.save); // resume from the start of the checkpointed day
+      r.useMap();
+      r.world = createWorld(r.save, Date.now(), r.dayCfg()); // resume from the start of the checkpointed day
     }
     r.emptySince = now;
     r.log(`restored room ${cp.code} (day ${cp.save.day}, ${cp.members.length} members)`);
@@ -117,7 +125,7 @@ export class Room {
 
   checkpoint(): RoomCheckpoint {
     return {
-      code: this.code, save: this.save, hostId: this.hostId, started: this.started, savedAt: this.now(), map: this.mapId,
+      code: this.code, save: this.save, hostId: this.hostId, started: this.started, savedAt: this.now(), map: this.mapId, difficulty: this.difficulty,
       members: [...this.members.values()].map(m => ({ playerId: m.playerId, name: m.name, token: m.token, color: m.color, platform: m.platform, joinOrder: m.joinOrder })),
     };
   }
@@ -288,7 +296,7 @@ export class Room {
   startGame() {
     this.useMap();
     this.started = true;
-    this.world = createWorld(this.save, this.opts.seed ?? Date.now(), this.opts.shift);
+    this.world = createWorld(this.save, this.opts.seed ?? Date.now(), this.dayCfg());
     for (const m of [...this.members.values()].sort((a, b) => a.joinOrder - b.joinOrder)) {
       const p = addPlayer(this.world, m.playerId, m.name, m.color);
       p.connected = m.connected;

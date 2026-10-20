@@ -48,3 +48,10 @@ FUCustomer ("the game") respects your privacy.
 - The game does not knowingly collect personal information from anyone, including children under 13.
 
 **Contact**: (your e-mail here)
+
+
+## Google 登入（選用，2026-10-20 新增）
+- 只有你按下「用 Google 登入」才會使用。登入後伺服器保存：Google 帳號 ID 的雜湊值（無法反推回帳號）、你的證號、證照上顯示的資料（名字、頭像、等級、職級、星數、成就數、店名、一句話）。
+- **不保存** email、電話、生日或 Google 帳號的其他資料。
+- 證照資料是公開的：知道你證號的人都看得到。
+- 按「登出」會讓這台裝置的登入失效。要刪除證照資料可以聯絡開發者（正式上線前會加刪除按鈕）。

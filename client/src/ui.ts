@@ -3,6 +3,9 @@ import { MAPS } from '../../shared/maps/index.ts';
 import { KAREN_INFO, MAX_PLAYERS, PRODUCT_INFO, PRODUCTS, QUICK_MESSAGES, UPGRADES, UPGRADE_IDS, shelfCapacity } from '../../shared/constants.ts';
 import type { LobbyState, Snapshot, StoreSave } from '../../shared/protocol.ts';
 import type { Settings } from './storage.ts';
+import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from '../../shared/difficulty.ts';
+import { getLicense, renderGoogleButton, signOut } from './account.ts';
+import { randomQuote } from './quotes.ts';
 
 const root = () => document.getElementById('ui')!;
 export const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -20,37 +23,61 @@ function val(id: string) { return (document.getElementById(id) as HTMLInputEleme
 
 export interface MainMenuHandlers {
   career(): void;
-  solo(fresh: boolean): void; create(continueCoop: boolean, map?: string): void; join(code: string): void; rejoin(): void; settings(): void;
+  /** 打工人的號角: multiplayer screen (map, difficulty, create/join). */
+  multiplayer(): void;
+  rejoin(): void; settings(): void;
   quit?(): void;
   /** First launch: jump straight into career shift 1-1. */
   firstDay?(): void;
   setName(n: string): void;
+  /** Re-render the menu (after signing in/out). */
+  refresh(): void;
+}
+export interface CareerBadge { level: number; rank: string; title: string; stars: number; achievements: number; storeName: string }
+
+const AVATARS = ['🧑', '👩', '👨', '🧑‍🍳', '🧑‍💼', '🧔', '👩‍🦰', '👱', '🧑‍🎤', '🥷', '🐱', '🐶'];
+const AVATAR_KEY = 'fucustomer.avatar.v1';
+export function loadAvatar() { try { const a = localStorage.getItem(AVATAR_KEY); return a && AVATARS.includes(a) ? a : AVATARS[0]; } catch { return AVATARS[0]; } }
+function saveAvatar(a: string) { try { localStorage.setItem(AVATAR_KEY, a); } catch { /* ignore */ } }
+
+/** The 高級社畜證照 card (also used to show a friend's card). */
+export function licenseHtml(c: { name: string; avatar: string; level: number; rank: string; title?: string; no?: string | null; stars: number; achievements: number; storeName?: string }, editable: boolean) {
+  return `<div class="license">
+    <div class="lic-head"><span>🪪 高級社畜證照</span><small>CERTIFIED WAGE WORKER</small></div>
+    <div class="lic-body">
+      ${editable ? `<button class="lic-photo" id="m-avatar" title="換頭像">${c.avatar}</button>` : `<div class="lic-photo">${esc(c.avatar)}</div>`}
+      <div class="lic-info">
+        ${editable ? `<label class="lic-name">姓名<input type="text" id="m-name" maxlength="16" placeholder="你的名字" value="${esc(c.name)}"></label>` : `<div class="lic-name">姓名 <b>${esc(c.name)}</b></div>`}
+        <div class="lic-row"><span class="lic-lv">Lv.${c.level}</span><b>${esc(c.rank)}</b>${c.title ? `<span class="tag ok">${esc(c.title)}</span>` : ''}</div>
+        <div class="lic-row muted">證號 <b class="lic-no">${c.no ? esc(c.no) : '未登入・只存在這台裝置'}</b></div>
+        <div class="lic-row muted">★ ${c.stars}・🏆 ${c.achievements}${c.storeName ? `・🏪 ${esc(c.storeName)}` : ''}</div>
+      </div>
+      <div class="lic-stamp">認證<br>社畜</div>
+    </div>
+  </div>`;
 }
 
-export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: StoreSave | null; coopSave: StoreSave | null; canRejoin: string | null; server: string; platform: string; error?: string }) {
+export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: StoreSave | null; canRejoin: string | null; server: string; platform: string; error?: string; badge: CareerBadge; account: { no: string } | null }) {
   const floaters = ['🧃', '🍙', '🥤', '🧋', '🍗', '👕', '🛒', '🧾', '🍞', '☕', '📦', '🧹'];
+  const b = info.badge;
   show(`
     <div class="bgfx">${floaters.map((f, i) => `<span style="left:${(i * 83) % 100}%;animation-duration:${14 + (i * 7) % 11}s;animation-delay:-${(i * 5) % 14}s">${f}</span>`).join('')}</div>
     <div class="ts">
       <div class="ts-left">
         <div class="logo"><span class="l1">奧客</span><span class="l2">退散！</span><small>FUCUSTOMER</small></div>
-        <div class="tagline">打工人認真上班，順便把奧客請出門</div>
-        <div class="mascots"><span class="bob">🧑‍🍳</span><span class="vs">VS</span><span class="bob d">😤</span><span class="bob">🤳</span><span class="bob d">👑</span></div>
-        <div class="ts-name">🪪<input type="text" id="m-name" maxlength="16" placeholder="你的名字" value="${esc(s.name)}" aria-label="你的名字"></div>
+        <button class="tagline" id="m-quote" title="再來一句">「${esc(randomQuote())}」</button>
+        ${licenseHtml({ name: s.name, avatar: loadAvatar(), level: b.level, rank: b.rank, title: b.title, no: info.account?.no ?? null, stars: b.stars, achievements: b.achievements, storeName: b.storeName }, true)}
+        <div class="lic-actions">
+          ${info.account ? '<button class="btn small" id="m-signout">登出</button>' : '<div id="m-google" class="gbtn"></div>'}
+          <button class="btn small" id="m-friend">🔍 查好友證照</button>
+        </div>
+        <div class="muted lic-msg" id="m-licmsg"></div>
       </div>
       <div class="card">
         ${info.canRejoin ? `<button class="btn good" id="m-rejoin">🔌 重新連線到房間 ${esc(info.canRejoin)}</button>` : ''}
         ${h.firstDay ? `<div class="welcome"><b>👋 第一次來上班？</b><span>從第一天開始，會一步一步教你。</span><button class="btn good" id="m-first">▶ 開始第一天上班</button></div>` : ''}
-        <button class="btn primary hero" id="m-career">🧑‍💼 職涯模式<span class="sub">從工讀生一路升到開自己的店</span></button>
-        <button class="btn warn" id="m-solo-new">🗺 自由營業<span class="sub">${MAPS.length} 種店面：${MAPS.map(m => m.icon).join('')}</span></button>
-        <div class="sectlabel">👥 多人合作（最多 ${MAX_PLAYERS} 人・測試中）</div>
-        <div class="mp">
-          <select id="m-map" aria-label="店面種類">${MAPS.map(m => `<option value="${m.id}">${m.icon} ${esc(m.name)}</option>`).join('')}</select>
-          <button class="btn info" id="m-create">建立房間</button>
-          <input type="text" class="code" id="m-code" maxlength="5" placeholder="房間碼" autocomplete="off" autocapitalize="characters">
-          <button class="btn" id="m-join">加入</button>
-        </div>
-        ${info.coopSave ? `<label class="muted"><input type="checkbox" id="m-coop-cont" checked> 延續上次合作店面（第 ${info.coopSave.day} 天）</label>` : ''}
+        <button class="btn primary hero" id="m-career">🧑‍💼 開工<span class="sub">主線：從工讀生一路升到開自己的店</span></button>
+        <button class="btn warn hero" id="m-mp">📯 打工人的號角<span class="sub">多人遊玩・選地圖、選難度</span><span class="soon">籌備中</span></button>
         <div class="err" id="m-err">${esc(info.error ?? '')}</div>
         <div class="ts-foot">
           <button class="btn small" id="m-settings">⚙ 設定</button>
@@ -61,15 +88,59 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: Sto
     </div>`, 'screen title-bg');
   const name = () => { const n = val('m-name').trim(); h.setName(n); return n; };
   on('m-name', 'change', name);
+  on('m-quote', 'click', () => { const q = document.getElementById('m-quote')!; q.textContent = `「${randomQuote(q.textContent?.slice(1, -1))}」`; });
+  on('m-avatar', 'click', () => { const el = document.getElementById('m-avatar')!; const next = AVATARS[(AVATARS.indexOf(el.textContent ?? '') + 1) % AVATARS.length]; el.textContent = next; saveAvatar(next); });
   on('m-career', 'click', () => { name(); h.career(); });
-  on('m-solo-new', 'click', () => { name(); h.solo(true); });
-  on('m-create', 'click', () => { name(); h.create(!!(document.getElementById('m-coop-cont') as HTMLInputElement | null)?.checked, val('m-map') || undefined); });
-  on('m-join', 'click', () => { name(); const c = val('m-code').trim().toUpperCase(); if (c.length < 5) { document.getElementById('m-err')!.textContent = '請輸入 5 碼房間碼'; return; } h.join(c); });
-  on('m-code', 'keydown', e => { if ((e as KeyboardEvent).key === 'Enter') document.getElementById('m-join')!.click(); });
+  on('m-mp', 'click', () => { name(); h.multiplayer(); });
   on('m-rejoin', 'click', () => { name(); h.rejoin(); });
   on('m-settings', 'click', () => h.settings());
   on('m-quit', 'click', () => h.quit?.());
   on('m-first', 'click', () => { name(); h.firstDay?.(); });
+  on('m-friend', 'click', () => friendLicenseScreen(() => h.refresh()));
+  const msg = (t: string) => { const el = document.getElementById('m-licmsg'); if (el) el.textContent = t; };
+  on('m-signout', 'click', () => { void signOut().then(() => h.refresh()); });
+  const g = document.getElementById('m-google');
+  if (g) void renderGoogleButton(g, () => h.refresh(), m => { g.innerHTML = '<span class="muted">🔒 Google 登入（尚未開放）</span>'; msg(m); });
+}
+
+/** Multiplayer (打工人的號角): store type + difficulty, create a room or join one. */
+export function multiplayerMenu(h: { create(cont: boolean, map: string, difficulty: Difficulty): void; join(code: string): void; back(): void }, info: { coopSave: StoreSave | null; error?: string }) {
+  show(`<div class="card wide mpcard">
+    <div class="row" style="align-items:center"><h2>📯 打工人的號角</h2><span class="soon">籌備中</span><button class="btn small" id="mp-back" style="flex:0">← 主選單</button></div>
+    <p class="muted">最多 ${MAX_PLAYERS} 人一起顧店。多人模式還在測試，可能會有問題，歡迎回報。</p>
+    <div class="sectlabel">① 選店面</div>
+    <div class="pickgrid">${MAPS.map((m, i) => `<label class="pick"><input type="radio" name="mp-map" value="${m.id}" ${i === 0 ? 'checked' : ''}><span>${m.icon}</span><b>${esc(m.name)}</b></label>`).join('')}</div>
+    <div class="sectlabel">② 選難度</div>
+    <div class="pickgrid">${DIFFICULTY_IDS.map(d => `<label class="pick"><input type="radio" name="mp-diff" value="${d}" ${d === 'normal' ? 'checked' : ''}><span>${DIFFICULTIES[d].icon}</span><b>${DIFFICULTIES[d].name}</b><small>${esc(DIFFICULTIES[d].desc)}</small></label>`).join('')}</div>
+    ${info.coopSave ? `<label class="muted"><input type="checkbox" id="m-coop-cont" checked> 延續上次合作店面（第 ${info.coopSave.day} 天）</label>` : ''}
+    <div class="row" style="margin-top:6px"><button class="btn info" id="m-create">📯 建立房間</button></div>
+    <div class="sectlabel">或加入朋友的房間</div>
+    <div class="row"><input type="text" class="code" id="m-code" maxlength="5" placeholder="房間碼" autocomplete="off" autocapitalize="characters"><button class="btn" id="m-join" style="flex:0 0 140px">加入</button></div>
+    <div class="err" id="m-err">${esc(info.error ?? '')}</div>
+  </div>`);
+  const pick = (n: string) => (document.querySelector(`input[name="${n}"]:checked`) as HTMLInputElement | null)?.value;
+  on('mp-back', 'click', () => h.back());
+  on('m-create', 'click', () => h.create(!!(document.getElementById('m-coop-cont') as HTMLInputElement | null)?.checked, pick('mp-map') ?? 'convenience', (pick('mp-diff') ?? 'normal') as Difficulty));
+  on('m-join', 'click', () => { const c = val('m-code').trim().toUpperCase(); if (c.length < 5) { document.getElementById('m-err')!.textContent = '請輸入 5 碼房間碼'; return; } h.join(c); });
+  on('m-code', 'keydown', e => { if ((e as KeyboardEvent).key === 'Enter') document.getElementById('m-join')!.click(); });
+}
+
+/** Look up a friend's licence card by its number. */
+export function friendLicenseScreen(onBack: () => void) {
+  show(`<div class="card"><h2>🔍 查好友證照</h2>
+    <p class="muted">輸入好友的證號（登入 Google 後才會有證號）。</p>
+    <div class="row"><input type="text" id="fl-no" maxlength="9" placeholder="1234-5678" autocomplete="off" inputmode="numeric"><button class="btn info" id="fl-go" style="flex:0 0 110px">查詢</button></div>
+    <div id="fl-out"></div>
+    <button class="btn" id="fl-back">← 返回</button></div>`);
+  on('fl-back', 'click', onBack);
+  const go = async () => {
+    const raw = val('fl-no').replace(/\D/g, ''); const no = raw.length === 8 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : val('fl-no').trim();
+    const out = document.getElementById('fl-out')!; out.innerHTML = '<p class="muted">查詢中…</p>';
+    const r = await getLicense(no);
+    out.innerHTML = r.ok ? licenseHtml(r.data, false) + (r.data.quote ? `<p class="muted">「${esc(r.data.quote)}」</p>` : '') : `<p class="err">${esc(r.error)}</p>`;
+  };
+  on('fl-go', 'click', () => void go());
+  on('fl-no', 'keydown', e => { if ((e as KeyboardEvent).key === 'Enter') void go(); });
 }
 
 export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay = false) {

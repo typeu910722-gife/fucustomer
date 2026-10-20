@@ -19,8 +19,8 @@ export function loadProfile(): CareerProfile {
 }
 export function saveProfile(p: CareerProfile) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ignore */ } }
 
-type Tab = 'chapters' | 'store' | 'skills' | 'gear' | 'achievements' | 'stats';
-export interface CareerHandlers { play(shiftId: string): void; back(): void; enterStore(): void; opened(): void; raid(code: string): void }
+type Tab = 'chapters' | 'store' | 'skills' | 'gear' | 'free' | 'achievements' | 'stats';
+export interface CareerHandlers { play(shiftId: string): void; back(): void; enterStore(): void; opened(): void; raid(code: string): void; freePlay(): void }
 
 const stars = (n: number, max = 3) => '★'.repeat(n) + '<span class="dim">' + '★'.repeat(max - n) + '</span>';
 
@@ -39,7 +39,7 @@ function rankCard(p: CareerProfile) {
 }
 
 export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'chapters') {
-  const tabs: [Tab, string][] = [['chapters', '📖 主線'], ['store', p.store ? `🏪 ${esc(p.store.name)}` : '🏪 我的店'], ['skills', `🧠 技能${p.skillPoints ? ` (${p.skillPoints})` : ''}`], ['gear', '🧰 裝備'], ['achievements', `🏆 成就 ${p.achievements.length}/${ACHIEVEMENTS.length}`], ['stats', '📊 紀錄']];
+  const tabs: [Tab, string][] = [['chapters', '📖 主線'], ['store', p.store ? `🏪 ${esc(p.store.name)}` : '🏪 我的店'], ['skills', `🧠 技能${p.skillPoints ? ` (${p.skillPoints})` : ''}`], ['gear', '🧰 裝備'], ['free', '🗺 自由營業'], ['achievements', `🏆 成就 ${p.achievements.length}/${ACHIEVEMENTS.length}`], ['stats', '📊 紀錄']];
   show(`
     <div class="card wide career">
       <div class="c-side">
@@ -50,7 +50,7 @@ export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'ch
       <div class="c-main" id="c-body">${tab === 'chapters' ? chaptersHtml(p) : tab === 'skills' ? skillsHtml(p) : tab === 'gear' ? gearHtml(p) : tab === 'store' ? storeHtml(p) : tab === 'achievements' ? achievementsHtml(p) : statsHtml(p)}</div>
     </div>`);
   document.getElementById('c-back')!.onclick = () => h.back();
-  document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(b => { b.onclick = () => careerScreen(p, h, b.dataset.tab as Tab); });
+  document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(b => { b.onclick = () => (b.dataset.tab === 'free' ? h.freePlay() : careerScreen(p, h, b.dataset.tab as Tab)); });
   document.querySelectorAll<HTMLButtonElement>('[data-play]').forEach(b => { b.onclick = () => h.play(b.dataset.play!); });
   document.querySelectorAll<HTMLButtonElement>('[data-skill]').forEach(b => { b.onclick = () => { if (spendSkill(p, b.dataset.skill as SkillTree)) saveProfile(p); careerScreen(p, h, 'skills'); }; });
   const redraw = () => { saveProfile(p); careerScreen(p, h, 'store'); };

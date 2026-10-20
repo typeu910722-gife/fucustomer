@@ -12,12 +12,12 @@ pg.on('pageerror', e => errors.push(String(e)));
 await pg.goto(URL);
 await pg.evaluate(() => { localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'medium', name: '阿明' })); localStorage.setItem('fucustomer.flags.v1', JSON.stringify({ tutorialDone: true, seenKarens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'] })); });
 await pg.reload();
-await pg.click('#m-solo-new');
+await pg.click('#m-career'); await pg.click('[data-tab="free"]');
 await pg.waitForSelector('.mapcard');
 await pg.screenshot({ path: `${OUT}/maps-picker.png` });
 const ids = await pg.evaluate(() => [...document.querySelectorAll('[data-map]')].map(b => b.dataset.map));
 for (const id of ids) {
-  if (!(await pg.locator('.mapcard').count())) { await pg.click('#m-solo-new'); await pg.waitForSelector('.mapcard'); }
+  if (!(await pg.locator('.mapcard').count())) { await pg.click('#m-career'); await pg.click('[data-tab="free"]'); await pg.waitForSelector('.mapcard'); }
   await pg.click(`[data-map="${id}"]`);
   await pg.waitForFunction(() => window.__game?.started && window.__game.snap, null, { timeout: 25000 });
   // run the morning so customers come in, then look across the store from the back corner

@@ -5,7 +5,7 @@ import { PROTOCOL_VERSION } from '../../shared/constants.ts';
 import type { ClientMsg, ServerMsg, StoreSave } from '../../shared/protocol.ts';
 import type { GameConnection, NetStatus } from './net.ts';
 
-export interface JoinIntent { kind: 'create'; name: string; save: StoreSave | null; map?: string }
+export interface JoinIntent { kind: 'create'; name: string; save: StoreSave | null; map?: string; difficulty?: string }
 /** `map` for a join is the room's store type, looked up before connecting (see roomMap). */
 export type Intent = JoinIntent | { kind: 'join'; code: string; name: string; token?: string; map?: string };
 
@@ -63,7 +63,7 @@ export class WsConnection implements GameConnection {
       this.attempts = 0; this.lastRx = performance.now();
       this.raw({ type: 'hello', v: PROTOCOL_VERSION, platform: this.platform });
       if (this.everJoined && this.token) this.raw({ type: 'join', code: this.code, name: '', token: this.token });
-      else if (this.intent.kind === 'create') this.raw({ type: 'create', name: this.intent.name, save: this.intent.save, map: this.intent.map });
+      else if (this.intent.kind === 'create') this.raw({ type: 'create', name: this.intent.name, save: this.intent.save, map: this.intent.map, difficulty: this.intent.difficulty });
       else this.raw({ type: 'join', code: this.intent.code, name: this.intent.name, token: this.intent.token });
     };
     ws.onmessage = (ev) => {

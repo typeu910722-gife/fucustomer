@@ -11,6 +11,8 @@ import { PROTOCOL_VERSION, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, TICK_RATE } fro
 import type { ClientMsg, ServerMsg } from '../shared/protocol.ts';
 import { Conn, Room, RoomCheckpoint } from '../shared/room.ts';
 import { FriendStore, StoreRegistry } from './stores.ts';
+import { isDifficulty } from '../shared/difficulty.ts';
+import { LicenseRegistry, verifyGoogleIdToken } from './auth.ts';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -18,6 +20,9 @@ const ROOT = path.resolve(HERE, '..');
 const STATIC_DIR = process.env.STATIC_DIR ?? path.join(ROOT, 'dist');
 const DATA_DIR = process.env.DATA_DIR ?? path.join(ROOT, 'data', 'rooms');
 const STORES_DIR = process.env.STORES_DIR ?? path.join(path.dirname(DATA_DIR), 'stores');
+const LICENSES_DIR = process.env.LICENSES_DIR ?? path.join(path.dirname(DATA_DIR), 'licenses');
+/** Google OAuth client ID (public, not a secret). Without it, Google sign-in is switched off. */
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? '';
 const MAX_ROOMS = Number(process.env.MAX_ROOMS ?? 500);
 const CHECKPOINT_MAX_AGE_MS = 30 * 60 * 1000;
 const MAX_MSG_BYTES = 4096;
@@ -50,8 +55,8 @@ async function deleteCheckpoint(code: string) {
   try { await fs.unlink(path.join(DATA_DIR, `${code}.json`)); } catch { /* ignore */ }
 }
 
-function makeRoom(code: string, save: unknown, map?: unknown) {
-  return new Room(code, save as never, { onCheckpoint: cp => void writeCheckpoint(cp), log: s => log(s), map: typeof map === 'string' ? map.slice(0, 24) : undefined });
+function makeRoom(code: string, save: unknown, map?: unknown, difficulty?: unknown) {
+  return new Room(code, save as never, { onCheckpoint: cp => void writeCheckpoint(cp), log: s => log(s), map: typeof map === 'string' ? map.slice(0, 24) : undefined, difficulty: isDifficulty(difficulty) ? difficulty : undefined });
 }
 
 async function restoreRooms() {
@@ -86,6 +91,24 @@ async function loadStores() {
   }
 }
 
+// ---------- Google sign-in + licence cards ----------
+const licenseWrites = new Map<string, Promise<void>>();
+const licenses = new LicenseRegistry(r => {
+  const file = path.join(LICENSES_DIR, `${r.owner}.json`);
+  const next = (licenseWrites.get(r.owner) ?? Promise.resolve()).then(async () => {
+    try { await fs.mkdir(LICENSES_DIR, { recursive: true }); await fs.writeFile(file + '.tmp', JSON.stringify(r)); await fs.rename(file + '.tmp', file); }
+    catch (e) { log('licence write failed', e); }
+  });
+  licenseWrites.set(r.owner, next);
+});
+async function loadLicenses() {
+  if (!existsSync(LICENSES_DIR)) return;
+  for (const f of await fs.readdir(LICENSES_DIR)) {
+    if (!f.endsWith('.json')) continue;
+    try { licenses.load(JSON.parse(await fs.readFile(path.join(LICENSES_DIR, f), 'utf8'))); } catch (e) { log('bad licence file', f, e); }
+  }
+}
+
 function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise(resolve => {
     let size = 0; const chunks: Buffer[] = [];
@@ -97,7 +120,7 @@ function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
 const apiHits = new Map<string, { n: number; at: number }>();
 async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL) {
   const send = (status: number, body: unknown) => {
-    res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, x-owner-token', 'access-control-allow-methods': 'GET, POST, PUT, OPTIONS' });
+    res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, x-owner-token, x-session', 'access-control-allow-methods': 'GET, POST, PUT, OPTIONS' });
     res.end(status === 204 ? undefined : JSON.stringify(body));
   };
   if (req.method === 'OPTIONS') return send(204, {});
@@ -109,7 +132,19 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL) {
   const out = (r: { ok: true; value: unknown } | { ok: false; status: number; error: string }) => (r.ok ? send(200, r.value) : send(r.status, { error: r.error }));
   if (parts[1] === 'room' && parts[2] && req.method === 'GET') {
     const room = rooms.get(parts[2].toUpperCase());
-    return room ? send(200, { code: room.code, map: room.mapId, players: room.connectedCount }) : send(404, { error: '找不到房間' });
+    return room ? send(200, { code: room.code, map: room.mapId, difficulty: room.difficulty, players: room.connectedCount }) : send(404, { error: '找不到房間' });
+  }
+  if (parts[1] === 'auth' && parts[2] === 'config' && req.method === 'GET') return send(200, { googleClientId: GOOGLE_CLIENT_ID || null });
+  if (parts[1] === 'auth' && parts[2] === 'google' && req.method === 'POST') {
+    if (!GOOGLE_CLIENT_ID) return send(503, { error: '伺服器還沒設定 Google 登入' });
+    const claims = await verifyGoogleIdToken((await readBody(req)).credential, GOOGLE_CLIENT_ID);
+    if (!claims) return send(401, { error: 'Google 登入驗證失敗' });
+    return send(200, licenses.login(claims.sub, claims.name));
+  }
+  if (parts[1] === 'auth' && parts[2] === 'logout' && req.method === 'POST') { licenses.logout(req.headers['x-session']); return send(200, {}); }
+  if (parts[1] === 'license') {
+    if (!parts[2] && req.method === 'PUT') return out(licenses.update(req.headers['x-session'], await readBody(req)));
+    if (parts[2] && req.method === 'GET') return out(licenses.get(decodeURIComponent(parts[2])));
   }
   if (parts[1] === 'stores') {
     const code = (parts[2] ?? '').toUpperCase();
@@ -197,7 +232,7 @@ wss.on('connection', (ws: WebSocket) => {
         break;
       case 'create': {
         if (rooms.size >= MAX_ROOMS) return fail('server_full', '伺服器房間已滿，請稍後再試');
-        const room = makeRoom(newCode(), msg.save, msg.map);
+        const room = makeRoom(newCode(), msg.save, msg.map, msg.difficulty);
         rooms.set(room.code, room);
         const r = room.join(conn, msg.name, undefined, s.platform);
         if (r.ok) { s.room = room; s.playerId = r.member.playerId; }
@@ -255,4 +290,5 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 
 await restoreRooms();
 await loadStores();
+await loadLicenses();
 http.listen(PORT, () => log(`FUCustomer server on :${PORT} (ws path /ws, static ${STATIC_DIR})`));

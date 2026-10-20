@@ -117,7 +117,7 @@ export class Audio {
   musicVolume = 0.5;
   setMusicVolume(v: number) { this.musicVolume = v; if (this.musicGain) this.musicGain.gain.value = v * 0.35; }
 
-  /** mood: 0 menu/co-op, 1–6 chapters, 7 endless. Different tempo, key and chord loop per mood. */
+  /** mood: 0 co-op, 1–6 chapters, 7 endless, 8 main menu. Different tempo, key and chord loop per mood. */
   startMusic(mood: number) {
     const c = this.ctx; if (!c || !this.master) return;
     if (this.musicMood === mood && this.musicTimer) return;
@@ -197,6 +197,8 @@ const MOODS: Record<number, Mood> = {
   4: { bpm: 110, root: 55, prog: [[0, 4, 7], [2, 7, 9], [-3, 0, 4], [4, 7, 11]], scale: PENTA, pad: 'sine', lead: 'triangle', drums: true },   // tourist street
   5: { bpm: 128, root: 60, prog: [[0, 4, 7], [5, 9, 12], [7, 11, 14], [0, 4, 7]], scale: MAJ, pad: 'sawtooth', lead: 'square', drums: true },  // countdown party
   6: { bpm: 140, root: 52, prog: [[0, 3, 7], [-4, 0, 3], [-2, 2, 5], [-5, -1, 2]], scale: MIN, pad: 'sawtooth', lead: 'square', drums: true }, // boss
+  // 8: title theme on the main menu — bouncy, a bit cheeky
+  8: { bpm: 118, root: 58, prog: [[0, 4, 7, 11], [5, 9, 12, 16], [2, 5, 9, 12], [7, 11, 14, 17]], scale: PENTA, pad: 'triangle', lead: 'square', drums: true },
   7: { bpm: 116, root: 50, prog: [[0, 3, 7], [5, 8, 12], [-2, 2, 5], [3, 7, 10]], scale: MIN, pad: 'sine', lead: 'triangle', drums: true },     // endless night
 };
 

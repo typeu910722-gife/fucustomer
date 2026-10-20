@@ -202,7 +202,7 @@ export class Game {
       if (this.touch) { $('touch').classList.remove('hidden'); document.body.classList.add('touch'); }
       else this.input.lock();
       audio.setMusicVolume(this.settings.music);
-      audio.startMusic(s.shift.endless ? 7 : s.shift.boss ? 6 : s.shift.mode === 'shift' ? s.shift.chapter : 0);
+      audio.startMusic(s.shift.endless ? 7 : s.shift.boss ? 6 : s.shift.mode === 'shift' ? (s.shift.chapter <= 7 ? s.shift.chapter : 1 + (s.shift.chapter - 1) % 5) : 0);
     }
     if (first || !this.started) { this.pos = { x: me.x, z: me.z }; this.yaw = me.yaw; }
     // server reconciliation (the server clamps speed and resolves collisions)

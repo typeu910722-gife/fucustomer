@@ -6,7 +6,7 @@ import { defaultServerUrl, loadSettings } from './storage.ts';
 export interface RaidReport { at: number; raider: string; score: number; outside: boolean; money: number; rating: number }
 type R<T> = { ok: true; data: T } | { ok: false; error: string };
 
-function base() {
+export function apiBase() {
   const ws = loadSettings().serverUrl || defaultServerUrl();
   return ws.replace(/^ws/, 'http').replace(/\/ws$/, '');
 }
@@ -14,7 +14,7 @@ async function call<T>(method: string, path: string, body?: unknown, token?: str
   try {
     const headers: Record<string, string> = { 'content-type': 'application/json' };
     if (token) headers['x-owner-token'] = token;
-    const res = await fetch(base() + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+    const res = await fetch(apiBase() + path, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) return { ok: false, error: (data as { error?: string }).error ?? `伺服器錯誤 ${res.status}` };
     return { ok: true, data: data as T };
