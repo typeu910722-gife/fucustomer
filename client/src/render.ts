@@ -14,7 +14,9 @@ import {
 import type { CustomerSnap, Held, PlayerSnap, Snapshot } from '../../shared/protocol.ts';
 import type { Quality } from './storage.ts';
 import { sigDef } from '../../shared/sigkarens.ts';
-import { DecorCtx, STORE_DECOR, buildStationTop, buildStoreDecor, buildStoreExtras } from './decor.ts';
+import { DecorCtx, STORE_DECOR, buildStoreDecor, buildStoreExtras } from './decor.ts';
+import { StationInfo, buildStation, stationGlowMesh } from './stations.ts';
+import { buildShelfStyle } from './shelves.ts';
 import { INK, PillOpts, UI_FONT, isFontReady, labelTexture, pillCanvas, popCanvas, textTexture, whenFontReady } from './labels.ts';
 
 // ---------- helpers ----------
@@ -326,6 +328,7 @@ export class StoreView {
   private shadowSig = '';
   private atlas = new SignAtlas();
   private coffeeSteam: THREE.Mesh[] = [];
+  private steamBase = new THREE.Vector3();
   private spillGeo = new THREE.CircleGeometry(0.45, 20);
   private spillMat = new THREE.MeshBasicMaterial({ color: 0x8a6d3b, transparent: true, opacity: 0.85 });
   highlight: THREE.Box3Helper;
@@ -482,6 +485,10 @@ export class StoreView {
       const info = CURRENT_MAP.products[sh.product];
       const frame = mat(isFridge ? 0xdee2e6 : TH.shelf, q, { metal: 0.3, rough: 0.5 });
       const openX = face < 0 ? b.x0 : b.x1, backX = face < 0 ? b.x1 : b.x0;
+      // store-specific fixture (bookcase, bread baskets, glass cabinet…); otherwise the generic shelf below
+      const style = buildShelfStyle(this.decorCtx(), CURRENT_MAP.id, sh.product, info.shape, b, face);
+      const slots: THREE.Vector3[] = [];
+      if (!style) {
       S.add(boxMesh({ ...b }, isRack ? 0.04 : 0.12, frame));
       if (isWall) {
         S.add(boxMesh(face < 0 ? { ...b, x0: b.x1 - 0.12 } : { ...b, x1: b.x0 + 0.12 }, b.h, frame));
@@ -517,7 +524,6 @@ export class StoreView {
         put(S, CYL(0.17, 0.17, 0.012, 16), basic(PRODUCT_INFO[sh.product].color), x + (x < b.x0 ? -0.04 : 0.04), b.h * 0.6, (b.z0 + b.z1) / 2, 0, 0, Math.PI / 2);
       }
       // product slots
-      const slots: THREE.Vector3[] = [];
       if (isRack) {
         for (let x = b.x0 + 0.3; x < b.x1 - 0.2; x += 0.24) { slots.push(new THREE.Vector3(x, b.h - 0.45, b.z0 + 0.15)); slots.push(new THREE.Vector3(x, b.h - 0.45, b.z1 - 0.15)); }
       } else if (isWall) {
@@ -525,14 +531,19 @@ export class StoreView {
       } else {
         for (const t of tiers.slice(0, 3)) for (let x = b.x0 + 0.35; x < b.x1 - 0.2; x += 0.75) { slots.push(new THREE.Vector3(x, t + 0.17, b.z0 + 0.2)); slots.push(new THREE.Vector3(x, t + 0.17, b.z1 - 0.2)); }
       }
+      }
       // interleave so partially-filled shelves look evenly stocked
-      slots.sort((a, c) => ((a.x * 7 + a.z * 13) % 1) - ((c.x * 7 + c.z * 13) % 1));
-      const geo = productGeometry(info.shape);
-      const inst = new THREE.InstancedMesh(geo, mat(0xffffff, q, { rough: 0.4 }), slots.length);
+      const key = (v: THREE.Vector3, y: number) => (v.x * 7 + v.z * 13 + v.y * y) % 1;
+      if (style) { if (!style.ordered) style.slots.sort((a, c) => key(a.p, 3) - key(c.p, 3)); for (const t of style.slots) slots.push(t.p); }
+      else slots.sort((a, c) => key(a, 0) - key(c, 0));
+      const geo = style?.geometry ?? productGeometry(info.shape);
+      const inst = new THREE.InstancedMesh(geo, geo.attributes.color ? this.itemVCMat() : mat(0xffffff, q, { rough: 0.4 }), slots.length);
       const m4 = new THREE.Matrix4();
       const palette = info.palette;
       const col = new THREE.Color(), sc = new THREE.Vector3(), qt = new THREE.Quaternion(), ps = new THREE.Vector3();
       slots.forEach((p, i) => {
+        const st = style?.slots[i];
+        if (st) { m4.compose(st.p, st.q ?? qt.identity(), st.s ?? sc.set(1, 1, 1)); inst.setMatrixAt(i, m4); inst.setColorAt(i, col.setHex(palette[(i * 7) % palette.length])); return; }
         const v = isRack ? 1 : 0.85 + ((i * 37) % 7) / 20;
         sc.set(v, isRack ? 1 : 0.85 + ((i * 13) % 5) / 12, v); qt.setFromAxisAngle(new THREE.Vector3(0, 1, 0), isRack ? 0 : ((i * 53) % 10) / 40);
         ps.set(p.x, p.y + (sc.y - 1) * 0.15, p.z); m4.compose(ps, qt, sc); inst.setMatrixAt(i, m4);
@@ -542,8 +553,9 @@ export class StoreView {
       S.add(inst);
       this.shelfInst.set(sh.product, { mesh: inst, slots });
       const lbl = this.atlas.mesh(1.2, 0.3, () => textCanvas([{ text: PRODUCT_INFO[sh.product].name, size: 64 }], 512, 128, '#' + PRODUCT_INFO[sh.product].color.toString(16).padStart(6, '0')));
-      if (isWall) { lbl.position.set(openX + face * 0.01, b.h + 0.25, (b.z0 + b.z1) / 2); lbl.rotation.y = face < 0 ? -Math.PI / 2 : Math.PI / 2; S.add(lbl); }
-      else { lbl.position.set((b.x0 + b.x1) / 2, b.h + 0.25, b.z0 - 0.01); lbl.rotation.y = Math.PI; S.add(lbl); const l2 = lbl.clone(); l2.position.z = b.z1 + 0.01; l2.rotation.y = 0; S.add(l2); }
+      const ly = style?.labelY ?? b.h + 0.25;
+      if (isWall) { lbl.position.set(openX + face * 0.01, ly, (b.z0 + b.z1) / 2); lbl.rotation.y = face < 0 ? -Math.PI / 2 : Math.PI / 2; S.add(lbl); }
+      else { lbl.position.set((b.x0 + b.x1) / 2, ly, b.z0 - 0.01); lbl.rotation.y = Math.PI; S.add(lbl); const l2 = lbl.clone(); l2.position.z = b.z1 + 0.01; l2.rotation.y = 0; S.add(l2); }
     }
     // counter
     S.add(boxMesh(COUNTER, COUNTER.h, mat(TH.counter, q)));
@@ -565,12 +577,14 @@ export class StoreView {
     const SA = (o: THREE.Object3D, on: boolean) => { if (on) S.add(o); };
     const cab = mat(TH.counter, q), slab = mat(0xf1f3f5, q, { rough: 0.35 }), dk = mat(0x343a40, q, { rough: 0.5 }), steel = mat(0xced4da, q, { metal: 0.4, rough: 0.35 });
     const cm = new THREE.Group(); cm.position.set((COFFEE_MACHINE.x0 + COFFEE_MACHINE.x1) / 2, 1.2, (COFFEE_MACHINE.z0 + COFFEE_MACHINE.z1) / 2);
+    let coffeeTop: StationInfo | null = null;
     if (hasCoffee) {
       const B0 = COFFEE_MACHINE, cx = cm.position.x, cz = cm.position.z, fz = B0.z1;
       put(S, RB(B0.x1 - B0.x0, 0.86, B0.z1 - B0.z0, 0.04), cab, cx, 0.43, cz);
       put(S, RB(B0.x1 - B0.x0 + 0.06, 0.05, B0.z1 - B0.z0 + 0.06, 0.02), slab, cx, 0.885, cz);
       put(S, RB(0.4, 0.035, 0.03, 0.012), mat(0xadb5bd, q), cx, 0.7, fz + 0.01); // drawer handle
-      if (!buildStationTop(this.decorCtx(), CURRENT_MAP.id + ':coffee', B0)) {
+      coffeeTop = buildStation(this.decorCtx(), CURRENT_MAP.id + ':coffee', B0);
+      if (!coffeeTop) {
       // the machine: chunky body, accent cheeks, dark brew bay, drip tray, cup, bean hopper, buttons
       put(S, RB(0.66, 0.62, 0.44, 0.08, 2), dk, cx, 1.22, cz);
       for (const sx of [-0.34, 0.34]) put(S, RB(0.03, 0.5, 0.36, 0.015), mat(TH.accent, q), cx + sx, 1.22, cz);
@@ -585,15 +599,18 @@ export class StoreView {
       for (let i = 0; i < 3; i++) put(S, CYL(0.04, 0.03, 0.09, 8), mat([0xffffff, 0xffd8a8, 0xffffff][i], q), cx - 0.3 + i * 0.09, 0.955, cz - 0.28); // cup stack
       }
     }
-    for (let i = 0; i < 3; i++) { const st = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4 })); st.position.copy(cm.position).add(new THREE.Vector3(0, 0.35, 0)); SA(st, hasCoffee); this.coffeeSteam.push(st); }
+    // steam puffs rise from the machine's spout (store-specific machines say where that is)
+    this.steamBase.copy(coffeeTop?.steam ?? new THREE.Vector3(cm.position.x, 1.55, cm.position.z));
+    for (let i = 0; i < 3; i++) { const st = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4 })); st.position.copy(this.steamBase); SA(st, hasCoffee); this.coffeeSteam.push(st); }
     if (hasCoffee) this.stationLabel('coffee' + FOOD_INFO.coffee.station, `${FOOD_INFO.coffee.icon} ${FOOD_INFO.coffee.station}`, cm.position.x, 2.15, cm.position.z);
     const mw = new THREE.Group(); mw.position.set((MICROWAVE.x0 + MICROWAVE.x1) / 2, 1.12, (MICROWAVE.z0 + MICROWAVE.z1) / 2);
-    let customMeal = false;
+    let customMeal = false, mealTop: StationInfo | null = null;
     if (hasMeal) {
       const B0 = MICROWAVE, cx = mw.position.x, cz = mw.position.z, fz = B0.z1 - 0.16;
       put(S, RB(B0.x1 - B0.x0, 0.86, B0.z1 - B0.z0, 0.04), cab, cx, 0.43, cz);
       put(S, RB(B0.x1 - B0.x0 + 0.06, 0.05, B0.z1 - B0.z0 + 0.06, 0.02), slab, cx, 0.885, cz);
-      customMeal = buildStationTop(this.decorCtx(), CURRENT_MAP.id + ':meal', B0);
+      mealTop = buildStation(this.decorCtx(), CURRENT_MAP.id + ':meal', B0);
+      customMeal = !!mealTop;
       if (!customMeal) {
       put(S, RB(0.8, 0.46, 0.46, 0.07, 2), mat(0xfff9f0, q, { rough: 0.4 }), cx, 1.14, fz - 0.23);
       put(S, RB(0.5, 0.34, 0.03, 0.03), mat(TH.accent, q), cx - 0.08, 1.12, fz - 0.005);
@@ -603,7 +620,11 @@ export class StoreView {
       }
     }
     const mwDoor = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.27), new THREE.MeshBasicMaterial({ color: 0x212529 })); mwDoor.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.14); mwDoor.rotation.y = 0; SA(mwDoor, hasMeal && !customMeal);
-    this.microwaveGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.28), new THREE.MeshBasicMaterial({ color: 0xffa94d, transparent: true, opacity: 0 })); this.microwaveGlow.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.135); SA(this.microwaveGlow, hasMeal && !customMeal);
+    // heat glow while someone prepares food: the microwave window, or the spot a store-specific machine names
+    this.microwaveGlow = mealTop?.glow ? stationGlowMesh(mealTop.glow) : new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.28), new THREE.MeshBasicMaterial({ color: 0xffa94d, transparent: true, opacity: 0 }));
+    if (!mealTop) this.microwaveGlow.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.135);
+    this.microwaveGlow.userData.dynamic = true;
+    SA(this.microwaveGlow, hasMeal && (!customMeal || !!mealTop?.glow));
     if (hasMeal) this.stationLabel('mw' + FOOD_INFO.meal.station, `${FOOD_INFO.meal.icon} ${FOOD_INFO.meal.station}`, mw.position.x, 2.15, mw.position.z);
     const pickupMark = new THREE.Mesh(new THREE.CircleGeometry(0.5, 20), new THREE.MeshBasicMaterial({ color: 0xffd43b, transparent: true, opacity: 0.35 })); pickupMark.rotation.x = -Math.PI / 2; pickupMark.position.set(COFFEE_PICKUP.x, 0.01, COFFEE_PICKUP.z); SA(pickupMark, hasCoffee || hasMeal);
     if (hasCoffee || hasMeal) this.stationLabel('pick', '🛎 取餐區', COFFEE_PICKUP.x, 2.3, COFFEE_PICKUP.z, undefined, '#ffc23d');
@@ -1087,6 +1108,11 @@ export class StoreView {
     }
   }
 
+  private itemVC: THREE.Material | null = null;
+  /** Material for shelf items whose mesh carries vertex shading (books, loaves, cakes…), tinted per item. */
+  private itemVCMat() {
+    return this.itemVC ??= this.q === 'low' ? new THREE.MeshLambertMaterial({ vertexColors: true }) : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.5 });
+  }
   private glowShared: THREE.MeshBasicMaterial | null = null;
   /** The shared vertex-coloured unlit material that merged glow parts use (dims like the others). */
   private glowVC() {
@@ -1204,7 +1230,7 @@ export class StoreView {
       this.clockHands[0].rotation.z = -((snap.clock / 60) % 12) / 12 * Math.PI * 2;
       this.clockHands[1].rotation.z = -(snap.clock % 60) / 60 * Math.PI * 2;
     }
-    this.coffeeSteam.forEach((s, i) => { const t = (this.time * 0.6 + i / 3) % 1; s.position.y = 1.55 + t * 0.6; (s.material as THREE.MeshBasicMaterial).opacity = 0.4 * (1 - t); });
+    this.coffeeSteam.forEach((s, i) => { const t = (this.time * 0.6 + i / 3) % 1; s.position.set(this.steamBase.x + Math.sin(t * 5 + i) * 0.03, this.steamBase.y + t * 0.6, this.steamBase.z); (s.material as THREE.MeshBasicMaterial).opacity = 0.4 * (1 - t); });
 
     // customers
     const seen = new Set<number>();
