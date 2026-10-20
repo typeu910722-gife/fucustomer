@@ -61,7 +61,9 @@
    - `shelves`：三個貨架的位置。`shelf`／`rack`（衣架）是中島，要「東西向較長」；`fridge`／`wallshelf` 靠東牆或西牆，要「南北向較長」
    - `coffee`、`meal`：兩個工作站（名稱、動作、價格、位置），不需要就設 `null`；工作站南邊 0.6 公尺要留空給店員站
    - `counter`、`registers`、`queue`（排隊點，第一個靠近收銀台）、`pickup`（取餐區）、`complaint`（客訴點）
-   - `decor`：家具，可用 `table`、`bar`、`plant`、`atm`、`display`、`fitting`（試衣間）、`mannequin`（假人）
+   - `decor`：家具（每一個都是實心、會擋路），可用 `table`、`bar`、`plant`、`atm`、`display`、`fitting`（試衣間）、`mannequin`（假人），或各店專用的家具（畫在 `client/src/decor.ts`）：`beauty` 試用品台、`readtable` 閱讀桌、`bakecase` 麵包蛋糕櫃、`sample` 試吃台、`petpen` 狗狗圍欄、`cages` 寵物籠、`cafetable` 咖啡桌＋沙發椅、`seats` 電影院座椅（一整排）、`hotpot` 火鍋桌、`pump` 加油機、`treadmill` 跑步機、`bench` 臥推架、`bike` 飛輪、`dumbbells` 啞鈴架、`dining` 牛排餐桌、`demo` 3C 展示桌、`tvwall` 電視牆、`mirrors` 美髮鏡台、`dryer` 烘髮椅、`writedesk` 寫字檯、`parcel` 包裹架、`bpmeter` 血壓計、`medcase` 藥品玻璃櫃、`lobby` 大廳沙發組、`luggage` 行李車。換家具時保持同樣的範圍（`box` 座標），碰撞和測試就不用改；椅子、沙發畫在範圍外面，不擋路
+   - 工作站上的機器也可以按店換造型（`decor.ts` 的 `buildStationTop`：電影院爆米花機／熱狗機、美髮院洗頭台／造型鏡台、火鍋冰淇淋機／湯底鍋、牛排鐵板、健身房搖搖杯台），其他店用預設的咖啡機和微波爐
+   - 店員帽子：每種店一種（`client/src/models.ts` 的 `staffHat`），新店要在那裡加一個 `case`
    - `playerSpawns`、`wander`（奧客閒晃的空地）
    - 選填：`karens`（這種店專屬的奧客，會加進自由營業／自己開店／每日挑戰）、`tryOnSpots`（試穿狂站的位置）、`campSpots`（camp 樣板奧客坐的位置）、`rope`（排隊紅龍）、`goalScale`（每日挑戰目標倍率；單價高的店要調高，例如服飾店 2.7）
    - 收銀台、排隊、取餐區用標準位置的話，可以直接用 `shared/maps/common.ts` 的 `STD_FRONT`、`COFFEE_BOX`、`MEAL_BOX`、`WEST_TABLES`

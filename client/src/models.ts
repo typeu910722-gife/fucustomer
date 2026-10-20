@@ -507,9 +507,9 @@ function staffHat(q: Quality, H: THREE.Object3D) {
       break;
     }
     case 'cafe': { // barista knit beanie (no pompom) with a turned-up cuff and a bean patch
-      put(H, DOME(R * 1.1, Math.PI * 0.45, 12, 5), mat(0x5c3d2e, q), 0, 0.05, -0.02, -0.25, 0, 0, 1, 1.05, 1);
+      put(H, DOME(R * 1.1, Math.PI * 0.45, 12, 5), mat(0xe9d3b0, q), 0, 0.05, -0.02, -0.25, 0, 0, 1, 1.05, 1);
       put(H, CYL(R * 1.12, R * 1.14, 0.08, 14, true), acc, 0, 0.07, -0.02, -0.25);
-      put(H, SPH(0.035, 6, 4), mat(0xc08552, q), 0.13, 0.1, R * 1.0, 0, 0, 0.5, 1, 0.7, 0.5);
+      put(H, SPH(0.04, 6, 4), mat(0x6f4e37, q), 0.12, 0.2, onHead(0.12, 0.2, R * 1.1), 0, 0, 0.5, 1, 0.7, 0.5);
       break;
     }
     case 'cinema': { // striped popcorn-box paper hat with popcorn on top
@@ -544,8 +544,9 @@ function staffHat(q: Quality, H: THREE.Object3D) {
       break;
     }
     case 'electronics': { // service headset: band, one ear cup, mic boom; blue polo-cap colours
-      put(H, TOR(R + 0.03, 0.018, 4, 14, Math.PI), mat(0x343a40, q), 0, 0.0, -0.02, -0.15);
-      put(H, CYL(0.08, 0.08, 0.06, 10), acc, R + 0.02, -0.02, 0, 0, 0, Math.PI / 2);
+      put(H, TOR(R + 0.035, 0.03, 4, 14, Math.PI), acc, 0, 0.0, -0.02, -0.15);
+      put(H, CYL(0.1, 0.1, 0.08, 10), mat(0x343a40, q), R + 0.03, -0.02, 0, 0, 0, Math.PI / 2);
+      put(H, CYL(0.1, 0.1, 0.08, 10), mat(0x343a40, q), -R - 0.03, -0.02, 0, 0, 0, Math.PI / 2);
       put(H, CYL(0.012, 0.012, 0.22, 5), mat(0x343a40, q), R * 0.75, -0.14, 0.17, 1.2, 0, -0.35);
       put(H, SPH(0.03, 6, 4), mat(0x212529, q), R * 0.42, -0.19, R * 0.95);
       break;
@@ -564,15 +565,15 @@ function staffHat(q: Quality, H: THREE.Object3D) {
       break;
     }
     case 'pharmacy': { // little folded nurse-style cap with a teal cross
-      put(H, geo('nurseCap', () => new THREE.CylinderGeometry(0.15, 0.2, 0.12, 4, 1).rotateY(Math.PI / 4).scale(1.3, 1, 0.6)), white, 0, R * 0.98, 0.0, -0.3);
-      put(H, B(0.08, 0.025, 0.012), acc, 0, R * 1.0, 0.11, -0.3);
-      put(H, B(0.025, 0.08, 0.012), acc, 0, R * 1.0, 0.11, -0.3);
+      put(H, geo('nurseCap', () => new THREE.CylinderGeometry(0.15, 0.2, 0.12, 4, 1).rotateY(Math.PI / 4).scale(1.3, 1, 0.6)), white, 0, R * 1.0, 0.06, -0.5, 0, 0, 1.25);
+      put(H, B(0.09, 0.03, 0.012), acc, 0, R * 0.98, 0.2, -0.5);
+      put(H, B(0.03, 0.09, 0.012), acc, 0, R * 0.98, 0.2, -0.5);
       break;
     }
     case 'hotel': { // bellboy pillbox cap with a gold band and chin strap, worn at an angle
-      put(H, CYL(0.16, 0.17, 0.13, 12), wain, 0.06, R * 1.0, -0.02, -0.1, 0, -0.18);
-      put(H, CYL(0.172, 0.172, 0.03, 12), mat(0xfcc419, q, { metal: 0.6, rough: 0.3 }), 0.064, R * 0.92, -0.02, -0.1, 0, -0.18);
-      put(H, SPH(0.025, 6, 4), mat(0xfcc419, q, { metal: 0.6, rough: 0.3 }), 0.1, R * 1.21, -0.02);
+      put(H, CYL(0.17, 0.18, 0.15, 12), wain, 0.06, R * 1.08, -0.02, -0.1, 0, -0.18);
+      put(H, CYL(0.172, 0.172, 0.03, 12), mat(0xfcc419, q, { metal: 0.6, rough: 0.3 }), 0.064, R * 0.98, -0.02, -0.1, 0, -0.18);
+      put(H, SPH(0.03, 6, 4), mat(0xfcc419, q, { metal: 0.6, rough: 0.3 }), 0.11, R * 1.33, -0.02);
       put(H, TOR(R * 0.98, 0.008, 3, 12, Math.PI), mat(0x212529, q), 0, -0.02, 0.02, Math.PI, 0, 0);
       break;
     }
