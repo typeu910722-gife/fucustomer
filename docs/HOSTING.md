@@ -22,3 +22,7 @@
 2. 店碼 API（`server/stores.ts`）改存 Durable Object SQLite。
 3. 本機伺服器保留，用來開發與測試。
 4. 防作弊：搗亂回合改由伺服器跑（使用者說「之後再說」）。
+
+## Cloudflare Workers Builds（2026-10-20）
+- Worker 名稱：fucustomer-game；生產分支：claude/trusting-planck-eb99wg；根目錄：cloudflare；建置命令：留白；部署命令：npx wrangler deploy。
+- main 沒有 cloudflare/ 資料夾，所以不能用 main 建置。「重試組建」只會重跑同一次 commit，改分支後要推新 commit 才會觸發。
