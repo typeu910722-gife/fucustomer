@@ -1,0 +1,9 @@
+"lang"
+{
+	"Language"	"tchinese"
+	"Tokens"
+	{
+		"#Playing"	"正在顧店"
+		"#InRoom"	"多人房間 %room%"
+	}
+}

@@ -1,5 +1,6 @@
 {
-  "_comment": "The ONLY place to enter the Steam App ID (numbers from partner.steamgames.com after paying Steam Direct). 0 = Steam features off. depotId is usually appId + 1; leave 0 to use that.",
+  "_comment": "The ONLY place to enter the Steam App ID (numbers from partner.steamgames.com after paying Steam Direct). 0 = Steam features off. depotId is usually appId + 1; leave 0 to use that. includeStorePacks: true = paid edition, the 10 pack-only store types are part of the purchase (see docs/STEAM.md).",
   "appId": 0,
-  "depotId": 0
+  "depotId": 0,
+  "includeStorePacks": false
 }

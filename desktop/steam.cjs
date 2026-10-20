@@ -66,6 +66,7 @@ module.exports = {
       client = m.init(id);
       status = 'ready';
       console.log('Steam ready for app', id, '-', client.localplayer.getName());
+      module.exports.setPresence(null);
       return true;
     } catch (e) {
       client = null;
@@ -87,8 +88,11 @@ module.exports = {
   setPresence(code) {
     if (!client) return;
     try {
+      // steam_display tokens are defined in steam/rich_presence_*.vdf (upload them on the Steamworks site)
       client.localplayer.setRichPresence('connect', code ? `+join ${code}` : null);
-      client.localplayer.setRichPresence('status', code ? `多人房間 ${code}` : '職涯模式');
+      client.localplayer.setRichPresence('room', code || null);
+      client.localplayer.setRichPresence('steam_display', code ? '#InRoom' : '#Playing');
+      client.localplayer.setRichPresence('status', code ? `多人房間 ${code}` : '奧客退散');
     } catch { /* ignore */ }
   },
 };
