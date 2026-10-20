@@ -300,6 +300,15 @@ export class StoreView {
       if (!isRack) for (const t of tiers.slice(0, 3)) {
         if (isWall) S.add(boxMesh(face < 0 ? { ...b, x1: b.x0 + 0.03 } : { ...b, x0: b.x1 - 0.03 }, 0.05, tagM, t + 0.02));
         else { S.add(boxMesh({ ...b, z1: b.z0 + 0.03 }, 0.05, tagM, t + 0.02)); S.add(boxMesh({ ...b, z0: b.z1 - 0.03 }, 0.05, tagM, t + 0.02)); }
+        // little white price cards (every few one is a red 特價 tag)
+        let k = 0;
+        if (isWall) for (let z = b.z0 + 0.3; z < b.z1 - 0.2; z += 0.75) put(S, B(0.012, 0.07, 0.13), k++ % 4 === 2 ? basic(0xff6b6b) : basic(0xffffff), openX + face * 0.012, t + 0.045, z);
+        else for (let x = b.x0 + 0.35; x < b.x1 - 0.2; x += 0.75) for (const z of [b.z0 - 0.012, b.z1 + 0.012]) put(S, B(0.13, 0.07, 0.012), k++ % 5 === 3 ? basic(0xff6b6b) : basic(0xffffff), x, t + 0.045, z);
+      }
+      // rounded end caps in the store's accent colour on free-standing units
+      if (!isWall && !isRack) for (const x of [b.x0 - 0.03, b.x1 + 0.03]) {
+        put(S, RB(0.07, b.h + 0.06, b.z1 - b.z0 + 0.04, 0.03), mat(TH.accent, q), x, (b.h + 0.06) / 2, (b.z0 + b.z1) / 2);
+        put(S, CYL(0.17, 0.17, 0.012, 16), basic(PRODUCT_INFO[sh.product].color), x + (x < b.x0 ? -0.04 : 0.04), b.h * 0.6, (b.z0 + b.z1) / 2, 0, 0, Math.PI / 2);
       }
       // product slots
       const slots: THREE.Vector3[] = [];
@@ -332,7 +341,7 @@ export class StoreView {
     }
     // counter
     S.add(boxMesh(COUNTER, COUNTER.h, mat(TH.counter, q)));
-    S.add(boxMesh({ ...COUNTER, x0: COUNTER.x0 - 0.05, x1: COUNTER.x1 + 0.05, z0: COUNTER.z0 - 0.05, z1: COUNTER.z1 + 0.05 }, 0.05, mat(0xf1f3f5, q, { rough: 0.3 }), COUNTER.h));
+    put(S, RB(COUNTER.x1 - COUNTER.x0 + 0.1, 0.06, COUNTER.z1 - COUNTER.z0 + 0.1, 0.025), mat(0xf1f3f5, q, { rough: 0.3 }), (COUNTER.x0 + COUNTER.x1) / 2, COUNTER.h + 0.02, (COUNTER.z0 + COUNTER.z1) / 2);
     const scrM = this.glowMat(0xffffff); scrM.map = posScreenTexture();
     const poleM = this.glowMat(0xffffff); poleM.map = poleTexture();
     for (const r of REGISTERS) {
@@ -384,6 +393,8 @@ export class StoreView {
     // posters
     const poster = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.1), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: CURRENT_MAP.poster[0], size: 72, color: '#ffd43b' }, { text: CURRENT_MAP.poster[1], size: 54 }], 512, 256, CURRENT_MAP.sign.bg)) }));
     poster.position.set(12, 2.0, 0.02); S.add(poster);
+    put(S, RB(2.32, 1.22, 0.03, 0.012), mat(0xf8f9fa, q), 12, 2.0, 0.005);
+    this.buildDetails();
   }
 
   /** Is a floor spot free for a purely visual prop (not in anyone's way)? */
@@ -783,8 +794,9 @@ export class StoreView {
       const sitting = c.state === 'charge' && !c.held && !c.flying;
       // thrown out: flat on the back, then sits up over the last 0.7 s
       const lying = c.down > 0 ? Math.min(1, c.down / 0.7) : 0;
-      e.h.group.position.set(e.s.x, c.held ? 0.95 : sitting ? SIT_Y : lying ? 0.18 * lying : c.y, e.s.z); e.h.group.rotation.y = e.s.yaw;
-      e.h.group.rotation.x = c.flying ? e.h.group.rotation.x + dt * 9 : Math.PI / 2 * lying;
+      e.h.group.position.set(e.s.x, c.held ? 0.95 : sitting ? SIT_Y : lying ? 0.3 * lying : c.y, e.s.z); e.h.group.rotation.y = e.s.yaw;
+      // lying face-up so the dazed face is visible
+      e.h.group.rotation.x = c.flying ? e.h.group.rotation.x + dt * 9 : -Math.PI / 2 * lying;
       e.h.group.rotation.z = c.held ? Math.PI / 2 + Math.sin(this.time * 12) * 0.15 : 0;
       const pose = c.held || c.flying ? 'flail'
         : lying ? 'dazed'
