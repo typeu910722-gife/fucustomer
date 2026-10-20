@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+  <meta name="theme-color" content="#101e26">
+  <meta name="description" content="奧客退散！第一人稱便利商店經營與搞笑紓壓。餐飲訂單、補貨清潔、四種奧客、隨機事件與下班升級。">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>奧客退散！｜夜班經營＋搞笑紓壓 v0.4</title>
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script defer src="world.js"></script>
+  <script defer src="shop.js"></script>
+  <script defer src="engine.js"></script>
+  <script defer src="game.js"></script>
+</head>
+<body>
+  <main id="app" aria-label="奧客退散第一人稱遊戲">
+    <canvas id="scene" tabindex="0" aria-label="第一人稱便利商店。WASD 或左側搖桿移動，滑動右側轉頭。"></canvas>
+    <div id="lookArea" aria-hidden="true"></div>
+    <div class="vignette" aria-hidden="true"></div>
+    <div id="damage" aria-hidden="true"></div>
+    <div id="flash" aria-hidden="true"></div>
+    <div id="speedlines" aria-hidden="true"></div>
+
+    <section id="hud" aria-label="遊戲狀態">
+      <aside class="map-card">
+        <div class="map-head"><span class="live-dot"></span><b>店內雷達</b><span>1F</span></div>
+        <canvas id="minimap" width="300" height="234" aria-label="即時小地圖：白色為玩家、綠色為顧客、紅色為奧客、橘色為出口。"></canvas>
+        <div class="map-key"><span><i class="dot green"></i>顧客</span><span><i class="dot red"></i>奧客</span><span class="exit-key">↗ 出口</span></div><div class="map-stations">S 零食 · C 咖啡 · M 熱食 · B 補貨</div>
+      </aside>
+      <div class="top-stats">
+        <div class="shift-label"><span>NIGHT SHIFT</span><b id="shiftDay">001</b></div>
+        <div class="stat time-stat"><small>距離下班</small><strong id="time">120<span>s</span></strong><div class="progress"><i id="timeBar"></i></div></div>
+        <div class="stat money-stat"><small>營業額</small><strong><span>$</span><b id="money">0</b><em id="goalValue"> / 180</em></strong><div class="progress"><i id="moneyBar"></i></div></div>
+        <div class="stat chaos-stat"><small>店面混亂</small><strong id="chaos">0<span>%</span></strong><div class="progress"><i id="chaosBar"></i></div></div>
+      </div>
+      <nav class="top-buttons" aria-label="設定"><button id="soundBtn" class="icon-btn" aria-label="音效開關" title="音效開關">♫</button><button id="fullscreenBtn" class="icon-btn" aria-label="全螢幕" title="全螢幕">⛶</button><button id="pauseBtn" class="icon-btn" aria-label="暫停與設定" title="暫停與設定">Ⅱ</button></nav>
+      <div id="objective"><i></i><span id="objectiveText">完成餐飲訂單，達成營業目標，平安下班。</span></div>
+      <div id="businessHUD"><div id="inventory"><span>手上商品</span><b id="inventoryText">空手</b><button id="dropBtn" data-act="drop" title="放下商品或補貨箱（G）">放下 G</button></div><div class="business-status"><span id="stockText">▣ 6 · ☕ 5 · ♨ 4</span><span>口碑 <b id="reputation">90</b></span></div></div>
+      <aside id="orderBoard"><div>待完成訂單 <b id="orderCount">0</b></div><p id="orderList"></p></aside>
+      <div id="eventStrip" class="hidden"><b id="eventName"></b><span id="eventTime"></span></div>
+      <div id="jobPanel" class="hidden"><div><b id="jobName">工作進行中</b><small id="jobTime"></small></div><div class="job-track"><i id="jobBar"></i></div><small>留在附近 · 再按互動取消</small></div>
+      <div id="crosshair" aria-hidden="true"><span></span><i></i><b></b></div>
+      <div id="targetPrompt"><span id="targetType">一般顧客</span><strong id="targetText">服務 +$15</strong><small id="targetDistance">1.2m</small></div>
+      <div id="exitMarker" aria-hidden="true"><span>↗</span><b>出 口</b><small id="exitDistance">4m</small></div>
+      <div id="floatLayer" aria-hidden="true"></div>
+      <div id="banner" role="status"></div>
+      <div id="hint" role="status">綠色顧客先服務；紅色奧客請出門。</div>
+      <div class="burst-panel"><div class="burst-label"><b>情緒爆發</b><span><em id="burstNum">0</em> / 100</span></div><div class="burst-track"><i id="burstBar"></i></div><small id="burstHint">送走奧客 +25 · 旋風 +12</small></div>
+      <div id="stamina"><span>SPRINT</span><div><i id="staminaBar"></i></div></div>
+      <div id="desktopHelp"><b>WASD</b> 移動 <b>滑鼠</b> 轉頭 <b>E</b> 互動／交付 <b>G</b> 放下 <b>空白</b> 抓／丟 <b>Q</b> 旋風 <b>R</b> 爆發 <b>P</b> 暫停</div>
+      <div class="touch-controls">
+        <div id="joystick" role="group" aria-label="拖動搖桿移動"><div class="joystick-mark north">⌃</div><div class="joystick-mark south">⌄</div><div class="joystick-mark west">‹</div><div class="joystick-mark east">›</div><div id="stick"></div><span>移 動</span></div>
+        <button id="sprintBtn" aria-label="按住快跑">⇧ <span>快跑</span></button>
+        <div class="look-guide" aria-hidden="true">‹ <span>滑動轉頭</span> ›</div>
+        <div class="action-group"><button data-act="ultimate" id="ultimateBtn"><span>✴</span><b>全店退散</b><small id="ultLabel">集氣 0%</small></button><button data-act="spin" id="spinBtn"><span>〰</span><b>拖把旋風</b><small id="spinLabel">就緒</small></button><button data-act="serve" id="serveBtn"><span>✓</span><b id="interactLabel">互動</b><small>設備／顧客</small></button><button data-act="grab" id="grabBtn"><span>✋</span><b id="grabLabel">抓／丟</b><small id="grabSub">靠近顧客</small></button></div>
+      </div>
+    </section>
+
+    <section id="menu" class="overlay" aria-label="遊戲選單">
+      <div class="menu-shell">
+        <div class="menu-hero"><div class="edition">BUSINESS & CHAOS <i>0.4</i></div><div class="brand">BYE<br><span>KARENS!</span><em>24 / 7</em></div><p class="zh-title">奧客退散！</p><p class="tagline">咖啡要熱，笑容要穩。<br>奧客太吵，就送他出門。</p><div class="hero-pills"><span>餐飲訂單</span><span>補貨清潔</span><span>下班升級</span></div></div>
+        <div class="menu-content"><div class="menu-kicker">便利商店生存班 <span id="careerDay">● 第 1 班</span></div><h1 id="menuTitle">經營與紓壓，一起來。</h1><p id="menuDescription">準備餐飲、搬箱補貨、擦亮地板。<br>遇到四種奧客，安撫或直接請出門。</p><div class="mission"><span>本班目標</span><b>120 秒內賺到 <strong id="menuGoal">$180</strong></b><small>混亂低於 100% · 口碑高於 0</small></div><div class="how-to"><div><span>01</span><p><b>依訂單準備商品</b><small>▣ 拿零食 · ☕ 沖咖啡 · ♨ 微波便當</small></p></div><div><span>02</span><p><b>補貨、拖地、顧秩序</b><small>E／互動操作；紅色奧客也能抓起投出</small></p></div><div><span>03</span><p><b>領薪資，升級下一班</b><small>工作鞋、拖把、餐飲設備、清潔組、保全</small></p></div></div><button id="startBtn" class="primary">打卡上班 <span>→</span></button><div class="menu-bottom"><span id="bestScore">祝你準時下班。</span><button id="shopBtn">升級商店 ↗</button><button id="helpBtn">操作說明 ↗</button></div></div>
+      </div>
+    </section>
+    <section id="pauseMenu" class="overlay hidden" aria-label="暫停與設定"><div class="dialog"><span class="eyebrow">TAKE A BREATH</span><h2>先喘口氣。</h2><p>班表已暫停，準備好再繼續。</p><label class="setting">轉頭靈敏度 <output id="sensitivityValue">1.0</output><input id="sensitivity" type="range" min="0.4" max="2" value="1" step="0.1"></label><label class="setting">畫面品質<select id="quality"><option value="auto">自動 · 建議</option><option value="high">高畫質</option><option value="low">流暢優先</option></select></label><label class="check-setting"><input id="reduceMotion" type="checkbox">減少震動與閃光</label><label class="check-setting"><input id="showTouch" type="checkbox">顯示觸控搖桿</label><button id="resumeBtn" class="primary">繼續上班 →</button><button id="restartBtn" class="text-btn">重新開始這一班</button></div></section>
+    <section id="helpMenu" class="overlay hidden" aria-label="操作說明"><div class="dialog help-dialog"><span class="eyebrow">BUSINESS & CHAOS</span><h2>夜班生存指南</h2><p>手機請橫放：左搖桿移動，右側滑動轉頭。對準近處的顧客、設備或髒污，按「互動」。每班 120 秒，達成營業目標、維持混亂低於 100% 與口碑高於 0。</p><p>看顧客頭上的訂單：▣ 零食 $15、☕ 咖啡 $25、♨ 熱便當 $35。先到地圖對應標記準備，再回到顧客面前交付。手上最多兩份商品，拿錯不會自動扣除；G／放下可以丟棄。製作中必須留在設備旁，再按互動可取消並退還原料。</p><p>缺貨時到出口右側的 ▤ 補貨箱，搬到 ▣ 貨架按互動，會補滿三類商品。對準地面髒污按互動拖地，可減少混亂。跑過髒污可能滑倒。</p><p>四種奧客：挑剔客鬧得快、亂丟客製造髒污、插隊客影響其他客人、直播客消耗附近客人耐心。可以互動安撫，也能抓起、對準橘色出口投出。誤丟一般顧客會扣口碑、增加混亂。旋風會波及一般顧客，爆發值滿 100 可全店退散。</p><p>每班可能出現尖峰人潮或停電；結算薪資可購買永久升級。通關後下一班的營業目標提高；失敗仍可領部分薪資再挑戰。進度存在目前瀏覽器。</p><p class="keyboard-copy">電腦：WASD 移動、滑鼠轉頭、E 互動／交付、G 放下、空白抓／丟、Q 旋風、R 爆發、Shift 快跑、P／Esc 暫停。↑↓ 移動，←→ 轉頭。</p><button id="closeHelpBtn" class="primary">知道了 →</button></div></section>
+    <section id="resultMenu" class="overlay hidden" aria-label="本班成績"><div class="dialog result-dialog"><span class="eyebrow" id="resultEyebrow">SHIFT COMPLETE</span><div class="result-mark" id="resultMark">✓</div><h2 id="resultTitle">平安下班。</h2><p id="resultDescription">你守住了這家便利商店。</p><div class="result-grid"><div><small>營業額</small><strong id="resultMoney">$0</strong></div><div><small>服務顧客</small><strong id="resultServed">0</strong></div><div><small>奧客退散</small><strong id="resultEjected">0</strong></div><div><small>店面混亂</small><strong id="resultChaos">0%</strong></div></div><div id="salaryReport"></div><button id="againBtn" class="primary">再上一班 →</button><button id="resultShopBtn" class="secondary">領薪升級 →</button><button id="homeBtn" class="text-btn">回到打卡畫面</button></div></section>
+    <section id="upgradeMenu" class="overlay hidden" aria-label="下班升級商店"><div class="upgrade-dialog"><div class="upgrade-header"><div><span class="eyebrow">AFTER HOURS</span><h2>下班，升級自己。</h2><p>用夜班薪資兌換裝備，下一班起生效。</p></div><div class="wallet"><small>薪資點數</small><strong id="walletValue">120</strong></div></div><div id="upgradeList"></div><p id="shopMessage" role="status">第一次上班有 120 點入職獎勵。</p><button id="closeShopBtn" class="primary">準備好了 →</button></div></section>
+    <div id="rotateNotice" class="overlay hidden"><div class="rotate-card"><div>▯ ↻ ▭</div><h2>橫放手機，開始夜班。</h2><p>左右手操作需要多一點空間。<br>請先關閉手機的直向鎖定，再橫放手機。</p><button id="portraitBtn" class="text-btn">仍以直向繼續</button></div></div>
+    <div id="fatal" class="overlay hidden"><div class="dialog"><h2>畫面暫時無法啟動</h2><p id="fatalMessage">請使用支援 WebGL 的 Safari、Chrome 或 Edge，並開啟硬體加速。</p><button id="reloadBtn" class="primary">重新載入</button></div></div>
+    <div id="loading"><span class="loading-brand">BYE <b>KARENS!</b></span><i></i><small>正在準備今晚的便利商店…</small></div>
+  </main>
+</body>
+</html>
