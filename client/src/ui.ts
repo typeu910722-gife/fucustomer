@@ -28,30 +28,37 @@ export interface MainMenuHandlers {
 }
 
 export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: StoreSave | null; coopSave: StoreSave | null; canRejoin: string | null; server: string; platform: string; error?: string }) {
+  const floaters = ['🧃', '🍙', '🥤', '🧋', '🍗', '👕', '🛒', '🧾', '🍞', '☕', '📦', '🧹'];
   show(`
-    <div class="card">
-      <h1 class="title">奧客<span>退散</span></h1>
-      <div class="subtitle">FUCustomer・第一人稱便利商店經營＋奧客退散</div>
-      <label class="field">你的名字<input type="text" id="m-name" maxlength="16" placeholder="店員名字" value="${esc(s.name)}"></label>
-      ${info.canRejoin ? `<button class="btn good" id="m-rejoin">🔌 重新連線到房間 ${esc(info.canRejoin)}</button>` : ''}
-      ${h.firstDay ? `<div class="welcome"><b>👋 第一次來上班？</b><span>直接從第一天開始，會有一步一步的教學。</span><button class="btn good" id="m-first">▶ 開始第一天上班</button></div>` : ''}
-      <button class="btn primary" id="m-career" style="font-size:20px;padding:16px">🧑‍💼 職涯模式：從工讀生到終極打工人</button>
-      <h3>自由營業（單人）</h3>
-      <div class="row">
-        <button class="btn" id="m-solo-new">🗺 選擇店面開始營業（${MAPS.length} 種地圖）</button>
+    <div class="bgfx">${floaters.map((f, i) => `<span style="left:${(i * 83) % 100}%;animation-duration:${14 + (i * 7) % 11}s;animation-delay:-${(i * 5) % 14}s">${f}</span>`).join('')}</div>
+    <div class="ts">
+      <div class="ts-left">
+        <div class="logo"><span class="l1">奧客</span><span class="l2">退散！</span><small>FUCUSTOMER</small></div>
+        <div class="tagline">打工人認真上班，順便把奧客請出門</div>
+        <div class="mascots"><span class="bob">🧑‍🍳</span><span class="vs">VS</span><span class="bob d">😤</span><span class="bob">🤳</span><span class="bob d">👑</span></div>
+        <div class="ts-name">🪪<input type="text" id="m-name" maxlength="16" placeholder="你的名字" value="${esc(s.name)}" aria-label="你的名字"></div>
       </div>
-      <h3>多人合作（最多 ${MAX_PLAYERS} 人，測試中）</h3>
-      <div class="row"><select id="m-map" aria-label="店面種類">${MAPS.map(m => `<option value="${m.id}">${m.icon} ${esc(m.name)}</option>`).join('')}</select><button class="btn" id="m-create">建立房間</button></div>
-      ${info.coopSave ? `<label class="muted"><input type="checkbox" id="m-coop-cont" checked> 延續上次合作店面（第 ${info.coopSave.day} 天）</label>` : ''}
-      <div class="row" style="margin-top:8px">
-        <input type="text" class="code" id="m-code" maxlength="5" placeholder="房間碼" autocomplete="off" autocapitalize="characters">
-        <button class="btn" id="m-join" style="flex:0 0 120px">加入</button>
+      <div class="card">
+        ${info.canRejoin ? `<button class="btn good" id="m-rejoin">🔌 重新連線到房間 ${esc(info.canRejoin)}</button>` : ''}
+        ${h.firstDay ? `<div class="welcome"><b>👋 第一次來上班？</b><span>從第一天開始，會一步一步教你。</span><button class="btn good" id="m-first">▶ 開始第一天上班</button></div>` : ''}
+        <button class="btn primary hero" id="m-career">🧑‍💼 職涯模式<span class="sub">從工讀生一路升到開自己的店</span></button>
+        <button class="btn warn" id="m-solo-new">🗺 自由營業<span class="sub">${MAPS.length} 種店面：${MAPS.map(m => m.icon).join('')}</span></button>
+        <div class="sectlabel">👥 多人合作（最多 ${MAX_PLAYERS} 人・測試中）</div>
+        <div class="mp">
+          <select id="m-map" aria-label="店面種類">${MAPS.map(m => `<option value="${m.id}">${m.icon} ${esc(m.name)}</option>`).join('')}</select>
+          <button class="btn info" id="m-create">建立房間</button>
+          <input type="text" class="code" id="m-code" maxlength="5" placeholder="房間碼" autocomplete="off" autocapitalize="characters">
+          <button class="btn" id="m-join">加入</button>
+        </div>
+        ${info.coopSave ? `<label class="muted"><input type="checkbox" id="m-coop-cont" checked> 延續上次合作店面（第 ${info.coopSave.day} 天）</label>` : ''}
+        <div class="err" id="m-err">${esc(info.error ?? '')}</div>
+        <div class="ts-foot">
+          <button class="btn small" id="m-settings">⚙ 設定</button>
+          ${h.quit ? '<button class="btn small" id="m-quit">離開</button>' : ''}
+          <span class="muted">伺服器 ${esc(info.server)}・${esc(info.platform)}</span>
+        </div>
       </div>
-      <div class="err" id="m-err">${esc(info.error ?? '')}</div>
-      <button class="btn small" id="m-settings">⚙ 設定</button>
-      ${h.quit ? '<button class="btn small" id="m-quit">離開遊戲</button>' : ''}
-      <div class="muted">伺服器：${esc(info.server)}・平台：${esc(info.platform)}</div>
-    </div>`);
+    </div>`, 'screen title-bg');
   const name = () => { const n = val('m-name').trim(); h.setName(n); return n; };
   on('m-name', 'change', name);
   on('m-career', 'click', () => { name(); h.career(); });

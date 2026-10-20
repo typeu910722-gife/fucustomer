@@ -652,7 +652,7 @@ export class Game {
     $('h-team').innerHTML = s.players.map(p => {
       const held = p.held ? (p.held.kind === 'box' ? '📦' : p.held.kind === 'coffee' ? '☕' : '🧹') : '';
       const st = !p.connected ? '📶' : p.away ? '💤' : p.busy ? '⏳' : '';
-      return `<div class="stockrow"><span style="color:#${p.color.toString(16).padStart(6, '0')}">● ${UI.esc(p.name)}${p.id === this.selfId ? '（你）' : ''}</span><span>${held}${st}${(s.phase === 'prep' || s.phase === 'summary') ? (p.ready ? '✅' : '') : ''}</span></div>`;
+      return `<div class="stockrow"><span><span class="dot" style="display:inline-block;width:11px;height:11px;vertical-align:-1px;background:#${p.color.toString(16).padStart(6, '0')}"></span> ${UI.esc(p.name)}${p.id === this.selfId ? '（你）' : ''}</span><span>${held}${st}${(s.phase === 'prep' || s.phase === 'summary') ? (p.ready ? '✅' : '') : ''}</span></div>`;
     }).join('');
     // prompt
     const pr = $('prompt');
@@ -722,8 +722,18 @@ export class Game {
       $('sb-money').textContent = s.shift.endless ? `$${rev}・分數約 ${rev + s.dayStats.ejected * 10 + s.dayStats.karensResolved * 15 + Math.max(0, elapsed)}` : `$${rev} / $${s.shift.goal}`;
       ($('sb-moneybar') as HTMLElement).style.width = s.shift.endless ? '100%' : `${Math.min(100, rev / s.shift.goal * 100)}%`;
       ($('sb-moneybar') as HTMLElement).style.background = rev >= s.shift.goal ? '#51cf66' : '#4dabf7';
-      $('sb-chaos').textContent = `${s.chaos}%`;
-      ($('sb-chaosbar') as HTMLElement).style.width = `${s.chaos}%`;
+      document.body.classList.toggle('raid', !!s.raid);
+      if (s.raid) {
+        // raid: the bar shows how close the clerk is to throwing you out
+        $('sb-extra').textContent = `😈 搗亂分數 ${s.raid.score}`;
+        $('sb-chaoslabel').textContent = '👀 店員注意';
+        $('sb-chaos').textContent = s.raid.watched >= 0.7 ? '快被抓了！' : s.raid.watched > 0 ? '被盯上了' : '安全';
+        ($('sb-chaosbar') as HTMLElement).style.width = `${Math.round(s.raid.watched * 100)}%`;
+      } else {
+        $('sb-chaoslabel').textContent = '混亂度';
+        $('sb-chaos').textContent = `${s.chaos}%`;
+        ($('sb-chaosbar') as HTMLElement).style.width = `${s.chaos}%`;
+      }
       $('h-day').textContent = s.shift.endless ? '無限夜班' : `第 ${s.shift.chapter} 章`;
     }
     const hasUlt = s.shift.abilities.includes('ultimate');
@@ -740,8 +750,7 @@ export class Game {
     if (s.event) { es.classList.remove('hidden'); es.textContent = s.event.kind === 'outage' ? `⚡ 停電中 ${Math.ceil(s.event.left)}s` : `🚶 尖峰人潮 ${Math.ceil(s.event.left)}s`; } else es.classList.add('hidden');
     if (s.raid && s.phase === 'open') {
       const hb = $('hintbar'); hb.classList.remove('hidden');
-      const eye = '👀'.repeat(Math.ceil(s.raid.watched * 5)) || '—';
-      hb.textContent = `😈 搗亂分數 ${s.raid.score}・剩 ${Math.ceil(s.phaseLeft)} 秒・店員注意：${eye}（E 打翻商品／嗆客人、G 亂丟垃圾，別讓店員靠近太久）`;
+      hb.textContent = this.touch ? '😈「互動」打翻商品／嗆客人、「丟垃圾」亂丟垃圾，別讓店員靠近太久' : '😈 E 打翻商品／嗆客人、G 亂丟垃圾，別讓店員靠近太久';
     } else if (this.tut) {
       const hb = $('hintbar'); hb.classList.remove('hidden');
       hb.textContent = `📘 教學 ${Math.min(this.tut.step, this.tut.total)}/${this.tut.total}：${this.tut.text}`;
@@ -758,7 +767,8 @@ export class Game {
       $('t-spin').textContent = me.spinCd > 0 ? `${Math.ceil(me.spinCd)}` : '旋風';
       $('t-ult').classList.toggle('hidden', !ab.includes('ultimate'));
       $('t-ult').classList.toggle('active', s.burst >= 100);
-      $('t-item').classList.toggle('hidden', !me.held && !me.held2 && me.grabbing == null);
+      $('t-item').classList.toggle('hidden', !me.held && !me.held2 && me.grabbing == null && !me.raider);
+      $('t-item').textContent = me.raider && !me.held ? '丟垃圾' : '放下';
     }
     if (me.grabbing != null) pr.innerHTML = `<span class="key">${this.touch ? '丟出' : this.input.usingGamepad ? 'Y' : '空白'}</span>對準發光的出口丟出去！<div class="sub">${this.touch ? '「放下」' : 'G'} 放開</div>`;
     // feed
@@ -782,7 +792,7 @@ export class Game {
     this.conn.close();
     audio.stopMusic();
     $('hud').classList.add('hidden'); $('touch').classList.add('hidden'); $('netstatus').classList.add('hidden');
-    document.body.classList.remove('shiftmode');
+    document.body.classList.remove('shiftmode', 'raid');
     this.view.renderer.dispose();
     this.onExit(reason, this.finalResult);
   }

@@ -14,3 +14,4 @@ desktop/web/
 *.p12
 *.mobileprovision
 steam_appid.txt
+.cache/

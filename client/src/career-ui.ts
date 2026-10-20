@@ -30,13 +30,11 @@ function rankCard(p: CareerProfile) {
   const nextRank = RANKS.find(r => r.from > p.level);
   return `
     <div class="rankcard">
-      <div class="rankbadge">Lv.${p.level}</div>
-      <div style="flex:1">
-        <div class="rankname">${rankOf(p.level)}${p.title ? ` <span class="tag ok">${esc(p.title)}</span>` : ''}</div>
-        <div class="bar big"><i style="width:${pct}%"></i></div>
-        <div class="muted">${p.level >= MAX_LEVEL ? '已達最高職級' : `EXP ${p.exp} / ${need}`}${nextRank ? `・Lv.${nextRank.from} 晉升「${nextRank.name}」` : ''}</div>
-      </div>
-      <div class="wallet">💰 ${p.wallet}<small>薪資點數</small></div>
+      <div class="row" style="gap:8px;width:100%;flex-wrap:nowrap"><div class="rankbadge">Lv.${p.level}</div>
+        <div class="wallet">💰 ${p.wallet}<small>存款</small></div></div>
+      <div class="rankname">${rankOf(p.level)}</div>${p.title ? `<span class="tag ok">${esc(p.title)}</span>` : ''}
+      <div class="bar big" style="width:100%"><i style="width:${pct}%;background:var(--warn)"></i></div>
+      <div class="muted">${p.level >= MAX_LEVEL ? '已達最高職級' : `EXP ${p.exp} / ${need}`}${nextRank ? `<br>Lv.${nextRank.from} 晉升「${nextRank.name}」` : ''}</div>
     </div>`;
 }
 
@@ -44,10 +42,12 @@ export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'ch
   const tabs: [Tab, string][] = [['chapters', '📖 主線'], ['store', p.store ? `🏪 ${esc(p.store.name)}` : '🏪 我的店'], ['skills', `🧠 技能${p.skillPoints ? ` (${p.skillPoints})` : ''}`], ['gear', '🧰 裝備'], ['achievements', `🏆 成就 ${p.achievements.length}/${ACHIEVEMENTS.length}`], ['stats', '📊 紀錄']];
   show(`
     <div class="card wide career">
-      <div class="row" style="align-items:center"><h2 style="flex:1;margin:0">打工人職涯</h2><button class="btn small" id="c-back" style="flex:0">← 主選單</button></div>
-      ${rankCard(p)}
-      <div class="tabs">${tabs.map(([t, l]) => `<button class="tab ${t === tab ? 'on' : ''}" data-tab="${t}">${l}</button>`).join('')}</div>
-      <div id="c-body">${tab === 'chapters' ? chaptersHtml(p) : tab === 'skills' ? skillsHtml(p) : tab === 'gear' ? gearHtml(p) : tab === 'store' ? storeHtml(p) : tab === 'achievements' ? achievementsHtml(p) : statsHtml(p)}</div>
+      <div class="c-side">
+        ${rankCard(p)}
+        <div class="tabs">${tabs.map(([t, l]) => `<button class="tab ${t === tab ? 'on' : ''}" data-tab="${t}">${l}</button>`).join('')}</div>
+        <button class="btn small" id="c-back">← 主選單</button>
+      </div>
+      <div class="c-main" id="c-body">${tab === 'chapters' ? chaptersHtml(p) : tab === 'skills' ? skillsHtml(p) : tab === 'gear' ? gearHtml(p) : tab === 'store' ? storeHtml(p) : tab === 'achievements' ? achievementsHtml(p) : statsHtml(p)}</div>
     </div>`);
   document.getElementById('c-back')!.onclick = () => h.back();
   document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(b => { b.onclick = () => careerScreen(p, h, b.dataset.tab as Tab); });
@@ -140,7 +140,7 @@ function payHtml(r: Reward) {
   const row = (k: string, v: number, cls = '') => `<div class="stat"><span>${k}</span><b class="${cls}">${v < 0 ? '−' : '+'}$${Math.abs(v)}</b></div>`;
   return `<div class="paylist">
     ${row('時薪', pay.wage)}${row('營業獎金', pay.bonus)}
-    ${row(`🤑 錢董硬凹：「${esc(pay.cutReason)}」`, -pay.cut, 'neg')}
+    ${row(`🤑 錢董硬凹：${esc(pay.cutReason)}`, -pay.cut, 'neg')}
     ${row('💵 小費（自己的）', pay.tips, 'pos')}${pay.extra ? row('阿芬姐偷塞的退散獎金', pay.extra, 'pos') : ''}
     ${r.court ? row(`⚖ 法院罰款${r.court.fine === 0 ? '（無罪）' : ''}`, -r.court.fine, 'neg') : ''}
   </div>`;

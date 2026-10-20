@@ -38,13 +38,24 @@ function freshCanvas() {
   old.replaceWith(c);
 }
 
+const LOADING_TIPS = [
+  '奧客先失控、先推你，出手才算正當防衛。',
+  '有背景的奧客（💼）打了一定有人報警，盡量別碰。',
+  '貨架空了客人會不滿，補貨要趁早。',
+  '小費是你自己的，薪水會被錢董硬凹。',
+  '下班前記得鎖店門，不然好友會衝進來搗亂。',
+  '抓不動的奧客，先揍暈或用拖把旋風轉暈再抓。',
+  '充電霸王：拔兩次插頭，或請他喝杯咖啡。',
+  '客製魔人一直改單？對他「複誦點單」。',
+];
+
 let current: Game | null = null;
 let screenDepth = 0; // 0 = main menu; anything else = a sub screen (Android back button returns to the menu)
 
 function startGame(make: () => GameConnection, onDone?: (reason?: string, result?: ShiftResult | null) => void) {
   audio.unlock();
   freshCanvas();
-  UI.show('<div class="card"><h2>載入中…</h2><p class="muted">準備開店</p></div>');
+  UI.show(`<div class="card loading"><div class="spinner">🛒</div><h2>開店準備中…</h2><p class="tip">💡 ${LOADING_TIPS[Math.floor(Math.random() * LOADING_TIPS.length)]}</p></div>`);
   tryFullscreenLandscape(); // needs the click that started the game
   (window as unknown as { __game: Game | null }).__game = null;
   // build the store on the next frame so the loading card paints and the click returns right away
