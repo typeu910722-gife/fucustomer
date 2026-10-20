@@ -1,6 +1,7 @@
 // Three.js scene: the store, live stock displays, characters (players, customers, karens) and effects.
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import {
   B, CAP, CONE, CYL, DOME, Human, ICON_Y, Label, Pose, RB, SIT_Y, SKIN, HAIR, SPH, TOR, basic, buildRegister, customerLook, geo, heldModel, hex,
   karenAccessory, mat, mergeInto, poleTexture, posScreenTexture, put, textCanvas,
@@ -27,15 +28,18 @@ function boxMesh(b: AABB, h: number, m: THREE.Material, y0 = 0) {
 /** Speckled terrazzo-like tiles with grout lines. */
 /** Item mesh for a product shape (instanced on shelves). */
 function productGeometry(shape: string): THREE.BufferGeometry {
+  const lathe = (pts: [number, number][], seg: number) => new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), seg);
+  const center = (g: THREE.BufferGeometry, h: number) => g.translate(0, -h / 2, 0);
   switch (shape) {
-    case 'can': return new THREE.CylinderGeometry(0.09, 0.09, 0.3, 10);
-    case 'bottle': return new THREE.CylinderGeometry(0.07, 0.08, 0.36, 8);
-    case 'cup': return new THREE.CylinderGeometry(0.1, 0.08, 0.28, 10);
-    case 'flat': return new THREE.BoxGeometry(0.3, 0.12, 0.4);
-    case 'shirt': return new THREE.BoxGeometry(0.05, 0.6, 0.48);
-    case 'pants': return new THREE.BoxGeometry(0.05, 0.75, 0.36);
-    case 'bag': return new THREE.BoxGeometry(0.36, 0.3, 0.16);
-    default: return new THREE.BoxGeometry(0.4, 0.3, 0.12);
+    // toy-like silhouettes: rimmed can, bottle with a neck and cap, cup with a domed lid, bevelled boxes
+    case 'can': return center(lathe([[0, 0], [0.08, 0], [0.09, 0.02], [0.09, 0.27], [0.075, 0.3], [0, 0.3]], 10), 0.3);
+    case 'bottle': return center(lathe([[0, 0], [0.075, 0], [0.08, 0.02], [0.08, 0.2], [0.035, 0.29], [0.035, 0.32], [0.04, 0.32], [0.04, 0.36], [0, 0.36]], 8), 0.36);
+    case 'cup': return center(lathe([[0, 0], [0.075, 0], [0.095, 0.24], [0.105, 0.245], [0.09, 0.3], [0, 0.3]], 10), 0.3);
+    case 'flat': return new RoundedBoxGeometry(0.3, 0.12, 0.4, 1, 0.03);
+    case 'shirt': return new RoundedBoxGeometry(0.05, 0.6, 0.48, 1, 0.02);
+    case 'pants': return new RoundedBoxGeometry(0.05, 0.75, 0.36, 1, 0.02);
+    case 'bag': return new RoundedBoxGeometry(0.36, 0.3, 0.16, 1, 0.05);
+    default: return new RoundedBoxGeometry(0.4, 0.3, 0.12, 1, 0.04);
   }
 }
 
@@ -101,6 +105,8 @@ function tileTexture(a: string, b: string, n = 8) {
   const t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping; t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }
+
+const _v = new THREE.Vector3(), _q = new THREE.Quaternion();
 
 // ---------- the store ----------
 interface Smoothed { x: number; z: number; yaw: number }
@@ -220,7 +226,7 @@ export class StoreView {
     const fixtureM = mat(0xced4da, q);
     const panelM = this.glowMat(0xffffff);
     for (let x = 3; x < STORE_W; x += 6) for (let z = 3; z < STORE_D; z += 5) {
-      const f = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.08, 0.62), fixtureM); f.position.set(x, 3.15, z); S.add(f);
+      const f = new THREE.Mesh(RB(2.0, 0.08, 0.62, 0.035), fixtureM); f.position.set(x, 3.15, z); S.add(f);
       const p = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 0.5), panelM); p.rotation.x = Math.PI / 2; p.position.set(x, 3.105, z); S.add(p);
     }
     this.buildStreet();
@@ -357,23 +363,56 @@ export class StoreView {
     // food stations (a map may have none)
     const hasCoffee = !!CURRENT_MAP.coffee, hasMeal = !!CURRENT_MAP.meal;
     const SA = (o: THREE.Object3D, on: boolean) => { if (on) S.add(o); };
-    SA(boxMesh(COFFEE_MACHINE, 0.9, mat(0x343a40, q)), hasCoffee);
-    const cm = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.55, 0.45), mat(0xadb5bd, q, { metal: 0.6, rough: 0.3 })); cm.position.set((COFFEE_MACHINE.x0 + COFFEE_MACHINE.x1) / 2, 1.2, (COFFEE_MACHINE.z0 + COFFEE_MACHINE.z1) / 2); SA(cm, hasCoffee);
+    const cab = mat(TH.counter, q), slab = mat(0xf1f3f5, q, { rough: 0.35 }), dk = mat(0x343a40, q, { rough: 0.5 }), steel = mat(0xced4da, q, { metal: 0.4, rough: 0.35 });
+    const cm = new THREE.Group(); cm.position.set((COFFEE_MACHINE.x0 + COFFEE_MACHINE.x1) / 2, 1.2, (COFFEE_MACHINE.z0 + COFFEE_MACHINE.z1) / 2);
+    if (hasCoffee) {
+      const B0 = COFFEE_MACHINE, cx = cm.position.x, cz = cm.position.z, fz = B0.z1;
+      put(S, RB(B0.x1 - B0.x0, 0.86, B0.z1 - B0.z0, 0.04), cab, cx, 0.43, cz);
+      put(S, RB(B0.x1 - B0.x0 + 0.06, 0.05, B0.z1 - B0.z0 + 0.06, 0.02), slab, cx, 0.885, cz);
+      put(S, RB(0.4, 0.035, 0.03, 0.012), mat(0xadb5bd, q), cx, 0.7, fz + 0.01); // drawer handle
+      // the machine: chunky body, accent cheeks, dark brew bay, drip tray, cup, bean hopper, buttons
+      put(S, RB(0.66, 0.62, 0.44, 0.08, 2), dk, cx, 1.22, cz);
+      for (const sx of [-0.34, 0.34]) put(S, RB(0.03, 0.5, 0.36, 0.015), mat(TH.accent, q), cx + sx, 1.22, cz);
+      put(S, RB(0.36, 0.26, 0.04, 0.03), mat(0x1b1d22, q), cx - 0.08, 1.08, cz + 0.205);
+      put(S, RB(0.3, 0.025, 0.14, 0.01), steel, cx - 0.08, 0.95, cz + 0.22);
+      put(S, CYL(0.025, 0.02, 0.06, 8), steel, cx - 0.08, 1.2, cz + 0.2);
+      put(S, CYL(0.045, 0.035, 0.1, 10), mat(0xffffff, q), cx - 0.08, 1.015, cz + 0.2);
+      put(S, CYL(0.12, 0.1, 0.2, 10), mat(0x8b5a2b, q, { rough: 0.4 }), cx + 0.12, 1.63, cz - 0.04);
+      put(S, CYL(0.125, 0.125, 0.03, 10), dk, cx + 0.12, 1.745, cz - 0.04);
+      const scr = new THREE.Mesh(geo('cmScr', () => new THREE.PlaneGeometry(0.16, 0.08)), this.glowMat(0x96f2d7)); scr.position.set(cx + 0.18, 1.38, cz + 0.222); S.add(scr);
+      [0xff8787, 0x69db7c, 0xffd43b].forEach((c, i) => put(S, CYL(0.022, 0.022, 0.02, 8), basic(c), cx + 0.13 + i * 0.05, 1.24, cz + 0.225, Math.PI / 2));
+      for (let i = 0; i < 3; i++) put(S, CYL(0.04, 0.03, 0.09, 8), mat([0xffffff, 0xffd8a8, 0xffffff][i], q), cx - 0.3 + i * 0.09, 0.955, cz - 0.28); // cup stack
+    }
     for (let i = 0; i < 3; i++) { const st = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4 })); st.position.copy(cm.position).add(new THREE.Vector3(0, 0.35, 0)); SA(st, hasCoffee); this.coffeeSteam.push(st); }
-    const cl = new Label(1.2, 0.3); cl.set('coffee' + FOOD_INFO.coffee.station, () => textCanvas([{ text: `${FOOD_INFO.coffee.icon} ${FOOD_INFO.coffee.station}`, size: 56 }], 512, 128)); cl.sprite.position.set(cm.position.x, 2.0, cm.position.z); SA(cl.sprite, hasCoffee);
-    SA(boxMesh(MICROWAVE, 0.9, mat(0x343a40, q)), hasMeal);
-    const mw = new THREE.Mesh(new THREE.BoxGeometry(0.75, 0.42, 0.5), mat(0xf1f3f5, q, { rough: 0.4 })); mw.position.set((MICROWAVE.x0 + MICROWAVE.x1) / 2, 1.12, (MICROWAVE.z0 + MICROWAVE.z1) / 2); SA(mw, hasMeal);
-    const mwDoor = new THREE.Mesh(new THREE.PlaneGeometry(0.45, 0.3), new THREE.MeshBasicMaterial({ color: 0x212529 })); mwDoor.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.14); mwDoor.rotation.y = 0; SA(mwDoor, hasMeal);
+    const cl = new Label(1.2, 0.3); cl.set('coffee' + FOOD_INFO.coffee.station, () => textCanvas([{ text: `${FOOD_INFO.coffee.icon} ${FOOD_INFO.coffee.station}`, size: 56 }], 512, 128)); cl.sprite.position.set(cm.position.x, 2.05, cm.position.z); SA(cl.sprite, hasCoffee);
+    const mw = new THREE.Group(); mw.position.set((MICROWAVE.x0 + MICROWAVE.x1) / 2, 1.12, (MICROWAVE.z0 + MICROWAVE.z1) / 2);
+    if (hasMeal) {
+      const B0 = MICROWAVE, cx = mw.position.x, cz = mw.position.z, fz = B0.z1 - 0.16;
+      put(S, RB(B0.x1 - B0.x0, 0.86, B0.z1 - B0.z0, 0.04), cab, cx, 0.43, cz);
+      put(S, RB(B0.x1 - B0.x0 + 0.06, 0.05, B0.z1 - B0.z0 + 0.06, 0.02), slab, cx, 0.885, cz);
+      put(S, RB(0.8, 0.46, 0.46, 0.07, 2), mat(0xfff9f0, q, { rough: 0.4 }), cx, 1.14, fz - 0.23);
+      put(S, RB(0.5, 0.34, 0.03, 0.03), mat(TH.accent, q), cx - 0.08, 1.12, fz - 0.005);
+      put(S, RB(0.04, 0.26, 0.04, 0.015), steel, cx + 0.2, 1.12, fz + 0.02);
+      for (let i = 0; i < 2; i++) put(S, CYL(0.035, 0.035, 0.03, 10), dk, cx + 0.31, 1.2 - i * 0.12, fz + 0.01, Math.PI / 2);
+      for (const sx of [-0.3, 0.3]) put(S, CYL(0.03, 0.03, 0.03, 6), dk, cx + sx, 0.92, fz - 0.05); // feet
+    }
+    const mwDoor = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.27), new THREE.MeshBasicMaterial({ color: 0x212529 })); mwDoor.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.14); mwDoor.rotation.y = 0; SA(mwDoor, hasMeal);
     this.microwaveGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.28), new THREE.MeshBasicMaterial({ color: 0xffa94d, transparent: true, opacity: 0 })); this.microwaveGlow.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.135); SA(this.microwaveGlow, hasMeal);
-    const ml2 = new Label(1.2, 0.3); ml2.set('mw' + FOOD_INFO.meal.station, () => textCanvas([{ text: `${FOOD_INFO.meal.icon} ${FOOD_INFO.meal.station}`, size: 56 }], 512, 128)); ml2.sprite.position.set(mw.position.x, 2.0, mw.position.z); SA(ml2.sprite, hasMeal);
+    const ml2 = new Label(1.2, 0.3); ml2.set('mw' + FOOD_INFO.meal.station, () => textCanvas([{ text: `${FOOD_INFO.meal.icon} ${FOOD_INFO.meal.station}`, size: 56 }], 512, 128)); ml2.sprite.position.set(mw.position.x, 2.05, mw.position.z); SA(ml2.sprite, hasMeal);
     const pickupMark = new THREE.Mesh(new THREE.CircleGeometry(0.5, 20), new THREE.MeshBasicMaterial({ color: 0xffd43b, transparent: true, opacity: 0.35 })); pickupMark.rotation.x = -Math.PI / 2; pickupMark.position.set(COFFEE_PICKUP.x, 0.01, COFFEE_PICKUP.z); SA(pickupMark, hasCoffee || hasMeal);
     const pl = new Label(1.2, 0.3); pl.set('pick', () => textCanvas([{ text: '取餐區', size: 56 }], 512, 128)); pl.sprite.position.set(COFFEE_PICKUP.x, 2.3, COFFEE_PICKUP.z); SA(pl.sprite, hasCoffee || hasMeal);
     const compMark = new THREE.Mesh(new THREE.CircleGeometry(0.5, 20), new THREE.MeshBasicMaterial({ color: 0xff6b6b, transparent: true, opacity: 0.3 })); compMark.rotation.x = -Math.PI / 2; compMark.position.set(COMPLAINT_SPOT.x, 0.01, COMPLAINT_SPOT.z); S.add(compMark);
     // queue rope
     const R = CURRENT_MAP.rope;
     if (R) {
-      for (let x = R.x0; x <= R.x1 + 0.01; x += 1) { const post = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.06, 0.9, 8), mat(0xfab005, q, { metal: 0.7, rough: 0.3 })); post.position.set(x, 0.45, R.z); S.add(post); }
-      const rope = new THREE.Mesh(new THREE.BoxGeometry(R.x1 - R.x0, 0.05, 0.05), mat(0xc92a2a, q)); rope.position.set((R.x0 + R.x1) / 2, 0.8, R.z); S.add(rope);
+      const brass = mat(0xfab005, q, { metal: 0.3, rough: 0.35 });
+      for (let x = R.x0; x <= R.x1 + 0.01; x += 1) {
+        put(S, CYL(0.035, 0.045, 0.86, 8), brass, x, 0.45, R.z);
+        put(S, CYL(0.17, 0.19, 0.05, 12), mat(0x343a40, q), x, 0.025, R.z);
+        put(S, SPH(0.065, 8, 6), brass, x, 0.9, R.z);
+      }
+      // velvet rope sagging between the posts
+      for (let x = R.x0; x < R.x1 - 0.01; x += 1) put(S, geo('ropeSag', () => new THREE.TorusGeometry(0.5, 0.025, 4, 12, Math.PI).rotateZ(Math.PI)), mat(0xc92a2a, q), x + 0.5, 0.86, R.z, 0, 0, 0, 1, 0.25, 1);
     }
     // crates
     for (const c of CRATES) {
@@ -610,13 +649,19 @@ export class StoreView {
       put(S, CYL(0.06, 0.06, 0.005, 12), basic(0x51cf66), x, 0.4, z - 0.181, Math.PI / 2); // recycle dot
     }
     // yellow wet-floor sign by the mop rack
-    const wf = this.pick([[0.5, MOP_RACK.z1 + 0.45], [0.5, MOP_RACK.z0 - 0.45], [1.2, MOP_RACK.z1 + 0.5]], 0.25);
+    const wf = this.pick([[0.9, MOP_RACK.z1 + 0.55], [0.9, MOP_RACK.z0 - 0.55], [1.4, MOP_RACK.z1 + 0.6]], 0.25);
     if (wf) {
-      const [x, z] = wf, y = mat(0xffd43b, q, { rough: 0.5 });
-      for (const s of [-1, 1]) put(S, RB(0.36, 0.62, 0.02, 0.01), y, x, 0.3, z + s * 0.1, s * 0.18);
-      for (const s of [-1, 1]) put(S, CONE(0.07, 0.12, 3), basic(0x212529), x, 0.38, z + s * 0.125, Math.PI / 2 * s + s * 0.18, 0, Math.PI);
-      put(S, SPH(0.022, 6, 4), basic(0x212529), x, 0.25, z + 0.13);
-      put(S, SPH(0.022, 6, 4), basic(0x212529), x, 0.25, z - 0.13);
+      const sg = new THREE.Group(), y = mat(0xffd43b, q, { rough: 0.5 });
+      sg.position.set(wf[0], 0, wf[1]); sg.rotation.y = Math.PI / 2 + 0.4;
+      for (const s of [-1, 1]) {
+        const p = new THREE.Group(); p.position.set(0, 0.32, s * 0.07); p.rotation.x = -s * 0.2; sg.add(p);
+        put(p, RB(0.34, 0.62, 0.025, 0.012), y);
+        put(p, B(0.04, 0.16, 0.01), basic(0x212529), 0, 0.08, s * 0.016);
+        put(p, B(0.04, 0.04, 0.01), basic(0x212529), 0, -0.07, s * 0.016);
+        put(p, B(0.3, 0.05, 0.01), basic(0x212529), 0, -0.22, s * 0.016);
+      }
+      put(sg, CYL(0.02, 0.02, 0.06, 6), y, 0, 0.64, 0);
+      mergeInto(sg, new Set(), q === 'high'); S.add(sg);
     }
     // fire extinguisher on the stockroom wall
     const fe = this.pick([[6.92, 4.6], [6.92, 3.2], [7.0, 0.3]], 0.15);
@@ -840,6 +885,13 @@ export class StoreView {
         key = 'angry'; draw = () => textCanvas([{ text: '💢', size: 80 }], 256, 128, '');
       }
       e.h.icon.set(key, draw ?? (() => document.createElement('canvas')));
+      // keep the status icon upright above a carried / knocked-down body (the group itself is rotated)
+      const iy = c.flying ? ICON_Y : c.held ? 0.9 : lying ? 1.1 : ICON_Y;
+      if (c.flying || (!c.held && !lying)) e.h.icon.sprite.position.set(0, ICON_Y, 0);
+      else {
+        _v.set(0, iy, 0).applyQuaternion(_q.copy(e.h.group.quaternion).invert()).divide(e.h.group.scale);
+        e.h.icon.sprite.position.copy(_v);
+      }
       // fade overhead labels that are right in front of the camera so they don't cover the view
       const camD = Math.hypot(this.camera.position.x - e.s.x, this.camera.position.z - e.s.z);
       (e.h.icon.sprite.material as THREE.SpriteMaterial).opacity = Math.max(0.12, Math.min(1, (camD - 1.0) / 1.6));

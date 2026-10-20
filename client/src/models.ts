@@ -203,12 +203,12 @@ export class Human {
       put(this.torso, CYL(0.045, 0.045, 0.012, 10), basic(0xffffff), 0.08 * w, 0.92, front(0.92) + 0.004, Math.PI / 2 - 0.1);
     }
     if (opts.vip) {
-      // suit lapels + red tie
+      // dark suit jacket left open at the front (the karen's colour shows as the shirt), red tie
       const suit = mat(0x1b1f3b, q);
-      put(this.torso, B(0.13, 0.36, 0.03), suit, -0.09 * w, 0.85, front(0.85) + 0.004, -0.1, 0, 0.18);
-      put(this.torso, B(0.13, 0.36, 0.03), suit, 0.09 * w, 0.85, front(0.85) + 0.004, -0.1, 0, -0.18);
-      put(this.torso, B(0.06, 0.28, 0.02), mat(0xc92a2a, q), 0, 0.86, front(0.86) + 0.02, -0.1);
-      put(this.torso, B(0.07, 0.05, 0.03), mat(0xc92a2a, q), 0, 1.0, front(1.0) + 0.015, -0.2);
+      put(this.torso, geo('vest' + seg, () => new THREE.CylinderGeometry(0.2, 0.255, 0.5, seg, 1, true, 0.55, Math.PI * 2 - 1.1)), suit, 0, 0.79, 0, 0, 0, 0, w, 1, zs);
+      put(this.torso, DOME(0.2, Math.PI / 2, seg, 4), suit, 0, 1.04, -0.01, 0, 0, 0, w, 0.5, zs * 0.9);
+      put(this.torso, B(0.055, 0.26, 0.02), mat(0xc92a2a, q), 0, 0.88, front(0.88) + 0.008, -0.1);
+      put(this.torso, B(0.07, 0.05, 0.03), mat(0xc92a2a, q), 0, 1.02, front(1.0) + 0.0, -0.2);
     }
     const arm = (x: number) => {
       const ag = new THREE.Group(); ag.position.set(x * (0.17 * w + 0.07), SHOULDER_Y, 0);
