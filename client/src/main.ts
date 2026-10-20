@@ -9,7 +9,7 @@ import {
 import * as UI from './ui.ts';
 import { careerScreen, loadProfile, resultScreen, saveProfile } from './career-ui.ts';
 import { loadAccount, syncLicense } from './account.ts';
-import { rankOf, DAILY_ID, ENDLESS_ID, applyResult, buildDailyConfig, buildShiftConfig, dailySeed, dailyUnlocked, endlessUnlocked, localDate, shiftUnlocked } from '../../shared/career.ts';
+import { rankOf, dailyPlan, DAILY_MODS, DAILY_ID, ENDLESS_ID, applyResult, buildDailyConfig, buildShiftConfig, dailySeed, dailyUnlocked, endlessUnlocked, localDate, shiftUnlocked } from '../../shared/career.ts';
 import type { ShiftResult } from '../../shared/career.ts';
 import { updateAchievements } from '../../shared/achievements.ts';
 import { CHAPTERS } from '../../shared/career.ts';
@@ -251,7 +251,15 @@ function menu(error?: string) {
   const b = badge();
   if (account) void syncLicense({ name: playerName(), avatar: UI.loadAvatar(), level: b.level, rank: b.rank, title: b.title, stars: b.stars, achievements: b.achievements, storeName: b.storeName });
   audio.startMusic(8);
+  const prof = loadProfile();
+  let next: { id: string; title: string; map: string } | null = null;
+  if (prof.stats.shifts > 0) for (const c of CHAPTERS) for (const sh of c.shifts) if (!next && !prof.stars[sh.id] && shiftUnlocked(prof, sh.id).ok) next = { id: sh.id, title: sh.title, map: (MAPS.find(m => m.id === (sh.map ?? 'convenience')) ?? MAPS[0]).icon };
+  const today = localDate();
+  const plan = dailyUnlocked(prof) ? dailyPlan(prof, today) : null;
+  const daily = plan ? { map: `${(MAPS.find(m => m.id === plan.map) ?? MAPS[0]).icon} ${(MAPS.find(m => m.id === plan.map) ?? MAPS[0]).name}`, mods: plan.mods.map(m => DAILY_MODS[m].name).join('、'), done: prof.daily.date === today && prof.daily.rewarded } : null;
   UI.mainMenu(settings, {
+    playNext: next ? () => playShift(next!.id) : undefined,
+    playDaily: daily ? () => playShift(DAILY_ID) : undefined,
     setName: n => { settings = { ...settings, name: n }; saveSettings(settings); },
     career: () => career(),
     multiplayer: () => multiplayer(),
@@ -263,7 +271,7 @@ function menu(error?: string) {
     quit: isApp ? () => quitApp() : undefined,
     firstDay: loadProfile().stats.shifts === 0 ? () => playShift('1-1') : undefined,
     settings: () => { screenDepth = 1; return UI.settingsMenu(settings, s => { settings = s; saveSettings(s); audio.setVolume(s.volume); audio.setMusicVolume(s.music); menu(); }); },
-  }, { coopSave: loadCoopSave(), canRejoin, server: serverUrl(), platform, error, badge: b, account });
+  }, { coopSave: loadCoopSave(), canRejoin, server: serverUrl(), platform, error, badge: b, account, next, daily });
 }
 
 /** 打工人的號角: multiplayer with a store type and difficulty. */

@@ -5,7 +5,7 @@ import type { LobbyState, Snapshot, StoreSave } from '../../shared/protocol.ts';
 import type { Settings } from './storage.ts';
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from '../../shared/difficulty.ts';
 import { getLicense, renderGoogleButton, signOut } from './account.ts';
-import { randomQuote } from './quotes.ts';
+import { NOTICES, randomQuote } from './quotes.ts';
 
 const root = () => document.getElementById('ui')!;
 export const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -32,6 +32,9 @@ export interface MainMenuHandlers {
   setName(n: string): void;
   /** Re-render the menu (after signing in/out). */
   refresh(): void;
+  /** Jump straight into the next career shift / today's daily challenge. */
+  playNext?(): void;
+  playDaily?(): void;
 }
 export interface CareerBadge { level: number; rank: string; title: string; stars: number; achievements: number; storeName: string }
 
@@ -57,11 +60,17 @@ export function licenseHtml(c: { name: string; avatar: string; level: number; ra
   </div>`;
 }
 
-export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: StoreSave | null; canRejoin: string | null; server: string; platform: string; error?: string; badge: CareerBadge; account: { no: string } | null }) {
+export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: StoreSave | null; canRejoin: string | null; server: string; platform: string; error?: string; badge: CareerBadge; account: { no: string } | null; next?: { id: string; title: string; map: string } | null; daily?: { map: string; mods: string; done: boolean } | null }) {
   const floaters = ['🧃', '🍙', '🥤', '🧋', '🍗', '👕', '🛒', '🧾', '🍞', '☕', '📦', '🧹'];
   const b = info.badge;
   show(`
     <div class="bgfx">${floaters.map((f, i) => `<span style="left:${(i * 83) % 100}%;animation-duration:${14 + (i * 7) % 11}s;animation-delay:-${(i * 5) % 14}s">${f}</span>`).join('')}</div>
+    <div class="street" aria-hidden="true">
+      <div class="shopfront"><div class="awning"></div><div class="shopsign">🏪 奧客退散 24H</div>
+        <div class="windows"><span>🧃🥤🧋</span><span class="door"></span><span>🍙🍞🍗</span></div></div>
+      <div class="sidewalk"></div>
+      <div class="walker w1">🚶</div><div class="walker w2">🧍‍♀️</div><div class="walker w3 karen">😤<i>我要找店長！</i></div><div class="walker w4">🧑‍🦯</div><div class="walker w5 karen">🤳<i>直播中～</i></div><div class="walker w6">🛵</div>
+    </div>
     <div class="ts">
       <div class="ts-left">
         <div class="logo"><span class="l1">奧客</span><span class="l2">退散！</span><small>FUCUSTOMER</small></div>
@@ -76,8 +85,11 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
       <div class="card">
         ${info.canRejoin ? `<button class="btn good" id="m-rejoin">🔌 重新連線到房間 ${esc(info.canRejoin)}</button>` : ''}
         ${h.firstDay ? `<div class="welcome"><b>👋 第一次來上班？</b><span>從第一天開始，會一步一步教你。</span><button class="btn good" id="m-first">▶ 開始第一天上班</button></div>` : ''}
+        ${info.next ? `<button class="btn good continue" id="m-next"><span class="cont-tag">繼續上班</span>▶ ${esc(info.next.id)}・${esc(info.next.title)} <span class="cont-map">${esc(info.next.map)}</span></button>` : ''}
         <button class="btn primary hero" id="m-career">🧑‍💼 開工<span class="sub">主線：從工讀生一路升到開自己的店</span></button>
         <button class="btn warn hero" id="m-mp">📯 打工人的號角<span class="sub">多人遊玩・選地圖、選難度</span><span class="soon">籌備中</span></button>
+        ${info.daily ? `<button class="daily-mini" id="m-daily"><span class="dm-icon">📅</span><span class="dm-text"><b>今日挑戰</b><small>${esc(info.daily.map)}・${esc(info.daily.mods)}</small></span><span class="tag ${info.daily.done ? 'ok' : ''}">${info.daily.done ? '✅ 已領' : '🎁 未領'}</span></button>` : ''}
+        <div class="notice"><span class="pin">📋 店內公告</span><div class="notice-text" id="m-notice">${esc(NOTICES[Math.floor(Math.random() * NOTICES.length)])}</div></div>
         <div class="err" id="m-err">${esc(info.error ?? '')}</div>
         <div class="ts-foot">
           <button class="btn small" id="m-settings">⚙ 設定</button>
@@ -91,6 +103,11 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
   on('m-quote', 'click', () => { const q = document.getElementById('m-quote')!; q.textContent = `「${randomQuote(q.textContent?.slice(1, -1))}」`; });
   on('m-avatar', 'click', () => { const el = document.getElementById('m-avatar')!; const next = AVATARS[(AVATARS.indexOf(el.textContent ?? '') + 1) % AVATARS.length]; el.textContent = next; saveAvatar(next); });
   on('m-career', 'click', () => { name(); h.career(); });
+  on('m-next', 'click', () => { name(); h.playNext?.(); });
+  on('m-daily', 'click', () => { name(); h.playDaily?.(); });
+  // the notice board rotates while the menu is open
+  const nt = document.getElementById('m-notice');
+  if (nt) { let i = NOTICES.indexOf(nt.textContent ?? ''); const timer = window.setInterval(() => { if (!nt.isConnected) { clearInterval(timer); return; } i = (i + 1) % NOTICES.length; nt.classList.remove('flip'); void nt.offsetWidth; nt.textContent = NOTICES[i]; nt.classList.add('flip'); }, 5000); }
   on('m-mp', 'click', () => { name(); h.multiplayer(); });
   on('m-rejoin', 'click', () => { name(); h.rejoin(); });
   on('m-settings', 'click', () => h.settings());
@@ -100,7 +117,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
   const msg = (t: string) => { const el = document.getElementById('m-licmsg'); if (el) el.textContent = t; };
   on('m-signout', 'click', () => { void signOut().then(() => h.refresh()); });
   const g = document.getElementById('m-google');
-  if (g) void renderGoogleButton(g, () => h.refresh(), m => { g.innerHTML = '<span class="muted">🔒 Google 登入（尚未開放）</span>'; msg(m); });
+  if (g) void renderGoogleButton(g, () => h.refresh(), m => { g.innerHTML = `<span class="muted" title="${esc(m)}">🔒 Google 登入（尚未開放）</span>`; if (!/還沒設定/.test(m)) msg(m); });
 }
 
 /** Multiplayer (打工人的號角): store type + difficulty, create a room or join one. */
