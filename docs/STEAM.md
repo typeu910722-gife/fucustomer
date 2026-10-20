@@ -143,7 +143,7 @@ Windows 實際位置：`%APPDATA%\FUCustomer\Local Storage\leveldb\`
 | 主要膠囊（Main Capsule） | 1232×706 | `store/steam/main_capsule_1232x706.png` |
 | 垂直膠囊（Vertical Capsule） | 748×896 | `store/steam/vertical_capsule_748x896.png` |
 | 頁面背景（Page Background，選用） | 1438×810 | `store/steam/page_background_1438x810.png` |
-| 截圖（至少 5 張，1920×1080） | 1920×1080 | `store/steam/screenshots/01-chicken.png` … `09-title.png`（共 9 張） |
+| 截圖（至少 5 張，1920×1080） | 1920×1080 | `store/steam/screenshots/01-throw.png` … `10-title.png`（共 10 張，內容見下表；建議依編號順序上傳，第 1 張會當商店頁預設大圖） |
 | 收藏庫膠囊（Library Capsule） | 600×900 | `store/steam/library_capsule_600x900.png` |
 | 收藏庫頁首（Library Header） | 920×430 | `store/steam/library_header_920x430.png` |
 | 收藏庫主視覺（Library Hero，不可有文字） | 3840×1240 | `store/steam/library_hero_3840x1240.png` |
@@ -153,8 +153,22 @@ Windows 實際位置：`%APPDATA%\FUCustomer\Local Storage\leveldb\`
 
 - 尺寸是依官方「圖像素材」頁（<https://partner.steamgames.com/doc/store/assets>）撰寫時的規格。上傳時後台會檢查尺寸，若 Valve 又改規格，執行 `node store/src/steam-art.mjs` 改尺寸重出即可。
 - 舊檔 `store/steam-header-460x215.png`、`store/steam-capsule-616x353.png` 是舊規格，**不要用**。
-- 截圖是在無 GPU 的雲端環境用軟體繪圖拍的真實遊戲畫面（品質設「高」）。若你想要更好看的，可以在自己電腦上開遊戲按 F12（Steam 截圖鍵）補拍。
-- 宣傳影片（Trailer）：非必填但強烈建議，我這邊沒有做。
+- 截圖是在無 GPU 的雲端環境用軟體繪圖拍的真實遊戲畫面（品質設「高」，畫面下方的按鍵提示列和標題畫面的伺服器網址有隱藏）。拍攝時用了自動測試同一套除錯掛鉤擺鏡頭、叫出奧客、暫停模擬來抓瞬間；抓人／丟人／按 E 是真的按鍵操作。若你想要更好看的，可以在自己電腦上開遊戲按 F12（Steam 截圖鍵）補拍。
+
+| 檔案 | 內容 |
+|---|---|
+| `01-throw.png` | 便利商店：同事把「退貨大鬧」奧客丟向門口，奧客在半空中大叫「啊——」（空白鍵抓起、丟出） |
+| `02-rush.png` | 超市尖峰：從收銀台看出去，排隊人潮、插隊奧客、「失控！可正當防衛」的退貨奧客 |
+| `03-signature.png` | 咖啡廳招牌奧客「一杯坐整天」：戴耳機、抱筆電霸佔桌子，背後是「用餐限時 90 分鐘」告示 |
+| `04-coop.png` | 四人合作：雞排店裡三位同事（小美、阿傑、佳佳）＋自己，名牌和右上隊員清單（4 個瀏覽器分頁連到同一個房間，**同一台電腦多開**，不是跨平台實機） |
+| `05-boss.png` | 第 6-3 關「奧客之王」第 2 階段「退貨暴君」：戴皇冠披風、怒氣 66 |
+| `06-ownstore.png` | 自己開的店：員工小陳在收銀台上班，隊員清單有「小陳」、營收 +$91 |
+| `07-court.png` | 審訊：恐龍法官「因為你穿制服出庭不尊重法庭」判罰款，五種應對方式 |
+| `08-career.png` | 職涯畫面：等級、存款、每日挑戰、第 1、2 章關卡和星數 |
+| `09-maps.png` | 自由營業選店：便利商店、早餐店、手搖飲店、服飾店、雞排店、藥妝店、書店、麵包店、超市（共 21 種，畫面放得下 9 種） |
+| `10-title.png` | 標題畫面＋「高級社畜證照」 |
+
+- 宣傳短片：`store/steam/promo/grab-throw.webm`（7.4 秒、1280×720、約 1.2 MB）和 `grab-throw.gif`（640 寬、約 3.4 MB）：第一人稱抓起奧客、扛到發光的出口、丟出門外。可放在商店頁說明裡；正式的 Trailer 影片（Steam 要 MP4/WebM 上傳到「預告片」欄位）還是建議另外做一支較長的。重產：`node store/src/steam-promo.mjs`（需要 ffmpeg）。
 - 「收藏庫標誌」上傳後，在後台預覽畫面拖曳它在主視覺上的位置。
 
 ### 內容調查問卷（Content Survey）建議答案
@@ -224,5 +238,5 @@ Windows 實際位置：`%APPDATA%\FUCustomer\Local Storage\leveldb\`
 | 自動測試（Linux＋xvfb：沒有 App ID／有 App ID 但沒開 Steam 兩種情況） | `desktop/smoke.sh`、`tests/e2e/electron.mjs` |
 | SteamPipe 上傳範本與填寫腳本 | `steam/` |
 | 成就清單 CSV | `steam/achievements.csv` |
-| 所有商店／收藏庫圖片、成就圖示、截圖 | `store/steam/`（重產：`node store/src/steam-art.mjs`、`node store/src/steam-screens.mjs`） |
+| 所有商店／收藏庫圖片、成就圖示、截圖 | `store/steam/`（重產：`node store/src/steam-art.mjs`、`node store/src/steam-screens.mjs`、`node store/src/steam-promo.mjs`；截圖腳本開頭有啟動伺服器的方法） |
 | 商店頁文字、標籤、系統需求 | `docs/STORE-LISTING.md` |

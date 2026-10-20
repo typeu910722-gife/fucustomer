@@ -124,7 +124,7 @@ function scene(x, y, H, { bubbles = true, crowd = true } = {}) {
 }
 let W_ = 0; // width of the page being rendered (for right-anchored bubbles)
 
-const bg = (W, H, shot = '02-supermarket.png', blur = 6) => `<div class="bgshot" style="background-image:url(${shotB64(shot)}); --blur:${blur}px"></div><div class="tint"></div><div class="stripes" style="--sw:${Math.max(10, H * 0.05)}px"></div>`;
+const bg = (W, H, shot = '02-rush.png', blur = 6) => `<div class="bgshot" style="background-image:url(${shotB64(shot)}); --blur:${blur}px"></div><div class="tint"></div><div class="stripes" style="--sw:${Math.max(10, H * 0.05)}px"></div>`;
 const logo = (x, y, fs, { pill = true, oneLine = false } = {}) => oneLine
   ? `<div class="logo one" style="--fs:${fs}px; left:${x}px; top:${y}px"><div class="row"><span class="l">奧客</span><span class="l l2">退散</span></div>${pill ? '<div class="pill">FUCUSTOMER</div>' : ''}</div>`
   : `<div class="logo" style="--fs:${fs}px; left:${x}px; top:${y}px"><span class="l">奧客</span><span class="l l2">退散</span>${pill ? '<div class="pill">FUCUSTOMER</div>' : ''}</div>`;
@@ -142,14 +142,14 @@ const JOBS = {
   'header_capsule_920x430.png': [920, 430, () => landscape(920, 430)],
   'small_capsule_462x174.png': [462, 174, () => page(462, 174, bg(462, 174) + logo(18, 10, 62, { oneLine: true }) + scene(462, 176, 168, { bubbles: false, crowd: false }))],
   'main_capsule_1232x706.png': [1232, 706, () => landscape(1232, 706)],
-  'vertical_capsule_748x896.png': [748, 896, () => page(748, 896, bg(748, 896, '01-chicken.png') +
+  'vertical_capsule_748x896.png': [748, 896, () => page(748, 896, bg(748, 896, '04-coop.png') +
     `<div class="glow" style="left:${-150}px; top:${200}px; width:1000px; height:1000px"></div>` + logo(160, 30, 140) + scene(740, 884, 470))],
-  'page_background_1438x810.png': [1438, 810, () => page(1438, 810, `<div class="bgshot" style="background-image:url(${shotB64('03-breakfast.png')}); --blur:10px"></div><div class="tint"></div><div style="position:absolute; inset:0; background:linear-gradient(180deg, rgba(27,20,48,.55), rgba(27,20,48,.9))"></div><div class="stripes" style="--sw:40px; opacity:.5"></div>`)],
+  'page_background_1438x810.png': [1438, 810, () => page(1438, 810, `<div class="bgshot" style="background-image:url(${shotB64('03-signature.png')}); --blur:10px"></div><div class="tint"></div><div style="position:absolute; inset:0; background:linear-gradient(180deg, rgba(27,20,48,.55), rgba(27,20,48,.9))"></div><div class="stripes" style="--sw:40px; opacity:.5"></div>`)],
   // Library
-  'library_capsule_600x900.png': [600, 900, () => page(600, 900, bg(600, 900, '01-chicken.png') +
+  'library_capsule_600x900.png': [600, 900, () => page(600, 900, bg(600, 900, '04-coop.png') +
     `<div class="glow" style="left:-200px; top:260px; width:1000px; height:1000px"></div>` + logo(100, 50, 128) + scene(596, 890, 470))],
   'library_header_920x430.png': [920, 430, () => landscape(920, 430)],
-  'library_hero_3840x1240.png': [3840, 1240, () => page(3840, 1240, bg(3840, 1240, '02-supermarket.png', 14) +
+  'library_hero_3840x1240.png': [3840, 1240, () => page(3840, 1240, bg(3840, 1240, '02-rush.png', 14) +
     `<div class="glow" style="left:1300px; top:-200px; width:1600px; height:1600px"></div>` + scene(2600, 1180, 1080, { bubbles: false }) +
     `<div class="chars" style="left:0; top:0">${put(CAST.boss(), 3150, 1150, 640, 4, true) + put(CAST.buddy(), 1130, 1160, 600, -4) + put(CAST.uncle({ mood: 'shock' }), 3560, 1170, 480, -8)}</div>`)],
   'library_logo_1280x720.png': [1280, 720, () => page(1280, 720, `<div class="center">${logo(0, 0, 250)}</div>`)],
