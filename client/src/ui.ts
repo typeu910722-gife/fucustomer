@@ -1,6 +1,6 @@
 // DOM menus: main menu, lobby, settings, in-game overlays (pause, shop, summary, quick messages).
 import { MAPS } from '../../shared/maps/index.ts';
-import { KAREN_INFO, MAX_PLAYERS, PRODUCT_INFO, PRODUCTS, QUICK_MESSAGES, UPGRADES, UPGRADE_IDS, shelfCapacity } from '../../shared/constants.ts';
+import { KAREN_INFO, MAX_PLAYERS, PRODUCT_INFO, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, PRODUCTS, QUICK_MESSAGES, UPGRADES, UPGRADE_IDS, shelfCapacity } from '../../shared/constants.ts';
 import type { LobbyState, Snapshot, StoreSave } from '../../shared/protocol.ts';
 import type { Settings } from './storage.ts';
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from '../../shared/difficulty.ts';
@@ -8,6 +8,31 @@ import { getLicense, renderGoogleButton, signOut } from './account.ts';
 import { NOTICES, randomQuote } from './quotes.ts';
 import { getCosmetic } from '../../shared/shop.ts';
 import { backupScreen } from './backup-ui.ts';
+import { isApp } from './platform.ts';
+
+// ---------- 打工人的號角: invite links ----------
+/** Public address for invite links from the native apps (their own origin isn't reachable by friends). */
+export const PUBLIC_GAME_URL = 'https://fucustomer.yzprojecttw.com/beta/';
+const ROOM_CODE_RE = new RegExp(`^[${ROOM_CODE_ALPHABET}]{${ROOM_CODE_LENGTH}}$`);
+/** Strict room-code check (server alphabet and length); returns the upper-cased code or null. */
+export function parseRoomCode(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null;
+  const c = raw.trim().toUpperCase();
+  return ROOM_CODE_RE.test(c) ? c : null;
+}
+/** This page + `?join=CODE` (web), or the public beta site inside the Android / Windows apps. */
+export function inviteLink(code: string): string {
+  const web = !isApp && /^https?:$/.test(location.protocol);
+  const u = new URL(web ? location.origin + location.pathname : PUBLIC_GAME_URL);
+  u.searchParams.set('join', code);
+  return u.toString();
+}
+const inviteText = (code: string) => `📯 一起來《奧客退散》顧店！房間碼 ${code}`;
+async function copyText(text: string, fallbackInput?: HTMLInputElement | null): Promise<boolean> {
+  try { await navigator.clipboard.writeText(text); return true; } catch { /* insecure context / no permission */ }
+  try { if (fallbackInput) { fallbackInput.select(); return document.execCommand('copy'); } } catch { /* ignore */ }
+  return false;
+}
 
 /** 商城: which paid pack (if any) blocks a store in free play / own store / hosting a room. Set by main.ts. */
 type StoreLock = (mapId: string) => { id: string; name: string; icon: string } | null;
@@ -133,6 +158,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
 export function multiplayerMenu(h: { create(cont: boolean, map: string, difficulty: Difficulty): void; join(code: string): void; back(): void; pack?(packId: string): void }, info: { coopSave: StoreSave | null; error?: string }) {
   show(`<div class="card wide mpcard">
     <div class="row" style="align-items:center"><h2>📯 打工人的號角</h2><span class="soon">籌備中</span><button class="btn small" id="mp-back" style="flex:0">← 主選單</button></div>
+    ${info.error ? `<div class="mp-banner" id="mp-banner">${esc(info.error)}</div>` : ''}
     <p class="muted">最多 ${MAX_PLAYERS} 人一起顧店。多人模式還在測試，可能會有問題，歡迎回報。</p>
     <div class="sectlabel">① 選店面</div>
     <div class="pickgrid">${MAPS.map((m, i) => `<label class="pick ${storeLock(m.id) ? 'locked' : ''}"><input type="radio" name="mp-map" value="${m.id}" ${i === 0 ? 'checked' : ''}><span>${m.icon}</span><b>${esc(m.name)}</b>${lockBadge(m.id)}</label>`).join('')}</div>
@@ -143,7 +169,7 @@ export function multiplayerMenu(h: { create(cont: boolean, map: string, difficul
     <div class="row" style="margin-top:6px"><button class="btn info" id="m-create">📯 建立房間</button></div>
     <div class="sectlabel">或加入朋友的房間</div>
     <div class="row"><input type="text" class="code" id="m-code" maxlength="5" placeholder="房間碼" autocomplete="off" autocapitalize="characters"><button class="btn" id="m-join" style="flex:0 0 140px">加入</button></div>
-    <div class="err" id="m-err">${esc(info.error ?? '')}</div>
+    <div class="err" id="m-err"></div>
   </div>`);
   const pick = (n: string) => (document.querySelector(`input[name="${n}"]:checked`) as HTMLInputElement | null)?.value;
   on('mp-back', 'click', () => h.back());
@@ -154,8 +180,23 @@ export function multiplayerMenu(h: { create(cont: boolean, map: string, difficul
     if (k) on('mp-pack', 'click', () => h.pack?.(k.id));
   }));
   on('m-create', 'click', () => { const k = storeLock(pick('mp-map') ?? 'convenience'); if (k && h.pack) { h.pack(k.id); return; } h.create(!!(document.getElementById('m-coop-cont') as HTMLInputElement | null)?.checked, pick('mp-map') ?? 'convenience', (pick('mp-diff') ?? 'normal') as Difficulty); });
-  on('m-join', 'click', () => { const c = val('m-code').trim().toUpperCase(); if (c.length < 5) { document.getElementById('m-err')!.textContent = '請輸入 5 碼房間碼'; return; } h.join(c); });
+  on('m-join', 'click', () => { const c = parseRoomCode(val('m-code')); if (!c) { document.getElementById('m-err')!.textContent = `請輸入 ${ROOM_CODE_LENGTH} 碼房間碼（英文字母和數字）`; return; } h.join(c); });
   on('m-code', 'keydown', e => { if ((e as KeyboardEvent).key === 'Enter') document.getElementById('m-join')!.click(); });
+}
+
+/** Opened from an invite link (?join=CODE): confirm your name, then join that room. */
+export function inviteScreen(code: string, name: string, h: { join(name: string): void; back(): void }) {
+  show(`<div class="card invitecard">
+    <h2>📯 朋友找你一起顧店！</h2>
+    <p class="muted">你收到「打工人的號角」邀請，房間碼：</p>
+    <div class="bigcode" id="iv-code">${esc(code)}</div>
+    <label class="field">你的名字<input type="text" id="iv-name" maxlength="16" placeholder="你的名字" value="${esc(name)}"></label>
+    <button class="btn good" id="iv-join">🚪 加入房間</button>
+    <button class="btn small" id="iv-back">← 先回主選單</button>
+  </div>`);
+  on('iv-join', 'click', () => h.join(val('iv-name').trim()));
+  on('iv-name', 'keydown', e => { if ((e as KeyboardEvent).key === 'Enter') document.getElementById('iv-join')!.click(); });
+  on('iv-back', 'click', () => h.back());
 }
 
 /** Look up a friend's licence card by its number. */
@@ -214,12 +255,24 @@ export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean
   const isHost = l.hostId === selfId;
   const others = l.players.filter(p => p.id !== l.hostId && p.connected);
   const canStart = others.every(p => p.ready);
+  const link = inviteLink(l.code);
+  const lineUrl = `https://line.me/R/share?text=${encodeURIComponent(`${inviteText(l.code)}\n${link}`)}`;
+  const canShare = typeof navigator.share === 'function';
   show(`
-    <div class="card">
+    <div class="card wide lobbycard">
       <h2>等候室</h2>
+      <div class="lobbycols"><div class="invite">
       <div class="muted" style="text-align:center">房間碼（手機、電腦、Steam 都輸入這組）</div>
       <div class="bigcode" id="l-code">${esc(l.code)}</div>
-      <div class="row"><button class="btn small" id="l-copy">複製房間碼</button></div>
+      <div class="sharebtns">
+        <button class="btn small" id="l-copy">📋 複製房號</button>
+        <button class="btn small info" id="l-link">🔗 複製邀請連結</button>
+        <a class="btn small line" id="l-line" href="${esc(lineUrl)}" target="_blank" rel="noopener">LINE 分享</a>
+        ${canShare ? '<button class="btn small purple" id="l-share">📤 分享…</button>' : ''}
+      </div>
+      <input type="text" class="invitelink" id="l-invite" readonly value="${esc(link)}" aria-label="邀請連結">
+      <div class="muted" id="l-sharemsg">朋友點連結就會直接進這個房間。</div>
+      </div><div class="lobbyside">
       <div class="muted">人數 ${l.players.length}/${l.max}・第 ${l.day} 天</div>
       ${l.map ? (() => {
         const m = MAPS.find(x => x.id === l.map) ?? MAPS[0];
@@ -239,7 +292,12 @@ export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean
         ? `<button class="btn primary" id="l-start" ${canStart ? '' : 'disabled'}>${canStart ? '開始營業' : '等待所有人準備…'}</button>`
         : `<button class="btn ${me?.ready ? '' : 'good'}" id="l-ready">${me?.ready ? '取消準備' : '準備'}</button>`}
       <button class="btn" id="l-leave">離開房間</button>
+      </div></div>
     </div>`);
+  const shareMsg = (t: string) => { const el = document.getElementById('l-sharemsg'); if (el) el.textContent = t; };
+  on('l-link', 'click', () => { void copyText(link, document.getElementById('l-invite') as HTMLInputElement | null).then(ok => shareMsg(ok ? '✅ 已複製邀請連結，貼給朋友就行！' : '複製失敗：請長按上面的連結自己複製。')); });
+  on('l-invite', 'focus', e => (e.target as HTMLInputElement).select());
+  on('l-share', 'click', () => { void navigator.share({ title: '奧客退散', text: inviteText(l.code), url: link }).catch(() => { /* cancelled */ }); });
   on('l-start', 'click', () => h.start());
   on('l-ready', 'click', () => h.ready(!me?.ready));
   on('l-leave', 'click', () => h.leave());

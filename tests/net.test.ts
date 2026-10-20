@@ -285,6 +285,18 @@ test('friend store API: upload, lock, raid, reports (owner token required)', asy
   assert.equal((await api('GET', '/api/stores/NOPE00')).status, 404);
 });
 
+test('link via browser (app sign-in) HTTP API: start, pending poll, complete needs a session, wrong token rejected', async () => {
+  const s = await api('POST', '/api/auth/link/start', {});
+  assert.equal(s.status, 200);
+  assert.match(String(s.data.code), /^[A-HJ-NP-Z2-9]{3}-[A-HJ-NP-Z2-9]{3}$/);
+  assert.match(String(s.data.pollToken), /^[0-9a-f]{64}$/);
+  const p = await api('POST', '/api/auth/link/poll', { pollToken: s.data.pollToken });
+  assert.equal(p.status, 200); assert.equal(p.data.pending, true);
+  assert.equal((await api('POST', '/api/auth/link/poll', { pollToken: '0'.repeat(64) })).status, 404);
+  assert.equal((await api('POST', '/api/auth/link/poll', { pollToken: s.data.code })).status, 404);
+  assert.equal((await api('POST', '/api/auth/link/complete', { code: s.data.code })).status, 401);
+});
+
 test('server restart: room restored from checkpoint, player rejoins with token', { timeout: 40_000 }, async () => {
   const [a, b] = await room(2);
   await start([a, b]);

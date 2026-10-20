@@ -1,7 +1,7 @@
 // Google sign-in (ID token from Google Identity Services) and the public 高級社畜證照 (worker licence card).
 // No secrets: the ID token is checked against Google's public keys and the OAuth client ID (which is public).
 // We keep only a SHA-256 hash of the Google account id, never the e-mail address.
-import { createHash, createPublicKey, randomBytes, randomInt, verify, type JsonWebKeyInput } from 'node:crypto';
+import { createHash, createPublicKey, randomBytes, randomInt, timingSafeEqual, verify, type JsonWebKeyInput } from 'node:crypto';
 import { getCosmetic } from '../shared/shop.ts';
 type JsonWebKey = JsonWebKeyInput['key'];
 
@@ -57,6 +57,24 @@ const str = (v: unknown, max: number, d = '') => (typeof v === 'string' ? v.repl
 const int = (v: unknown, lo: number, hi: number, d: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.round(Math.min(hi, Math.max(lo, v))) : d);
 type R<T> = { ok: true; value: T } | { ok: false; status: number; error: string };
 
+// ---------------- "link via browser" (Google blocks its sign-in inside the Android/iOS WebView) ----------------
+// The app asks for a short code + a secret poll token, opens the system browser at …/#link=CODE, the player signs in
+// there and confirms; the server mints a NEW session for that licence and parks it on the link record until the app
+// polls with its poll token (which never leaves the app). The code alone never yields a session.
+export const LINK_TTL_MS = 10 * 60 * 1000;
+export const LINK_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // no 0/O, 1/I/L
+export const LINK_STARTS_PER_IP = 10; // per 10 minutes
+const LINK_MAX_PENDING = 10_000;
+/** "k7q 4mz" → "K7Q-4MZ"; '' when it can't be a link code. */
+export function normalizeLinkCode(v: unknown): string {
+  if (typeof v !== 'string' || v.length > 16) return '';
+  const c = v.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (c.length !== 6 || [...c].some(ch => !LINK_CODE_ALPHABET.includes(ch))) return '';
+  return c.slice(0, 3) + '-' + c.slice(3);
+}
+interface LinkRecord { code: string; pollHash: string; expires: number; owner?: string; no?: string; session?: string }
+export type LinkPoll = { pending: true; expiresIn: number } | { no: string; session: string; card: LicenseCard };
+
 export class LicenseRegistry {
   byOwner = new Map<string, LicenseRecord>();
   byNo = new Map<string, LicenseRecord>();
@@ -69,6 +87,11 @@ export class LicenseRegistry {
     }
     throw new Error('no free licence number');
   }
+  /** Pending app links by code. In memory only: a server restart just means "start again". */
+  links = new Map<string, LinkRecord>();
+  private linkByPoll = new Map<string, string>(); // SHA-256(pollToken) → code
+  private linkStarts = new Map<string, { n: number; at: number }>();
+  private dropLink(l: LinkRecord) { this.links.delete(l.code); this.linkByPoll.delete(l.pollHash); }
   load(r: LicenseRecord) { if (r?.owner && r.no) { this.byOwner.set(r.owner, r); this.byNo.set(r.no, r); } }
 
   /** Signed in with Google: find or create the card for this account, hand out a new session token. */
@@ -80,10 +103,70 @@ export class LicenseRegistry {
       r = { no: this.newNo(), owner, sessions: [], createdAt: t, updatedAt: t, name: str(displayName, 16, '打工人') || '打工人', level: 1, rank: '試用期工讀生', title: '', avatar: '🧑', stars: 0, achievements: 0, storeName: '', quote: '' };
       this.byOwner.set(owner, r); this.byNo.set(r.no, r);
     }
+    const session = this.newSession(r);
+    return { no: r.no, session, card: this.view(r) };
+  }
+  private newSession(r: LicenseRecord) {
     const session = randomBytes(24).toString('base64url');
     r.sessions = [...r.sessions, hash(session)].slice(-5); // up to 5 signed-in devices
     this.persist(r);
-    return { no: r.no, session, card: this.view(r) };
+    return session;
+  }
+
+  private pruneLinks() {
+    const t = this.now();
+    for (const l of this.links.values()) if (l.expires <= t) {
+      this.dropLink(l);
+      // completed but never collected: revoke the parked session so it can't linger
+      const r = l.owner ? this.byOwner.get(l.owner) : undefined;
+      if (r && l.session) { const h = hash(l.session); r.sessions = r.sessions.filter(s => s !== h); this.persist(r); }
+    }
+    for (const [ip, v] of this.linkStarts) if (t - v.at > LINK_TTL_MS) this.linkStarts.delete(ip);
+  }
+  /** App side, step 1: a short human code for the browser and a secret poll token that stays in the app. */
+  linkStart(ip: string): R<{ code: string; pollToken: string; expiresIn: number }> {
+    this.pruneLinks();
+    const t = this.now(), hit = this.linkStarts.get(ip);
+    if (hit && t - hit.at < LINK_TTL_MS) { if (++hit.n > LINK_STARTS_PER_IP) return { ok: false, status: 429, error: '太頻繁了，稍後再試' }; }
+    else this.linkStarts.set(ip, { n: 1, at: t });
+    if (this.links.size >= LINK_MAX_PENDING) return { ok: false, status: 503, error: '伺服器忙碌，稍後再試' };
+    let code = '';
+    for (let i = 0; i < 100 && !code; i++) {
+      let c = '';
+      for (let k = 0; k < 6; k++) c += LINK_CODE_ALPHABET[randomInt(LINK_CODE_ALPHABET.length)];
+      c = c.slice(0, 3) + '-' + c.slice(3);
+      if (!this.links.has(c)) code = c;
+    }
+    if (!code) return { ok: false, status: 503, error: '伺服器忙碌，稍後再試' };
+    const pollToken = randomBytes(32).toString('hex');
+    const l = { code, pollHash: hash(pollToken), expires: t + LINK_TTL_MS };
+    this.links.set(code, l); this.linkByPoll.set(l.pollHash, code);
+    return { ok: true, value: { code, pollToken, expiresIn: LINK_TTL_MS / 1000 } };
+  }
+  /** Browser side, step 2: a signed-in browser hands a NEW session for its licence to the waiting app. */
+  linkComplete(session: unknown, codeIn: unknown): R<{ no: string }> {
+    this.pruneLinks();
+    const r = this.bySession(session); if (!r) return { ok: false, status: 401, error: '請重新登入' };
+    const l = this.links.get(normalizeLinkCode(codeIn));
+    if (!l) return { ok: false, status: 404, error: '代碼不存在或已過期，請在 App 重新開始' };
+    if (l.session) return { ok: false, status: 409, error: '這個代碼已經用過了' };
+    l.owner = r.owner; l.no = r.no; l.session = this.newSession(r);
+    return { ok: true, value: { no: r.no } };
+  }
+  /** App side, step 3: poll with the secret token; the session is handed out once, then the link is gone. */
+  linkPoll(pollToken: unknown): R<LinkPoll> {
+    this.pruneLinks();
+    if (typeof pollToken !== 'string' || !/^[0-9a-f]{64}$/.test(pollToken)) return { ok: false, status: 404, error: '登入代碼已過期，請重新開始' };
+    // Looked up by the token's SHA-256 (timing of a hash-keyed lookup says nothing usable about the token itself),
+    // then compared in constant time anyway.
+    const ph = hash(pollToken);
+    const found = this.links.get(this.linkByPoll.get(ph) ?? '');
+    if (!found || !timingSafeEqual(Buffer.from(found.pollHash, 'hex'), Buffer.from(ph, 'hex'))) return { ok: false, status: 404, error: '登入代碼已過期，請重新開始' };
+    if (!found.session || !found.owner) return { ok: true, value: { pending: true, expiresIn: Math.max(0, Math.round((found.expires - this.now()) / 1000)) } };
+    this.dropLink(found);
+    const r = this.byOwner.get(found.owner);
+    if (!r) return { ok: false, status: 404, error: '查無此證照' };
+    return { ok: true, value: { no: r.no, session: found.session, card: this.view(r) } };
   }
   private bySession(session: unknown): LicenseRecord | null {
     if (typeof session !== 'string' || !session) return null;

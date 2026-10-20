@@ -3,7 +3,7 @@
 import type { Outfit } from './shop.ts';
 import {
   BOSS_PHASES, BOX_SIZE, BURST_MAX, CHAOS_MAX, CLOSE_MINUTE, CLOSING_MAX_SECONDS, FOOD_INFO, DAILY_RENT, DAY_OPEN_SECONDS, KAREN_INFO,
-  KarenKind, OPEN_MINUTE, PREP_SECONDS, PRODUCTS, PRODUCT_INFO, Product, RUN_SPEED, SERVER_INTERACT_RANGE,
+  KarenKind, OPEN_MINUTE, PREP_SECONDS, PRODUCTS, ALL_PRODUCTS, type StockIn, PRODUCT_INFO, Product, RUN_SPEED, SERVER_INTERACT_RANGE,
   UPGRADES, UPGRADE_IDS, UpgradeId, brewTime, checkoutTime, heatTime, shelfCapacity,
 } from './constants.ts';
 import {
@@ -102,7 +102,7 @@ export function dayConfig(): ShiftConfig {
     karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', ...(CURRENT_MAP.karens ?? [])], firstKaren: 22, karenEvery: 50, maxKarens: 1,
     spawnEvery: 9, maxCustomers: 6, foods: ['coffee', 'meal'], foodChance: CURRENT_MAP.foodChance, events: ['rush', 'outage'], firstEvent: 70,
     register2: false, abilities: ['grab', 'spin', 'ultimate'],
-    start: { money: 200, rating: 3, backstock: { drinks: 24, snacks: 24, bento: 18 }, shelves: { drinks: 8, snacks: 8, bento: 6 } },
+    start: { money: 200, rating: 3, backstock: { drinks: 24, snacks: 24, bento: 18, extra: 24 }, shelves: { drinks: 8, snacks: 8, bento: 6, extra: 8 } },
     mods: { ...BASE_MODS }, hints: [], boss: false, bossAt: 0, endless: false,
   };
 }
@@ -110,8 +110,8 @@ export function dayConfig(): ShiftConfig {
 export function defaultSave(): StoreSave {
   return {
     version: 1, day: 1, money: 200, rating: 3,
-    backstock: { drinks: 24, snacks: 24, bento: 18 },
-    shelves: { drinks: 8, snacks: 8, bento: 6 },
+    backstock: { drinks: 24, snacks: 24, bento: 18, extra: 24 },
+    shelves: { drinks: 8, snacks: 8, bento: 6, extra: 8 },
     upgrades: Object.fromEntries(UPGRADE_IDS.map(u => [u, 0])) as Record<UpgradeId, number>,
     totals: { served: 0, karens: 0, revenue: 0 },
   };
@@ -127,9 +127,11 @@ export function sanitizeSave(s: unknown): StoreSave {
   out.day = Math.round(num(o.day, 1, 9999, d.day));
   out.money = Math.round(num(o.money, -99999, 999999, d.money));
   out.rating = num(o.rating, 0, 5, d.rating);
-  for (const p of PRODUCTS) out.backstock[p] = Math.round(num(o.backstock?.[p], 0, 999, d.backstock[p]));
+  // the optional fourth line ('extra') of older saves starts like the drinks line
+  const def = (rec: Partial<Record<Product, unknown>> | undefined, p: Product) => (p === 'extra' && typeof rec?.extra !== 'number' ? rec?.drinks : rec?.[p]);
+  for (const p of ALL_PRODUCTS) out.backstock[p] = Math.round(num(def(o.backstock, p), 0, 999, d.backstock[p]));
   for (const u of UPGRADE_IDS) out.upgrades[u] = Math.round(num(o.upgrades?.[u], 0, UPGRADES[u].costs.length, 0));
-  for (const p of PRODUCTS) out.shelves[p] = Math.round(num(o.shelves?.[p], 0, shelfCapacity(out.upgrades.shelves), d.shelves[p]));
+  for (const p of ALL_PRODUCTS) out.shelves[p] = Math.round(num(def(o.shelves, p), 0, shelfCapacity(out.upgrades.shelves), d.shelves[p]));
   out.totals.served = Math.round(num(o.totals?.served, 0, 1e9, 0));
   out.totals.karens = Math.round(num(o.totals?.karens, 0, 1e9, 0));
   out.totals.revenue = Math.round(num(o.totals?.revenue, 0, 1e12, 0));
@@ -152,7 +154,7 @@ export function createWorld(save: StoreSave = defaultSave(), seed = Date.now(), 
   const w: World = {
     cfg, time: 0, phase: 'prep', phaseLeft: shift ? 10 : PREP_SECONDS, clock: OPEN_MINUTE, day: s.day,
     money: shift ? cfg.start.money : s.money, rating: shift ? cfg.start.rating : s.rating,
-    backstock: shift ? { ...cfg.start.backstock } : { ...s.backstock }, shelves: shift ? { ...cfg.start.shelves } : { ...s.shelves },
+    backstock: shift ? fullStock(cfg.start.backstock) : { ...s.backstock }, shelves: shift ? fullStock(cfg.start.shelves) : { ...s.shelves },
     upgrades, mopsOnRack: 2, players: new Map(), customers: [], queue: [], registers: [null, null], spills: [], items: [], pings: [],
     nextId: 1, rng: mulberry32(seed), spawnTimer: 3, karenTimer: cfg.firstKaren, mopbotTimer: 20,
     dayStats: emptyStats(shift ? cfg.start.rating : s.rating), bonusPaidDay: 0, totals: { ...s.totals }, events: [], results: [],
@@ -165,6 +167,8 @@ export function createWorld(save: StoreSave = defaultSave(), seed = Date.now(), 
   if (shift && cfg.chapter === 1) w.spills.push({ id: w.nextId++, x: 11.4, z: 9.2, born: 0 });
   return w;
 }
+/** A shift's starting stock with the optional fourth line filled in (it starts like the drinks line). */
+function fullStock(v: StockIn): Record<Product, number> { return { ...v, extra: v.extra ?? v.drinks }; }
 function guardInterval(level: number) { return Math.max(12, 36 - level * 6); }
 
 export function toSave(w: World): StoreSave {
@@ -311,7 +315,9 @@ function spawnCustomer(w: World, kind: CustomerKind) {
   };
   if (kind === 'normal') {
     const count = 1 + Math.floor(w.rng() * 3);
-    for (let i = 0; i < count; i++) c.shopping.push(w.rng() < 0.4 ? 'drinks' : w.rng() < 0.6 ? 'snacks' : 'bento');
+    // a map with a fourth line ('extra', e.g. the gas station's drinks fridge) sends a share of the shoppers there
+    const extra = PRODUCTS.includes('extra');
+    for (let i = 0; i < count; i++) c.shopping.push(extra && w.rng() < 0.25 ? 'extra' : w.rng() < 0.4 ? 'drinks' : w.rng() < 0.6 ? 'snacks' : 'bento');
     if (w.cfg.foods.length && w.rng() < w.cfg.foodChance) c.want = pick(w, w.cfg.foods);
     c.patienceMax = (55 + w.rating * 6) * m.patience;
   } else if (kind === 'cutter') {
@@ -385,7 +391,7 @@ function goEat(w: World, c: Customer) {
 }
 
 function randomWanderSpot(w: World) {
-  const all = [...shelfBrowseSpots('drinks'), ...shelfBrowseSpots('snacks'), ...shelfBrowseSpots('bento'), ...WANDER_SPOTS];
+  const all = [...PRODUCTS.flatMap(p => shelfBrowseSpots(p)), ...WANDER_SPOTS];
   return pick(w, all);
 }
 
@@ -725,7 +731,7 @@ function nearestPlayer(w: World, c: { x: number; z: number }) {
 }
 
 function fleeSpot(w: World, c: Customer, p: PlayerState) {
-  const cands = [...shelfBrowseSpots('drinks'), ...shelfBrowseSpots('snacks'), ...shelfBrowseSpots('bento'), ...WANDER_SPOTS];
+  const cands = [...PRODUCTS.flatMap(p => shelfBrowseSpots(p)), ...WANDER_SPOTS];
   let best = cands[0], bs = -Infinity;
   for (const s of cands) {
     const dc = Math.hypot(s.x - c.x, s.z - c.z);

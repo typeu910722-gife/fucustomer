@@ -2,7 +2,7 @@
 // server-confirmed actions, HUD, overlays and snapshot handling.
 import * as THREE from 'three';
 import {
-  FOOD_INFO, INPUT_RATE, INTERACT_RANGE, KAREN_INFO, PRODUCT_INFO, QUICK_MESSAGES, RUN_SPEED, WALK_SPEED, shelfCapacity, EYE_HEIGHT,
+  FOOD_INFO, INPUT_RATE, INTERACT_RANGE, KAREN_INFO, PRODUCT_INFO, PRODUCTS, QUICK_MESSAGES, RUN_SPEED, WALK_SPEED, shelfCapacity, EYE_HEIGHT,
 } from '../../shared/constants.ts';
 import { applyMap, CURRENT_MAP, COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, AABB, clampToStore, resolveCollision } from '../../shared/map.ts';
 import type { ShiftResult } from '../../shared/career.ts';
@@ -110,7 +110,7 @@ export class Game {
     const karens = (m.karens ?? []).filter(k => k in KAREN_INFO).map(k => KAREN_INFO[k as keyof typeof KAREN_INFO]);
     const card = $('introcard');
     card.innerHTML = `<div class="muted">第一次來這間店</div><h3>${m.icon} ${UI.esc(m.name)}</h3>
-      <p>貨架：${(['drinks', 'snacks', 'bento'] as const).map(p => UI.esc(PRODUCT_INFO[p].name)).join('、')}</p>
+      <p>貨架：${PRODUCTS.map(p => UI.esc(PRODUCT_INFO[p].name)).join('、')}</p>
       ${st.length ? `<p>工作站：${st.map(f => `${f.icon} ${UI.esc(f.station)}（${UI.esc(f.verb)}）`).join('、')}</p>` : '<p>這間店不賣現做的東西，專心顧貨架和收銀。</p>'}
       ${karens.map(k => `<p class="how">招牌奧客「${UI.esc(k.name)}」：${UI.esc(k.how)}</p>`).join('')}`;
     card.classList.remove('hidden');
@@ -698,7 +698,7 @@ export class Game {
     $('h-rating').textContent = `★ ${s.rating.toFixed(1)}`;
     $('h-players').textContent = `👥 ${s.players.filter(p => p.connected).length}/5`;
     const cap = shelfCapacity(s.upgrades.shelves);
-    $('h-stock').innerHTML = (['drinks', 'snacks', 'bento'] as const).map(p => {
+    $('h-stock').innerHTML = PRODUCTS.map(p => {
       const r = s.shelves[p] / cap;
       return `<div class="stockrow"><span>${PRODUCT_INFO[p].name}</span><span>${s.shelves[p]}/${cap}・倉 ${s.backstock[p]}</span></div><div class="bar"><i style="width:${r * 100}%;background:${r < 0.3 ? '#ff6b6b' : '#4dabf7'}"></i></div>`;
     }).join('') + `<div class="stockrow"><span>🧹 拖把</span><span>${s.mopsOnRack}/2</span></div><div class="stockrow"><span>💧 髒污</span><span>${s.spills.length}</span></div>`;

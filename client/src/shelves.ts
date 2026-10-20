@@ -720,6 +720,69 @@ const wiperWall: Builder = k => {
   return { geometry: wiper() };
 };
 
+let drinkGeo: THREE.BufferGeometry | null = null;
+/** Two PET bottles one behind the other (the front one at z 0, bottoms at y 0): body, label band, shoulder, neck, cap. */
+function drinkPair() {
+  const bottle = (z: number, v: number): [THREE.BufferGeometry, number][] => [
+    [new THREE.CylinderGeometry(0.033, 0.033, 0.15, 8).translate(0, 0.075, z), v],
+    [new THREE.CylinderGeometry(0.0345, 0.0345, 0.07, 8).translate(0, 0.08, z), v * 1.45],
+    [new THREE.CylinderGeometry(0.014, 0.033, 0.05, 8).translate(0, 0.175, z), v],
+    [new THREE.CylinderGeometry(0.014, 0.014, 0.025, 6).translate(0, 0.2125, z), v * 0.9],
+    [new THREE.CylinderGeometry(0.016, 0.016, 0.02, 6).translate(0, 0.235, z), 1.8],
+  ];
+  return drinkGeo ??= shaded([...bottle(-0.15, 0.7), ...bottle(0, 1)]);
+}
+
+/** Gas-station drinks fridge on the west wall: white two-door upright cooler with a lit back wall, four wire shelves of
+ * bottles behind two glass doors (the bottles are the stocked items, so the fridge empties as stock drops), black door
+ * frames with long handles, a blue "ICE COLD" canopy, a vented kick plate and promo stickers on the glass. */
+const drinkFridge: Builder = k => {
+  const { L, D, H, p } = k;
+  const body = 0xf8f9fa, frame = 0x212529, back = -D / 2, front = D / 2;
+  const steel = mat(0xced4da, k.q, { metal: 0.6, rough: 0.3 });
+  const canopy = 0.24, base = 0.14, top = H - canopy, wall = 0.045;
+  // cabinet: back, sides, roof, floor deck
+  p(B(L, H, 0.04), body, 0, H / 2, back + 0.02);
+  for (const x of [-L / 2 + wall / 2, L / 2 - wall / 2]) p(B(wall, H, D), body, x, H / 2, 0);
+  p(B(L, 0.04, D), body, 0, top + 0.02, 0);
+  // kick plate with vent slots
+  p(B(L, base, D), 0x343a40, 0, base / 2, 0);
+  for (const x of along(L - 0.3, 0.07, 0)) p(B(0.035, 0.05, 0.006), 0x868e96, x, base / 2, front + 0.002);
+  // lit back wall and LED strips down the side walls
+  k.glow(B(L - 0.12, top - base - 0.06, 0.01), 0xe7f5ff, 0, (top + base) / 2, back + 0.045);
+  for (const x of [-L / 2 + wall + 0.012, L / 2 - wall - 0.012]) k.glow(B(0.012, top - base - 0.1, 0.03), 0xffffff, x, (top + base) / 2, front - 0.08);
+  // wire shelves with a yellow price channel along each front edge
+  const tiers = [base, 0.58, 1.02, 1.46].filter(t => t < top - 0.3);
+  for (const t of tiers.slice(1)) {
+    p(B(L - 2 * wall, 0.018, D - 0.12), 0xadb5bd, 0, t - 0.009, -0.03);
+    p(B(L - 2 * wall, 0.04, 0.012), 0xffe066, 0, t - 0.005, front - 0.1);
+  }
+  // two doors: glass, black frame, long steel handle by the middle
+  const dw = L / 2 - 0.03, dh = top - base - 0.02, dy = base + dh / 2 + 0.01;
+  for (const sx of [-1, 1]) {
+    const cx = sx * (L / 4 + 0.0);
+    k.glass(B(dw - 0.06, dh - 0.06, 0.01), cx, dy, front - 0.02);
+    p(B(dw, 0.035, 0.035), frame, cx, base + 0.03, front - 0.02);
+    p(B(dw, 0.035, 0.035), frame, cx, top - 0.02, front - 0.02);
+    for (const ex of [-1, 1]) p(B(0.035, dh, 0.035), frame, cx + ex * (dw / 2 - 0.0175), dy, front - 0.02);
+    p(B(0.022, 0.62, 0.03), steel, cx - sx * (dw / 2 - 0.08), 1.05, front + 0.012);
+    for (const hy of [0.76, 1.34]) p(B(0.022, 0.02, 0.03), steel, cx - sx * (dw / 2 - 0.08), hy, front + 0.0);
+  }
+  // promo stickers on the glass
+  k.sign(0.3, 0.3, () => signCanvas('❄', '#ffffff', '#1c7ed6', 256, 256), -L / 4 - 0.18, 1.62, front - 0.008);
+  k.sign(0.42, 0.18, () => signCanvas('第二件6折', '#ffe066', '#e03131', 384, 160), L / 4 + 0.12, 1.66, front - 0.008);
+  // canopy: blue lit header across the top
+  p(B(L, canopy, 0.06), 0x1864ab, 0, top + canopy / 2, front - 0.03);
+  k.sign(L - 0.16, canopy - 0.06, () => signCanvas('❄ 冰涼飲料 ICE COLD', '#1c7ed6', '#ffffff', 1024, 144), 0, top + canopy / 2, front + 0.002);
+  p(B(L, 0.03, 0.065), k.ctx.theme.accent, 0, top + 0.005, front - 0.03);
+  // bottle slots: a pair of bottles (front + behind) every 9.5 cm on each shelf, clear of the middle frame
+  for (const t of tiers) for (const x of along(L - 2 * wall - 0.04, 0.095, 0.05)) {
+    if (Math.abs(x) < 0.05) continue;
+    k.slot(x, t + 0.002, front - 0.17, undefined, 0, ((x * 13) % 0.5) - 0.25);
+  }
+  return { geometry: drinkPair(), labelY: H + 0.28 };
+};
+
 /** Bookstore east wall: wooden stationery cubbies above a drawer cabinet, pen cups, washi tape and gift-wrap rolls. */
 const stationeryWall: Builder = k => {
   const { L, D, H, p, RB } = k;
@@ -891,6 +954,7 @@ const STYLES: Record<string, Builder> = {
   'gas:drinks': oilRack,
   'gas:snacks': roadGondola,
   'gas:bento': wiperWall,
+  'gas:extra': drinkFridge,
   'bookstore:bento': stationeryWall,
   'pharmacy:bento': maskWall,
   'post:bento': postcardWall,

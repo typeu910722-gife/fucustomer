@@ -17,13 +17,19 @@ export const EYE_HEIGHT = 1.62;
 export const RECONNECT_GRACE_GAME_S = 120;
 export const RECONNECT_GRACE_LOBBY_S = 45;
 
-export type Product = 'drinks' | 'snacks' | 'bento';
+export type Product = 'drinks' | 'snacks' | 'bento' | 'extra';
+/** Every product slot. 'extra' is an optional fourth line that only some maps stock (MapDef.products.extra). */
+export const ALL_PRODUCTS: Product[] = ['drinks', 'snacks', 'bento', 'extra'];
+/** Product lines of the active map. Live: map.ts applyMap() adds 'extra' on maps that sell a fourth line. */
 export const PRODUCTS: Product[] = ['drinks', 'snacks', 'bento'];
+/** Stock levels given as input (shift starts, saves): the optional 'extra' line defaults to the drinks level. */
+export type StockIn = Record<Exclude<Product, 'extra'>, number> & { extra?: number };
 
 export const PRODUCT_INFO: Record<Product, { name: string; price: number; boxCost: number; color: number }> = {
   drinks: { name: '飲料', price: 8, boxCost: 24, color: 0x3fa7f5 },
   snacks: { name: '零食', price: 6, boxCost: 18, color: 0xf5b83f },
   bento: { name: '便當', price: 14, boxCost: 42, color: 0x7bd36a },
+  extra: { name: '飲料', price: 8, boxCost: 24, color: 0x3fa7f5 },
 };
 /** Prepared food: names and prices come from the active map (see map.ts applyMap). */
 export const FOOD_INFO = {

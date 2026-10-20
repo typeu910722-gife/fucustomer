@@ -1,7 +1,7 @@
 // Store layout, collision and grid pathfinding. Units are metres, x → east, z → south.
 // The fixed shell (walls, door, stockroom, crates, mop rack) is shared; everything else comes from the active map
 // (shared/maps/). Call applyMap() before creating a world or a view; the exported bindings below update in place.
-import { FOOD_INFO, PLAYER_RADIUS, PRODUCT_INFO, PRODUCTS, Product } from './constants.ts';
+import { ALL_PRODUCTS, FOOD_INFO, PLAYER_RADIUS, PRODUCT_INFO, PRODUCTS, Product } from './constants.ts';
 import { DEFAULT_MAP, getMap } from './maps/index.ts';
 import type { MapDef } from './maps/types.ts';
 
@@ -29,11 +29,15 @@ export const WALLS: AABB[] = [
   box(6.5, 0, 6.75, 5.25, 3.2, 'wall'),
 ];
 export const MOP_RACK = box(0, 12, 0.7, 13.4, 1.5, 'mop');
-export const CRATES: { product: Product; box: AABB }[] = [
+const BASE_CRATES: { product: Product; box: AABB }[] = [
   { product: 'drinks', box: box(0.6, 0.6, 1.8, 1.6, 1.1, 'crate') },
   { product: 'snacks', box: box(2.6, 0.6, 3.8, 1.6, 1.1, 'crate') },
   { product: 'bento', box: box(4.6, 0.6, 5.8, 1.6, 1.1, 'crate') },
 ];
+/** Stock crate of the optional fourth product line, against the stockroom's east wall. */
+const EXTRA_CRATE = { product: 'extra' as Product, box: box(5.3, 2.4, 6.3, 3.4, 1.1, 'crate') };
+/** Stock crates in the stockroom (live binding: maps with a fourth product line get a fourth crate). */
+export let CRATES: { product: Product; box: AABB }[] = BASE_CRATES;
 export const ENTRANCE = { x: 12, z: 15.4 };
 export const SPAWN_OUTSIDE = { x: 12, z: 17.2 };
 
@@ -70,6 +74,10 @@ export function applyMap(id?: string): MapDef {
   if (m === CURRENT_MAP && SOLIDS.length) return m;
   CURRENT_MAP = m;
   SHELVES = m.shelves.map(s => ({ product: s.product, box: { ...s.box } }));
+  // the active product lines (PRODUCTS is updated in place so every importer sees it)
+  PRODUCTS.length = 0;
+  PRODUCTS.push(...ALL_PRODUCTS.filter(p => p !== 'extra' || m.products.extra));
+  CRATES = m.products.extra ? [...BASE_CRATES, EXTRA_CRATE] : BASE_CRATES;
   COUNTER = { ...m.counter };
   REGISTERS = m.registers;
   COFFEE_MACHINE = m.coffee ? { ...m.coffee.box } : NOWHERE;
@@ -82,7 +90,7 @@ export function applyMap(id?: string): MapDef {
     ...WALLS, ...SHELVES.map(s => s.box), COUNTER, ...(m.coffee ? [COFFEE_MACHINE] : []), ...(m.meal ? [MICROWAVE] : []),
     MOP_RACK, ...CRATES.map(c => c.box), ...DECOR,
   ];
-  for (const p of PRODUCTS) {
+  for (const p of ALL_PRODUCTS) {
     const mp = m.products[p] ?? BASE_PRODUCTS[p];
     Object.assign(PRODUCT_INFO[p], { name: mp.name, price: mp.price, boxCost: mp.boxCost, color: mp.color });
   }
@@ -94,7 +102,9 @@ export function applyMap(id?: string): MapDef {
 
 /** Points customers stand at to browse a shelf. Wall units are browsed from their open side. */
 export function shelfBrowseSpots(product: Product): { x: number; z: number }[] {
-  const s = SHELVES.find(sh => sh.product === product)!.box;
+  const sh = SHELVES.find(sh => sh.product === product);
+  if (!sh) return [];
+  const s = sh.box;
   const spots: { x: number; z: number }[] = [];
   if (s.z1 - s.z0 > s.x1 - s.x0) {
     const x = s.x1 > STORE_W - 1 ? s.x0 - 0.6 : s.x0 < 1 ? s.x1 + 0.6 : s.x0 - 0.6;

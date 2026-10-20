@@ -84,6 +84,13 @@ function tryFullscreenLandscape() {
   try { void (screen.orientation as unknown as { lock?: (o: string) => Promise<void> }).lock?.('landscape').catch(() => {}); } catch { /* ignore */ }
 }
 
+/** Server errors for a gone / full room, reworded for someone who just tapped an invite link. */
+function friendlyJoinError(reason: string): string {
+  if (/找不到房間/.test(reason)) return '😢 找不到這個房間：房主可能已經關房，或邀請連結過期了。請朋友重新開房、再傳一次邀請。';
+  if (/房間已滿/.test(reason)) return `🈵 ${reason}：等有人離開再試，或請朋友另開一間。`;
+  return reason;
+}
+
 /** Multiplayer code is fetched on demand, so solo players never download it. */
 async function online(url: string, intent: Intent) {
   UI.show('<div class="card"><h2>連線中…</h2><p class="muted">正在連線到伺服器</p></div>');
@@ -91,7 +98,7 @@ async function online(url: string, intent: Intent) {
     const { WsConnection, roomMap } = await import('./net-ws.ts');
     // build the 3D store for the room's store type
     if (intent.kind === 'join' && !intent.map) intent = { ...intent, map: await roomMap(url, intent.code) };
-    startGame(() => new WsConnection(url, intent, platform), reason => (reason ? multiplayer(reason) : menu()));
+    startGame(() => new WsConnection(url, intent, platform), reason => (reason ? multiplayer(friendlyJoinError(reason)) : menu()));
   } catch { multiplayer('無法載入連線模組，請檢查網路'); }
 }
 
@@ -310,12 +317,29 @@ function multiplayer(error?: string, code?: string) {
   if (code) { const el = document.getElementById('m-code') as HTMLInputElement | null; if (el) el.value = code; }
 }
 
-// Deep link: ?join=CODE (used by share links and Steam rich-presence "connect" strings)
+/** Invite link: confirm your name, then straight into the room (errors land on the 打工人的號角 screen). */
+function inviteJoin(code: string) {
+  screenDepth = 1;
+  UI.inviteScreen(code, settings.name, {
+    join: n => {
+      if (n) { settings = { ...settings, name: n }; saveSettings(settings); }
+      online(serverUrl(), { kind: 'join', code, name: playerName(), outfit: myOutfit() });
+    },
+    back: () => menu(),
+  });
+}
+
+// Deep link: ?join=CODE (invite links, Steam rich-presence "connect" strings). Used once, then removed from the URL.
 const params = new URLSearchParams(location.search);
 const deepJoin = params.get('join');
-if (deepJoin && /^[A-Z0-9]{5}$/i.test(deepJoin)) {
-  multiplayer(undefined, deepJoin.toUpperCase());
-} else menu();
+if (deepJoin !== null) {
+  params.delete('join');
+  const q = params.toString();
+  try { history.replaceState(history.state, '', location.pathname + (q ? `?${q}` : '') + location.hash); } catch { /* file:// etc. */ }
+}
+const inviteCode = UI.parseRoomCode(deepJoin);
+if (inviteCode) inviteJoin(inviteCode);
+else menu(deepJoin !== null ? '邀請連結的房間碼不正確，請朋友再傳一次。' : undefined);
 
 // browsers only allow sound after the first tap/key: unlock, then start the menu music if we're still on a menu
 const firstInput = () => { audio.unlock(); if (!current) audio.startMusic(8); };
@@ -335,7 +359,8 @@ onBack(() => {
 });
 onAppPause(() => current?.appPaused());
 desktop?.onJoinRequest(code => {
-  if (current || !/^[A-Z0-9]{5}$/i.test(code)) return;
-  online(serverUrl(), { kind: 'join', code: code.toUpperCase(), name: playerName(), outfit: myOutfit() });
+  const c = UI.parseRoomCode(code);
+  if (current || !c) return;
+  online(serverUrl(), { kind: 'join', code: c, name: playerName(), outfit: myOutfit() });
 });
 if (isApp) { const p = loadProfile(); updateAchievements(p); saveProfile(p); reportAchievements(p.achievements); }

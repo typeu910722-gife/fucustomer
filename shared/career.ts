@@ -1,6 +1,6 @@
 // Single-player career: ranks, EXP, skill trees, gear, chapters/shifts and rewards.
 // Pure data + functions so it can be unit-tested and used by the client and the simulation.
-import { KarenKind, Product } from './constants.ts';
+import { KarenKind, Product, type StockIn } from './constants.ts';
 import type { OwnStore, StoreHistory, WageMode } from './ownstore.ts';
 import type { StoreSave } from './protocol.ts';
 import { MAPS } from './maps/index.ts';
@@ -34,7 +34,7 @@ export interface ShiftConfig {
   foods: Food[]; foodChance: number;
   events: ShiftEvent[]; firstEvent: number;
   register2: boolean; abilities: Ability[];
-  start: { money: number; rating: number; backstock: Record<Product, number>; shelves: Record<Product, number> };
+  start: { money: number; rating: number; backstock: StockIn; shelves: StockIn };
   mods: ShiftMods; hints: string[];
   boss: boolean; bossAt: number; endless: boolean;
   /** Seconds between random events (default 42). */
@@ -440,7 +440,7 @@ export function buildDailyConfig(p: CareerProfile, date: string): ShiftConfig {
     if (m === 'chargers') { cfg.karens = ['charger']; cfg.maxKarens += 1; cfg.firstKaren = 15; }
     if (m === 'rush') { cfg.spawnEvery *= 0.6; cfg.maxCustomers += 6; goal *= 1.15; }
     if (m === 'coffee') { cfg.foods = [...new Set([...cfg.foods, 'coffee' as Food])]; cfg.foodChance = 0.75; goal *= 1.25; }
-    if (m === 'lowstock') for (const k of Object.keys(cfg.start.backstock) as Product[]) cfg.start.backstock[k] = Math.ceil(cfg.start.backstock[k] / 2);
+    if (m === 'lowstock') { const st = cfg.start.backstock as Record<string, number>; for (const k of Object.keys(st)) st[k] = Math.ceil(st[k] / 2); }
     if (m === 'tips') { cfg.mods = { ...cfg.mods, tips: cfg.mods.tips * 1.6 }; goal *= 1.12; }
   }
   // store-specific karens only appear in their own store

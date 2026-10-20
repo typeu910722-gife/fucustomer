@@ -142,6 +142,12 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL) {
     return send(200, licenses.login(claims.sub, claims.name));
   }
   if (parts[1] === 'auth' && parts[2] === 'logout' && req.method === 'POST') { licenses.logout(req.headers['x-session']); return send(200, {}); }
+  // "link via browser" for the apps (Google sign-in doesn't work inside the WebView): see LicenseRegistry.linkStart
+  if (parts[1] === 'auth' && parts[2] === 'link' && req.method === 'POST') {
+    if (parts[3] === 'start') return out(licenses.linkStart(ip));
+    if (parts[3] === 'complete') return out(licenses.linkComplete(req.headers['x-session'], (await readBody(req)).code));
+    if (parts[3] === 'poll') return out(licenses.linkPoll((await readBody(req)).pollToken));
+  }
   if (parts[1] === 'license') {
     if (!parts[2] && req.method === 'PUT') return out(licenses.update(req.headers['x-session'], await readBody(req)));
     if (parts[2] && req.method === 'GET') return out(licenses.get(decodeURIComponent(parts[2])));

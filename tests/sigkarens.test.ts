@@ -129,7 +129,7 @@ for (const k of SIG_KINDS) {
     const c2 = placed(w2, k);
     const money = w2.money, rating = w2.rating;
     if (d.tpl === 'redo') c2.timer = 0.5; else if (d.tpl !== 'haggle') { c2.life = 2; c2.knockTimer = 0.5; }
-    w2.shelves = { drinks: 10, snacks: 10, bento: 10 };
+    w2.shelves = { drinks: 10, snacks: 10, bento: 10, extra: 0 };
     run(w2, d.tpl === 'haggle' ? 60 : 3);
     assert.equal(w2.dayStats.karensFailed, 1, 'fails when ignored'); assert.equal(c2.state, 'leaving');
     assert.equal(w2.handled[k], undefined, 'a failure is not counted as handled');

@@ -334,6 +334,35 @@ test('Google sign-in + licence cards over HTTP (worker + LicenseDO)', { skip: !!
   assert.equal(b.data.card.name, '別人');
 });
 
+test('link via browser (app sign-in) over HTTP: start → complete → poll once (worker + LicenseDO)', { skip: !!process.env.CF_URL }, async () => {
+  const web = await api('POST', '/api/auth/google', { credential: idToken({ ...goodClaims(), sub: 'link-1', name: '連結' }) });
+  assert.equal(web.status, 200);
+  const s = await api('POST', '/api/auth/link/start', {});
+  assert.equal(s.status, 200); assert.equal(s.cors, '*');
+  assert.match(s.data.code, /^[A-HJ-NP-Z2-9]{3}-[A-HJ-NP-Z2-9]{3}$/);
+  assert.match(s.data.pollToken, /^[0-9a-f]{64}$/);
+  assert.equal(s.data.expiresIn, 600);
+  const p0 = await api('POST', '/api/auth/link/poll', { pollToken: s.data.pollToken });
+  assert.equal(p0.status, 200); assert.equal(p0.data.pending, true);
+  assert.equal((await api('POST', '/api/auth/link/poll', { pollToken: '0'.repeat(64) })).status, 404, 'wrong token');
+  assert.equal((await api('POST', '/api/auth/link/poll', { pollToken: s.data.code })).status, 404, 'the code is not a token');
+  assert.equal((await api('POST', '/api/auth/link/complete', { code: s.data.code })).status, 401, 'needs a signed-in browser');
+  assert.equal((await api('POST', '/api/auth/link/complete', { code: 'ZZZ-ZZZ' }, undefined, web.data.session)).status, 404);
+  const c = await api('POST', '/api/auth/link/complete', { code: s.data.code.toLowerCase() }, undefined, web.data.session);
+  assert.equal(c.status, 200); assert.equal(c.data.no, web.data.no);
+  assert.equal((await api('POST', '/api/auth/link/complete', { code: s.data.code }, undefined, web.data.session)).status, 409, 'single use');
+  const p1 = await api('POST', '/api/auth/link/poll', { pollToken: s.data.pollToken });
+  assert.equal(p1.status, 200); assert.equal(p1.data.no, web.data.no); assert.equal(p1.data.card.name, '連結');
+  assert.notEqual(p1.data.session, web.data.session, 'app gets its own session');
+  assert.equal((await api('PUT', '/api/license', { level: 7 }, undefined, p1.data.session)).status, 200, 'app session works');
+  assert.equal((await api('PUT', '/api/license', { level: 8 }, undefined, web.data.session)).status, 200, 'browser session still works');
+  assert.equal((await api('POST', '/api/auth/link/poll', { pollToken: s.data.pollToken })).status, 404, 'handed out once');
+  // per-IP start limit (10 per 10 minutes; this test already used one)
+  const codes = [];
+  for (let i = 0; i < 12; i++) codes.push((await api('POST', '/api/auth/link/start', {})).status);
+  assert.ok(codes.includes(429), `start limited: ${codes}`);
+});
+
 test('restart: room restored from the SQLite checkpoint, player rejoins with token', { timeout: 120_000, skip: !!process.env.CF_URL }, async () => {
   const up = await api('POST', '/api/stores', { name: '持久店', money: 100 });
   const lic = await api('POST', '/api/auth/google', { credential: idToken({ ...goodClaims(), sub: 'persist-1' }) });

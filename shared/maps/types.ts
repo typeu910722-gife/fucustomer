@@ -46,10 +46,13 @@ export interface MapDef {
     floorColor: [number, number, number];
     wall: number; wainscot: number; accent: number; counter: number; shelf: number;
   };
-  /** The three product lines (internal slots drinks / snacks / bento). */
-  products: Record<Product, MapProduct>;
   /**
-   * Shelves, one per product. kind: 'shelf' or 'rack' = free-standing, long along x (browsed from north and south);
+   * The product lines (internal slots drinks / snacks / bento, plus an optional fourth line 'extra' that gets its own
+   * shelf and a fourth stock crate in the stockroom).
+   */
+  products: Record<Exclude<Product, 'extra'>, MapProduct> & { extra?: MapProduct };
+  /**
+   * Shelves, one per product line (including 'extra' when the map has it). kind: 'shelf' or 'rack' = free-standing, long along x (browsed from north and south);
    * 'fridge' or 'wallshelf' = against the east or west wall, long along z (browsed from the open side).
    */
   shelves: { product: Product; box: Box }[];

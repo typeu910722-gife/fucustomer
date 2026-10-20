@@ -49,8 +49,11 @@ function loadGis(): Promise<Gis> {
   return gisPromise;
 }
 
-/** Puts Google's own sign-in button into `el`. Resolves to a message when sign-in isn't available. */
+/** Puts Google's own sign-in button into `el`. Resolves to a message when sign-in isn't available.
+ *  Inside the iOS/Android app Google refuses to sign in from the WebView, so there it becomes a "sign in with the
+ *  browser" button instead (see applink.ts). */
 export async function renderGoogleButton(el: HTMLElement, onSignedIn: (card: LicenseCard) => void, onError: (msg: string) => void): Promise<void> {
+  if (isNativeApp()) { const { renderAppLinkButton } = await import('./applink.ts'); renderAppLinkButton(el, onSignedIn); return; }
   const id = await googleClientId();
   if (!id) { onError('Google 登入還沒設定（需要遊戲伺服器設定 Google 用戶端 ID）'); return; }
   try {
@@ -82,3 +85,32 @@ export async function syncLicense(card: Partial<LicenseCard>): Promise<R<License
   return r;
 }
 export const getLicense = (no: string) => call<LicenseCard>('GET', `/api/license/${encodeURIComponent(no)}`);
+
+// ---------- link via browser (the app's sign-in; Google blocks its sign-in inside WebViews) ----------
+/** Web page the app opens in the system browser: …/#link=CODE (the published test build). */
+export const LINK_WEB_BASE = 'https://fucustomer.yzprojecttw.com/beta/';
+export const isNativeApp = () => !!(window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } }).Capacitor?.isNativePlatform?.();
+export interface LinkStart { code: string; pollToken: string; expiresIn: number }
+export type LinkPoll = { pending: true; expiresIn: number } | { no: string; session: string; card: LicenseCard };
+/** App: ask for a code (shown to the player / put in the URL) and a secret poll token (never leaves the app). */
+export const startAppLink = () => call<LinkStart>('POST', '/api/auth/link/start', {});
+/** App: has the browser finished? On success the account is saved here and the card returned. */
+export async function pollAppLink(pollToken: string): Promise<R<LinkPoll>> {
+  const r = await call<LinkPoll>('POST', '/api/auth/link/poll', { pollToken });
+  if (r.ok && 'session' in r.data) saveAccount({ no: r.data.no, session: r.data.session });
+  return r;
+}
+/** Browser: give the waiting app its own new session for the signed-in licence. */
+export async function completeAppLink(code: string): Promise<R<{ no: string }>> {
+  const a = loadAccount(); if (!a) return { ok: false, error: '請先登入' };
+  const r = await call<{ no: string }>('POST', '/api/auth/link/complete', { code }, a.session);
+  if (!r.ok && /重新登入/.test(r.error)) saveAccount(null);
+  return r;
+}
+
+// A page opened as …/#link=CODE (from the app) shows the "bring the sign-in back to the app" card.
+if (typeof window !== 'undefined' && !isNativeApp()) {
+  const check = () => { if (/[#&]link=/.test(location.hash)) void import('./applink.ts').then(m => m.checkLinkHash()); };
+  window.addEventListener('hashchange', check);
+  check();
+}

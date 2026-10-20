@@ -41,7 +41,7 @@ function menuBoardCanvas(): HTMLCanvasElement {
   g.lineWidth = 5; g.strokeStyle = '#2a1f3d'; g.stroke();
   g.fillStyle = '#fff'; g.font = `900 34px ${UI_FONT}`; g.textAlign = 'center'; g.textBaseline = 'middle';
   g.fillText(M.coffee || M.meal ? 'MENU' : 'PRICE', 256, 38);
-  const rows: [string, number][] = PRODUCTS.map(p => [M.products[p].name, M.products[p].price]);
+  const rows: [string, number][] = PRODUCTS.map(p => [M.products[p]!.name, M.products[p]!.price]);
   if (M.coffee) rows.push([M.coffee.food, M.coffee.price]);
   if (M.meal) rows.push([M.meal.food, M.meal.price]);
   const lh = Math.min(42, 200 / rows.length);
@@ -484,7 +484,7 @@ export class StoreView {
       const b = sh.box;
       const face = shelfFacing(b); // -1: wall unit on the east wall (opens west), +1: on the west wall, 0: free-standing
       const isWall = face !== 0, isFridge = b.kind === 'fridge', isRack = b.kind === 'rack';
-      const info = CURRENT_MAP.products[sh.product];
+      const info = CURRENT_MAP.products[sh.product]!;
       const frame = mat(isFridge ? 0xdee2e6 : TH.shelf, q, { metal: 0.3, rough: 0.5 });
       const openX = face < 0 ? b.x0 : b.x1, backX = face < 0 ? b.x1 : b.x0;
       // store-specific fixture (bookcase, bread baskets, glass cabinet…); otherwise the generic shelf below

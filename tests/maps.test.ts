@@ -67,7 +67,11 @@ for (const m of MAPS) {
     if (m.coffee) assert.ok(fromDoor({ x: (COFFEE_MACHINE.x0 + COFFEE_MACHINE.x1) / 2, z: COFFEE_MACHINE.z1 + 0.6 }), 'coffee station unreachable');
     if (m.meal) assert.ok(fromDoor({ x: (MICROWAVE.x0 + MICROWAVE.x1) / 2, z: MICROWAVE.z1 + 0.6 }), 'meal station unreachable');
     // names and prices follow the map
-    for (const p of PRODUCTS) assert.equal(PRODUCT_INFO[p].name, m.products[p].name);
+    for (const p of PRODUCTS) assert.equal(PRODUCT_INFO[p].name, m.products[p]!.name);
+    // every product line has exactly one shelf and one stock crate (a fourth 'extra' line only where the map has it)
+    assert.deepEqual(SHELVES.map(s => s.product).sort(), [...PRODUCTS].sort(), 'one shelf per product line');
+    assert.deepEqual(CRATES.map(c => c.product).sort(), [...PRODUCTS].sort(), 'one crate per product line');
+    assert.equal(PRODUCTS.includes('extra'), !!m.products.extra);
     assert.equal(FOOD_INFO.coffee.name, m.coffee?.food ?? '');
   });
 

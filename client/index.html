@@ -434,6 +434,18 @@
     .lobbycfg label { flex: 1; font-weight: 800; font-size: 13px; color: var(--ink2); display: flex; flex-direction: column; gap: 4px; }
     .lobbycfg select { padding: 7px; font-size: 15px; }
     .lobbycfg.ro .tag { font-size: 14px; padding: 4px 12px; }
+    /* 打工人的號角 lobby: invite / share column + players column */
+    .lobbycard.wide { width: min(860px, 100%); }
+    .lobbycols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr); gap: 16px; align-items: start; }
+    .lobbycols .invite { background: #fff8e1; border: 3px dashed var(--ink); border-radius: 18px; padding: 10px 12px; text-align: center; }
+    .lobbycols .invite .bigcode { font-size: 54px; }
+    .sharebtns { display: flex; flex-wrap: wrap; justify-content: center; gap: 2px; }
+    .sharebtns .btn.small { margin: 4px 3px; text-decoration: none; }
+    .btn.line { --b: #06c755; color: #fff; text-shadow: 0 2px 0 rgba(0,0,0,.25); }
+    .invitelink { width: 100%; margin: 6px 0 2px; padding: 6px 8px; font-size: 12px; border: 2px solid var(--ink); border-radius: 10px; background: #fff; color: var(--ink2); text-align: center; }
+    @media (max-width: 640px) and (orientation: portrait) { .lobbycols { grid-template-columns: 1fr; } }
+    .invitecard { text-align: center; }
+    .mp-banner { background: #ffe3e3; border: 3px solid var(--accent-d); border-radius: 14px; padding: 8px 12px; margin: 4px 0 8px; font-weight: 800; color: var(--accent-d); }
     #quickmenu { position: fixed; z-index: 40; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(420px, 90vw); }
     #quickmenu .btn { text-align: left; }
 
@@ -498,6 +510,7 @@
       .mp > * { height: 38px; }
       .mp input.code { font-size: 18px; }
       .sectlabel { margin: 6px 0 2px; }
+      .lobbycols { gap: 10px; } .lobbycols .invite { padding: 6px 8px; } .lobbycols .invite .bigcode { font-size: 38px; margin: 2px 0; } .sharebtns .btn.small { padding: 5px 9px; font-size: 13px; margin: 3px 2px; } .lobbycard h2 { margin-bottom: 4px; } .lobbycard .players li { padding-top: 4px; padding-bottom: 4px; }
       .err { min-height: 0; }
       .welcome { padding: 6px 10px; } .welcome span { display: none; }
       .ts-name { margin-top: 8px; }
