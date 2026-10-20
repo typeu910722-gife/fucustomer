@@ -15,7 +15,7 @@ export interface StationInfo {
   /** Bottom of the rising steam puffs. */
   steam?: THREE.Vector3;
   /** Plane that glows while someone works the station (default: facing +z; rx tilts it, e.g. -PI/2 = lying flat). */
-  glow?: { pos: THREE.Vector3; w: number; h: number; rx?: number; circle?: boolean };
+  glow?: { pos: THREE.Vector3; w: number; h: number; rx?: number; /** round glow; w is the radius */ circle?: boolean };
 }
 
 const rbFor = (q: Quality) => q === 'low' ? (w: number, h: number, d: number) => B(w, h, d) : RB0;
@@ -155,7 +155,7 @@ export function buildStation(ctx: DecorCtx, key: string, b: AABB): StationInfo |
       for (let i = 0; i < 2; i++) p(CYL(0.09, 0.09, 0.025, 10), waffle, -0.72, 0.03 + i * 0.027, 0.08, 0, i * 0.4);
       p(SPH(0.045, 8, 5), 0xffffff, -0.72, 0.095, 0.08);
       p(CONE(0.025, 0.05, 6), 0xe03131, -0.71, 0.14, 0.08, Math.PI);
-      return done({ glow: { pos: at(-0.35, 0.105, 0.193), w: 0.3, h: 0.05 } });
+      return done({ glow: { pos: at(-0.35, 0.18, 0), w: 0.17, h: 0.17, rx: -Math.PI / 2, circle: true } });
     }
     case 'bookstore:coffee': { // siphon bar: two glass siphons over little blue burners, cups on saucers
       const wood = mat(0x8d6e63, q);
@@ -238,8 +238,8 @@ function legacyGlow(key: string, b: AABB): StationInfo['glow'] {
   const cx = (b.x0 + b.x1) / 2, cz = (b.z0 + b.z1) / 2, w = b.x1 - b.x0, dp = b.z1 - b.z0;
   switch (key) {
     case 'steak:meal': return { pos: new THREE.Vector3(cx, 0.91 + 0.105, cz), w: w - 0.3, h: dp - 0.3, rx: -Math.PI / 2 };
-    case 'cinema:meal': return { pos: new THREE.Vector3(cx, 0.91 + 0.21, cz), w: 0.84, h: 0.44, rx: -Math.PI / 2 };
-    case 'hotpot:meal': return { pos: new THREE.Vector3(cx - 0.45, 0.91 + 0.375, cz), w: 0.22, h: 0.22, rx: -Math.PI / 2, circle: true };
+    case 'cinema:meal': return { pos: new THREE.Vector3(cx, 0.91 + 0.25, cz), w: 0.84, h: 0.44, rx: -Math.PI / 2 };
+    case 'hotpot:meal': return { pos: new THREE.Vector3(cx - 0.45, 0.91 + 0.39, cz), w: 0.21, h: 0.22, rx: -Math.PI / 2, circle: true };
   }
   return undefined;
 }

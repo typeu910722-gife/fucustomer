@@ -229,9 +229,9 @@ export class Audio {
     let h = 2166136261; for (const ch of kind) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
     h >>>= 0;
     const scale = [0, 3, 5, 6, 7, 10, 12];
-    const base = 330 + (h % 5) * 40, type: OscillatorType = (['square', 'sawtooth', 'triangle'] as const)[(h >> 3) % 3];
+    const base = 330 + (h % 5) * 40, type: OscillatorType = (['square', 'sawtooth', 'triangle'] as const)[(h >>> 3) % 3];
     for (let i = 0; i < 3; i++) {
-      const semi = scale[(h >> (5 + i * 3)) % scale.length] - (i === 2 ? 12 : 0);
+      const semi = scale[(h >>> (5 + i * 3)) % scale.length] - (i === 2 ? 12 : 0);
       this.tone(base * Math.pow(2, semi / 12), 0.13, type, 0.07, 0.5 + i * 0.14); // after the generic alarm
     }
   }
