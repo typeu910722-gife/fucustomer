@@ -1,29 +1,69 @@
 {
   "name": "fucustomer-desktop",
   "productName": "奧客退散 FUCustomer",
-  "version": "0.6.0",
+  "version": "0.9.0",
   "description": "奧客退散 FUCustomer — desktop (Windows / Steam) shell",
   "main": "main.cjs",
   "private": true,
   "author": "yzproject",
   "scripts": {
+    "build-web": "node build-web.cjs",
     "copy-web": "node -e \"const fs=require('fs');fs.rmSync('web',{recursive:true,force:true});fs.cpSync('../dist','web',{recursive:true});fs.rmSync('web/sw.js',{force:true})\"",
-    "start": "npm run copy-web && electron .",
-    "dist:win": "npm run copy-web && electron-builder --win zip --x64",
-    "dist:win-installer": "npm run copy-web && electron-builder --win nsis --x64"
+    "start": "npm run build-web && electron .",
+    "start:local": "npm run copy-web && electron . --windowed",
+    "dist:dir": "npm run build-web && electron-builder --win dir --x64",
+    "dist:win": "npm run build-web && electron-builder --win zip --x64",
+    "dist:win-installer": "npm run build-web && electron-builder --win nsis --x64"
   },
   "build": {
     "appId": "tw.yzproject.fucustomer",
     "productName": "FUCustomer",
-    "directories": { "output": "../release/desktop" },
-    "files": ["main.cjs", "preload.cjs", "steam.cjs", "web/**/*", "package.json"],
+    "directories": {
+      "output": "../release/desktop"
+    },
+    "files": [
+      "main.cjs",
+      "preload.cjs",
+      "steam.cjs",
+      "steam.config.json",
+      "web/**/*",
+      "package.json"
+    ],
     "asar": true,
-    "win": { "icon": "icon.png", "signAndEditExecutable": false, "artifactName": "FUCustomer-${version}-win-x64.${ext}" },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true }
+    "win": {
+      "icon": "icon.png",
+      "signAndEditExecutable": false,
+      "artifactName": "FUCustomer-${version}-win-x64.${ext}",
+      "files": [
+        "!node_modules/steamworks.js/dist/osx/**",
+        "!node_modules/steamworks.js/dist/linux64/**",
+        "!node_modules/steamworks.js/dist/win64/*.lib"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    },
+    "asarUnpack": [
+      "node_modules/steamworks.js/dist/**"
+    ],
+    "linux": {
+      "target": "dir",
+      "files": [
+        "!node_modules/steamworks.js/dist/osx/**",
+        "!node_modules/steamworks.js/dist/win64/**"
+      ]
+    },
+    "electronLanguages": [
+      "zh-TW",
+      "en-US"
+    ]
   },
   "devDependencies": {
     "electron": "^38.0.0",
     "electron-builder": "^26.0.0"
   },
-  "optionalDependencies": {}
+  "dependencies": {
+    "steamworks.js": "0.4.0"
+  }
 }

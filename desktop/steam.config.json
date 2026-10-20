@@ -1,0 +1,5 @@
+{
+  "_comment": "The ONLY place to enter the Steam App ID (numbers from partner.steamgames.com after paying Steam Direct). 0 = Steam features off. depotId is usually appId + 1; leave 0 to use that.",
+  "appId": 0,
+  "depotId": 0
+}
