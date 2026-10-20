@@ -100,6 +100,22 @@ export class Game {
     $('tutskip').classList.add('hidden'); $('hintbar').classList.add('hidden');
   }
 
+  /** First time in a store type: what it sells, what the two stations make, and its signature karens. */
+  private introduceStore() {
+    const m = CURRENT_MAP;
+    if (m.id === 'convenience' || this.flags.seenMaps.includes(m.id)) return;
+    this.flags.seenMaps.push(m.id); saveFlags(this.flags);
+    const st = [m.coffee && FOOD_INFO.coffee, m.meal && FOOD_INFO.meal].filter(Boolean) as (typeof FOOD_INFO.coffee)[];
+    const karens = (m.karens ?? []).filter(k => k in KAREN_INFO).map(k => KAREN_INFO[k as keyof typeof KAREN_INFO]);
+    const card = $('introcard');
+    card.innerHTML = `<div class="muted">第一次來這間店</div><h3>${m.icon} ${UI.esc(m.name)}</h3>
+      <p>貨架：${(['drinks', 'snacks', 'bento'] as const).map(p => UI.esc(PRODUCT_INFO[p].name)).join('、')}</p>
+      ${st.length ? `<p>工作站：${st.map(f => `${f.icon} ${UI.esc(f.station)}（${UI.esc(f.verb)}）`).join('、')}</p>` : '<p>這間店不賣現做的東西，專心顧貨架和收銀。</p>'}
+      ${karens.map(k => `<p class="how">招牌奧客「${UI.esc(k.name)}」：${UI.esc(k.how)}</p>`).join('')}`;
+    card.classList.remove('hidden');
+    this.introTimers.push(window.setTimeout(() => card.classList.add('hidden'), 9000));
+  }
+
   /** First time a karen type shows up: a short card explaining how to deal with it (solo pauses for 2 s). */
   private introduceKaren(kind: string) {
     if (kind === 'boss' || this.flags.seenKarens.includes(kind) || !(kind in KAREN_INFO)) return;
@@ -215,6 +231,8 @@ export class Game {
       else this.input.lock();
       audio.setMusicVolume(this.settings.music);
       audio.startMusic(s.shift.endless ? 7 : s.shift.boss ? 6 : s.shift.mode === 'shift' ? (s.shift.chapter <= 7 ? s.shift.chapter : 1 + (s.shift.chapter - 1) % 5) : 0);
+      audio.startStoreAmbience(CURRENT_MAP.id);
+      if (!s.raid) this.introduceStore();
     }
     if (first || !this.started) { this.pos = { x: me.x, z: me.z }; this.yaw = me.yaw; }
     // server reconciliation (the server clamps speed and resolves collisions)
@@ -239,7 +257,7 @@ export class Game {
       case 'toast': this.toast(e.text, e.tone ?? 'info'); break;
       case 'sfx': audio.play(e.name, e.x, e.z); if (e.name === 'clean' && e.x !== undefined) this.view.burst(e.x, e.z!, 0x99e9f2); break;
       case 'money': this.view.floatText(`+$${e.amount}`, e.x, e.z); this.view.burst(e.x, e.z, 0xffd43b, 10); break;
-      case 'karen': audio.play('karen'); this.introduceKaren(e.kind); break;
+      case 'karen': audio.play('karen'); audio.karenSting(e.kind); this.introduceKaren(e.kind); break;
       case 'quick': this.addFeed(`💬 ${e.from}：${e.text}`); audio.play('quick'); break;
       case 'phase':
         if (e.phase === 'prep' && this.snap && this.snap.shift.mode !== 'shift') this.toast(`☀ 第 ${e.day} 天・開店準備：採購(B)、補貨、升級，按 Enter 準備開店`, 'info', 5000);
@@ -684,7 +702,9 @@ export class Game {
     if (this.touch) {
       $('t-alt').classList.toggle('hidden', !this.target?.altLabel);
       $('t-item').classList.toggle('hidden', !me.held);
-      $('t-interact').textContent = this.target?.primary ? shortLabel(this.target.primary) : '互動';
+      const tl = this.target?.primary ? shortLabel(this.target.primary, this.target.target, this.snap) : '互動';
+      $('t-interact').textContent = tl;
+      $('t-interact').classList.toggle('long', tl.length > 4);
     }
     // karen alert
     const karens = s.customers.filter(c => c.kind !== 'normal' && !c.resolved && c.revealed && c.state !== 'leaving');
@@ -804,6 +824,7 @@ export class Game {
     this.input.unlock();
     this.conn.close();
     audio.stopMusic();
+    audio.stopStoreAmbience();
     $('hud').classList.add('hidden'); $('touch').classList.add('hidden'); $('netstatus').classList.add('hidden');
     document.body.classList.remove('shiftmode', 'raid');
     this.view.renderer.dispose();
@@ -831,9 +852,21 @@ function sigCandidate(c: CustomerSnap, hands: (string | null)[], money: number, 
   return { label: `${d.act}${count}${heat}`, primary: 'sigAct', ...alt, target: t, point };
 }
 
-function shortLabel(k: ActKind) {
-  const m: Partial<Record<ActKind, string>> = { knock: '打翻', heckle: '嗆人', checkout: '結帳', brew: FOOD_INFO.coffee.verb, deliver: '交付', takeBox: '拿貨', stock: '上架', returnBox: '放回', takeMop: '拿拖把', returnMop: '放回', clean: '清理', calm: '安撫', coupon: '折價券', askQueue: '請排隊', stopFilm: '制止', checkBag: '請結帳', pickup: '撿起', sigAct: '處理', sigAlt: '另一招' };
-  return m[k] ?? '互動';
+/** Text for the round touch button: short, at most two short lines. */
+function shortLabel(k: ActKind, target?: Target, s?: Snapshot | null) {
+  if ((k === 'sigAct' || k === 'sigAlt') && target?.t === 'customer' && s) {
+    const c = s.customers.find(x => x.id === target.id);
+    const d = c && isSig(c.kind) ? SIG_KARENS[c.kind as keyof typeof SIG_KARENS] : null;
+    const text = d ? (k === 'sigAct' ? d.act : d.alt ?? '') : '';
+    if (text) return text.length > 8 ? text.slice(0, 7) + '…' : text;
+  }
+  const m: Partial<Record<ActKind, string>> = {
+    knock: '打翻', heckle: '嗆人', checkout: '結帳', brew: FOOD_INFO.coffee.verb, heat: FOOD_INFO.meal.verb, deliver: '交付', takeBox: '拿貨', stock: '上架', returnBox: '放回',
+    takeMop: '拿拖把', returnMop: '放回', clean: '清理', calm: '安撫', coupon: '折價券', askQueue: '請排隊', stopFilm: '制止', checkBag: '請結帳', pickup: '撿起',
+    stopLitter: '請撿垃圾', unplug: '拔插頭', treat: '請喝', repeatOrder: '複誦點單', recommend: '推薦招牌', limitTry: '限試穿', grab: '抓起', sigAct: '處理', sigAlt: '另一招',
+  };
+  const t = m[k] ?? '互動';
+  return t.length > 8 ? t.slice(0, 7) + '…' : t;
 }
 
 /** 2D ray vs AABB; returns distance or Infinity. */

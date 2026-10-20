@@ -177,6 +177,65 @@ export class Audio {
     s.connect(f); f.connect(g); g.connect(this.musicGain!); s.start(t); s.stop(t + 0.06);
   }
 
+  // ---------------- per-store ambience (procedural, very quiet) ----------------
+  private storeAmb: { timer: number; nodes: AudioScheduledSourceNode[]; gain: GainNode } | null = null;
+  /** Background sounds for each kind of store: a steady bed plus occasional little events. */
+  startStoreAmbience(mapId: string) {
+    this.stopStoreAmbience();
+    const c = this.ctx; if (!c || !this.master || !this.noiseBuf) return;
+    const p = STORE_AMBIENCE[mapId] ?? STORE_AMBIENCE.convenience;
+    const gain = c.createGain(); gain.gain.value = 0.6 * this.musicVolume; gain.connect(this.master);
+    const nodes: AudioScheduledSourceNode[] = [];
+    if (p.bed) { // looping filtered noise (fridge hum, fryer sizzle, crowd murmur…)
+      const s = c.createBufferSource(); s.buffer = this.noiseBuf; s.loop = true;
+      const f = c.createBiquadFilter(); f.type = p.bed.type; f.frequency.value = p.bed.freq; f.Q.value = p.bed.q ?? 0.7;
+      const g = c.createGain(); g.gain.value = p.bed.vol;
+      s.connect(f); f.connect(g); g.connect(gain); s.start(); nodes.push(s);
+    }
+    if (p.hum) { const o = c.createOscillator(); o.type = 'sine'; o.frequency.value = p.hum; const g = c.createGain(); g.gain.value = 0.012; o.connect(g); g.connect(gain); o.start(); nodes.push(o); }
+    const tick = () => {
+      if (!this.storeAmb) return;
+      for (const e of p.events) if (Math.random() < 1 / e.every) STORE_EVENTS[e.kind]?.(this, gain);
+    };
+    this.storeAmb = { timer: window.setInterval(tick, 1000), nodes, gain };
+  }
+  stopStoreAmbience() {
+    const a = this.storeAmb; if (!a) return;
+    clearInterval(a.timer); this.storeAmb = null;
+    try { a.gain.gain.setTargetAtTime(0, this.ctx!.currentTime, 0.2); } catch { /* ignore */ }
+    setTimeout(() => { for (const n of a.nodes) { try { n.stop(); } catch { /* ignore */ } } a.gain.disconnect(); }, 600);
+  }
+  /** A short note burst into a given output (used by the ambience events). */
+  blip(out: AudioNode, freq: number, dur: number, type: OscillatorType, vol: number, at = 0, slideTo?: number) {
+    const c = this.ctx; if (!c) return;
+    const t = c.currentTime + at;
+    const o = c.createOscillator(); const g = c.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t); if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g); g.connect(out); o.start(t); o.stop(t + dur + 0.02);
+  }
+  hiss(out: AudioNode, dur: number, vol: number, freq: number, type: BiquadFilterType = 'bandpass', at = 0) {
+    const c = this.ctx; if (!c || !this.noiseBuf) return;
+    const t = c.currentTime + at;
+    const s = c.createBufferSource(); s.buffer = this.noiseBuf;
+    const f = c.createBiquadFilter(); f.type = type; f.frequency.value = freq;
+    const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(f); f.connect(g); g.connect(out); s.start(t); s.stop(t + dur + 0.02);
+  }
+
+  /** Entrance sting for a karen: every kind gets its own little 3-note motif (stable per kind). */
+  karenSting(kind: string) {
+    if (!this.ctx) return;
+    let h = 2166136261; for (const ch of kind) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
+    h >>>= 0;
+    const scale = [0, 3, 5, 6, 7, 10, 12];
+    const base = 330 + (h % 5) * 40, type: OscillatorType = (['square', 'sawtooth', 'triangle'] as const)[(h >> 3) % 3];
+    for (let i = 0; i < 3; i++) {
+      const semi = scale[(h >> (5 + i * 3)) % scale.length] - (i === 2 ? 12 : 0);
+      this.tone(base * Math.pow(2, semi / 12), 0.13, type, 0.07, 0.5 + i * 0.14); // after the generic alarm
+    }
+  }
+
   /** Soft store ambience: low pad + occasional chime. */
   startAmbient() {
     const c = this.ctx; if (!c || !this.master || this.ambient) return;
@@ -200,6 +259,50 @@ const MOODS: Record<number, Mood> = {
   // 8: title theme on the main menu — bouncy, a bit cheeky
   8: { bpm: 118, root: 58, prog: [[0, 4, 7, 11], [5, 9, 12, 16], [2, 5, 9, 12], [7, 11, 14, 17]], scale: PENTA, pad: 'triangle', lead: 'square', drums: true },
   7: { bpm: 116, root: 50, prog: [[0, 3, 7], [5, 8, 12], [-2, 2, 5], [3, 7, 10]], scale: MIN, pad: 'sine', lead: 'triangle', drums: true },     // endless night
+};
+
+type AmbEvent = 'chime' | 'sizzle' | 'clink' | 'bark' | 'ding' | 'page' | 'beep' | 'thump' | 'engine' | 'dryer' | 'pa' | 'bell' | 'oven';
+interface StoreAmb { bed?: { type: BiquadFilterType; freq: number; vol: number; q?: number }; hum?: number; events: { kind: AmbEvent; every: number }[] }
+const FRIDGE = { type: 'lowpass' as BiquadFilterType, freq: 180, vol: 0.05 };
+const MURMUR = { type: 'bandpass' as BiquadFilterType, freq: 520, vol: 0.035, q: 0.6 };
+const SIZZLE = { type: 'highpass' as BiquadFilterType, freq: 3500, vol: 0.02 };
+const STORE_AMBIENCE: Record<string, StoreAmb> = {
+  convenience: { bed: FRIDGE, hum: 60, events: [{ kind: 'chime', every: 25 }] },
+  breakfast: { bed: SIZZLE, events: [{ kind: 'sizzle', every: 6 }, { kind: 'chime', every: 30 }] },
+  boba: { bed: MURMUR, events: [{ kind: 'clink', every: 5 }] },
+  clothing: { bed: MURMUR, events: [{ kind: 'chime', every: 30 }] },
+  chicken: { bed: SIZZLE, events: [{ kind: 'sizzle', every: 4 }] },
+  drugstore: { bed: MURMUR, events: [{ kind: 'beep', every: 12 }, { kind: 'chime', every: 30 }] },
+  bookstore: { bed: { type: 'lowpass', freq: 120, vol: 0.02 }, events: [{ kind: 'page', every: 6 }] },
+  bakery: { bed: { type: 'lowpass', freq: 220, vol: 0.03 }, events: [{ kind: 'oven', every: 18 }, { kind: 'chime', every: 30 }] },
+  supermarket: { bed: MURMUR, hum: 60, events: [{ kind: 'beep', every: 4 }, { kind: 'pa', every: 45 }] },
+  petshop: { bed: MURMUR, events: [{ kind: 'bark', every: 9 }] },
+  cafe: { bed: MURMUR, events: [{ kind: 'clink', every: 6 }, { kind: 'dryer', every: 25 }] },
+  cinema: { bed: { type: 'lowpass', freq: 90, vol: 0.06 }, events: [{ kind: 'thump', every: 10 }] },
+  hotpot: { bed: { type: 'bandpass', freq: 900, vol: 0.03, q: 0.8 }, events: [{ kind: 'clink', every: 5 }] },
+  gas: { bed: { type: 'lowpass', freq: 140, vol: 0.05 }, events: [{ kind: 'engine', every: 12 }, { kind: 'bell', every: 20 }] },
+  gym: { bed: MURMUR, events: [{ kind: 'thump', every: 3 }] },
+  steak: { bed: SIZZLE, events: [{ kind: 'sizzle', every: 4 }, { kind: 'clink', every: 9 }] },
+  electronics: { bed: { type: 'lowpass', freq: 200, vol: 0.03 }, events: [{ kind: 'beep', every: 5 }] },
+  salon: { bed: MURMUR, events: [{ kind: 'dryer', every: 10 }] },
+  post: { bed: MURMUR, events: [{ kind: 'ding', every: 12 }] },
+  pharmacy: { bed: MURMUR, events: [{ kind: 'ding', every: 15 }] },
+  hotel: { bed: { type: 'lowpass', freq: 160, vol: 0.025 }, events: [{ kind: 'bell', every: 18 }] },
+};
+const STORE_EVENTS: Record<AmbEvent, (a: Audio, out: AudioNode) => void> = {
+  chime: (a, o) => { a.blip(o, 1318, 0.5, 'sine', 0.05); a.blip(o, 1046, 0.6, 'sine', 0.05, 0.25); },
+  sizzle: (a, o) => a.hiss(o, 1.2, 0.05, 4500, 'highpass'),
+  clink: (a, o) => a.blip(o, 2400 + Math.random() * 800, 0.15, 'sine', 0.04),
+  bark: (a, o) => { a.blip(o, 520, 0.12, 'square', 0.04, 0, 300); a.blip(o, 560, 0.12, 'square', 0.035, 0.18, 320); },
+  ding: (a, o) => a.blip(o, 1568, 0.7, 'triangle', 0.05),
+  page: (a, o) => a.hiss(o, 0.25, 0.04, 2500, 'bandpass'),
+  beep: (a, o) => a.blip(o, 2093, 0.08, 'square', 0.025),
+  thump: (a, o) => a.blip(o, 90, 0.25, 'sine', 0.12, 0, 50),
+  engine: (a, o) => a.blip(o, 70, 1.4, 'sawtooth', 0.03, 0, 45),
+  dryer: (a, o) => a.hiss(o, 1.8, 0.04, 1800, 'bandpass'),
+  pa: (a, o) => { [784, 988, 1175, 1568].forEach((f, i) => a.blip(o, f, 0.3, 'sine', 0.04, i * 0.2)); },
+  bell: (a, o) => { a.blip(o, 2637, 0.8, 'sine', 0.04); a.blip(o, 2637, 0.8, 'sine', 0.03, 0.15); },
+  oven: (a, o) => { a.blip(o, 1760, 0.15, 'square', 0.03); a.blip(o, 1760, 0.15, 'square', 0.03, 0.3); a.blip(o, 1760, 0.3, 'square', 0.03, 0.6); },
 };
 
 export const audio = new Audio();
