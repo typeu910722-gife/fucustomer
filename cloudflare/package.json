@@ -1,0 +1,16 @@
+{
+  "name": "fucustomer-cloudflare",
+  "version": "0.1.0",
+  "private": true,
+  "description": "奧客退散 game server on Cloudflare Workers + Durable Objects (local dev only; not deployed)",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local --ip 127.0.0.1 --port 8788",
+    "typecheck": "tsc --noEmit -p .",
+    "test": "node --test ../tests/cf.test.mjs"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20261006.1",
+    "wrangler": "4.147.0"
+  }
+}

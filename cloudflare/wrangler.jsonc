@@ -1,0 +1,24 @@
+// 奧客退散 game server on Cloudflare Workers + Durable Objects.
+// Local development only so far: `npx wrangler dev --local`. Nothing here contains an account id or a secret.
+// Deploying later needs the user's own Cloudflare account (`wrangler login` + `wrangler deploy`), see README.md.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fucustomer-game",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-01",
+  "observability": { "enabled": false },
+  "durable_objects": {
+    "bindings": [
+      { "name": "ROOMS", "class_name": "RoomDO" },
+      { "name": "STORES", "class_name": "StoreDO" }
+    ]
+  },
+  // Workers Free plan only allows SQLite-backed Durable Objects.
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["RoomDO", "StoreDO"] }
+  ],
+  "vars": {
+    // Test-only time fast-forward for the simulation. Keep "1" in production.
+    "BK_TIME_SCALE": "1"
+  }
+}
