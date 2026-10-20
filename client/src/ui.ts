@@ -321,7 +321,7 @@ export function summaryHtml(s: Snapshot, selfId: string) {
 
 /** Free play: pick a store type. Each map keeps its own save. */
 export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map: string, fresh: boolean): void; back(): void }) {
-  show(`<div class="card wide"><div class="row" style="align-items:center"><h2 style="flex:1;margin:0">選擇店面</h2><button class="btn small" id="mp-back" style="flex:0">← 主選單</button></div>
+  show(`<div class="card wide"><div class="row" style="align-items:center"><h2 style="flex:1;margin:0">選擇店面</h2><button class="btn small" id="mp-back" style="flex:0">← 返回</button></div>
     <p class="muted">每種店賣的東西、擺設和工作站都不一樣。各自有獨立的存檔。</p>
     <div class="grid2">${MAPS.map(m => {
       const sv = saves[m.id];
