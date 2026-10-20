@@ -15,3 +15,4 @@ desktop/web/
 *.mobileprovision
 steam_appid.txt
 .cache/
+/*.png
