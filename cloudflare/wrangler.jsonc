@@ -23,6 +23,6 @@
     // Test-only time fast-forward for the simulation. Keep "1" in production.
     "BK_TIME_SCALE": "1",
     // Public Google OAuth web client ID (not a secret). Empty = Google sign-in off.
-    "GOOGLE_CLIENT_ID": ""
+    "GOOGLE_CLIENT_ID": "257751167675-9ifouuogc4h1fmrljbootjm2mlf55nq2.apps.googleusercontent.com"
   }
 }
