@@ -7,6 +7,7 @@ import * as THREE from 'three';
 import type { AABB } from '../../shared/map.ts';
 import type { MapDef } from '../../shared/maps/types.ts';
 import type { Quality } from './storage.ts';
+import { UI_FONT } from './labels.ts';
 import { B, CAP, CONE, CYL, DOME, RB, SPH, TOR, basic, geo, mat, put } from './models.ts';
 
 export interface DecorCtx {
@@ -554,7 +555,7 @@ function signCanvas(text: string, bg: string) {
   g.fillStyle = bg; g.fillRect(0, 0, 512, 256);
   g.strokeStyle = '#2a1f3d'; g.lineWidth = 16; g.strokeRect(8, 8, 496, 240);
   g.fillStyle = '#fff'; g.textAlign = 'center'; g.textBaseline = 'middle';
-  g.font = `900 ${text.length > 4 ? 84 : 140}px "Noto Sans TC",sans-serif`;
+  g.font = `900 ${text.length > 4 ? 84 : 140}px ${UI_FONT}`;
   g.fillText(text, 256, 132, 470);
   return c;
 }
