@@ -124,7 +124,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
         ${h.firstDay ? `<div class="welcome"><b>👋 第一次來上班？</b><span>從第一天開始，會一步一步教你。</span><button class="btn good" id="m-first">▶ 開始第一天上班</button></div>` : ''}
         ${info.next ? `<button class="btn good continue" id="m-next"><span class="cont-tag">繼續上班</span>▶ ${esc(info.next.id)}・${esc(info.next.title)} <span class="cont-map">${esc(info.next.map)}</span></button>` : ''}
         <button class="btn primary hero" id="m-career">🧑‍💼 開工<span class="sub">主線：從工讀生一路升到開自己的店</span></button>
-        <button class="btn warn hero" id="m-mp">📯 打工人的號角<span class="sub">多人遊玩・選地圖、選難度</span><span class="soon">籌備中</span></button>
+        <button class="btn warn hero" id="m-mp">📯 打工人的號角<span class="sub">多人遊玩・選地圖、選難度</span></button>
         ${info.daily ? `<button class="daily-mini" id="m-daily"><span class="dm-icon">📅</span><span class="dm-text"><b>今日挑戰</b><small>${esc(info.daily.map)}・${esc(info.daily.mods)}</small></span><span class="tag ${info.daily.done ? 'ok' : ''}">${info.daily.done ? '✅ 已領' : '🎁 未領'}</span></button>` : ''}
         <div class="notice"><span class="pin">📋 店內公告</span><div class="notice-text" id="m-notice">${esc(NOTICES[Math.floor(Math.random() * NOTICES.length)])}</div></div>
         <div class="err" id="m-err">${esc(info.error ?? '')}</div>
@@ -160,7 +160,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
 /** Multiplayer (打工人的號角): store type + difficulty, create a room or join one. */
 export function multiplayerMenu(h: { create(cont: boolean, map: string, difficulty: Difficulty): void; join(code: string): void; back(): void; pack?(packId: string): void }, info: { coopSave: StoreSave | null; error?: string }) {
   show(`<div class="card wide mpcard">
-    <div class="row" style="align-items:center"><h2>📯 打工人的號角</h2><span class="soon">籌備中</span><button class="btn small" id="mp-back" style="flex:0">← 主選單</button></div>
+    <div class="row" style="align-items:center"><h2>📯 打工人的號角</h2><button class="btn small" id="mp-back" style="flex:0">← 主選單</button></div>
     ${info.error ? `<div class="mp-banner" id="mp-banner">${esc(info.error)}</div>` : ''}
     <p class="muted">最多 ${MAX_PLAYERS} 人一起顧店。多人模式還在測試，可能會有問題，歡迎回報。</p>
     <div class="sectlabel">① 選店面</div>

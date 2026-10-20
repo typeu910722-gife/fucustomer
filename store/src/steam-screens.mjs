@@ -224,8 +224,6 @@ if (want('04')) {
   for (const p of [host, ...guests]) await p.waitForFunction(() => window.__game?.started && window.__game.snap?.players.length === 4, null, { timeout: 120000, polling: 500 });
   // software rendering is slow: draw at a fraction of the resolution until the photo, so no client misses its pings
   for (const p of [host, ...guests]) await p.evaluate(() => window.__game.view.setResolutionScale(0.25));
-  for (const p of [host, ...guests]) await p.keyboard.press('Enter'); // everyone ready: the store opens
-  await host.waitForFunction(() => window.__game.snap.phase === 'open', null, { timeout: 120000, polling: 500 });
   /** Walks the player through waypoints at running pace (the server clamps speed, so no teleporting). */
   const walk = (page, pts) => page.evaluate(pts => new Promise(done => {
     const g = window.__game; let i = 0;
@@ -236,14 +234,19 @@ if (want('04')) {
     }, 80);
   }), pts);
   const t0 = Date.now();
-  const spots = [[[14.2, 10.2], [12.4, 13.9]], [[10.9, 10.4]], [[8, 9.5], [12.3, 9.6]], [[14.2, 9.2], [13.7, 10.5]]];
+  const spots = [[[14.2, 10.2], [13.2, 12.6], [12.3, 14.3]], [[10.9, 10.3]], [[8, 9.5], [12.2, 9.6]], [[14.2, 9.2], [13.6, 10.4]]];
   await Promise.all([host, ...guests].map((p, i) => walk(p, spots[i])));
   console.log('walked in', Date.now() - t0, 'ms');
   // the three co-workers turn to the camera; the host looks at them
   const cam = spots[0][spots[0].length - 1];
   await Promise.all(guests.map(p => p.evaluate(([cx, cz]) => { const g = window.__game; g.yaw = Math.atan2(cx - g.pos.x, cz - g.pos.z); g.pitch = 0; }, cam)));
   await host.evaluate(() => { const g = window.__game; g.yaw = Math.atan2(12.2 - g.pos.x, 10.0 - g.pos.z); g.pitch = -0.08; });
-  await host.waitForTimeout(Number(process.env.WAIT4 ?? 3000)); // customers come in
+  // everyone in place before opening (prep time); then all press Enter (ready) and the first customers come in
+  for (const p of [host, ...guests]) await p.keyboard.press('Enter');
+  await host.waitForFunction(() => window.__game.snap.phase === 'open', null, { timeout: 120000, polling: 500 });
+  await host.waitForTimeout(Number(process.env.WAIT4 ?? 9000));
+  await walk(host, [cam]); // back on the mark if the server nudged us
+  await host.evaluate(() => { const g = window.__game; g.yaw = Math.atan2(12.2 - g.pos.x, 10.0 - g.pos.z); g.pitch = -0.08; });
   console.log('coop', await host.evaluate(() => JSON.stringify({ clock: window.__game.snap.clock, status: document.body.innerText.includes('連線中斷'), players: window.__game.snap.players.map(p => [p.name, +p.x.toFixed(1), +p.z.toFixed(1)]) })));
   await host.evaluate(() => window.__game.view.setResolutionScale(1));
   await shot(host, '04-coop.png', 2500);
