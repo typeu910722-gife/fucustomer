@@ -16,6 +16,9 @@
 //   GET  /api/auth/config             → { googleClientId: string | null }
 //   POST /api/auth/google             → { no, session, card }  (body { credential } = Google ID token)
 //   POST /api/auth/logout             → {}  (x-session)
+//   POST /api/auth/link/start         → { code, pollToken, expiresIn }  (app; Google sign-in is blocked in WebViews)
+//   POST /api/auth/link/complete      → { no }  (browser, x-session, body { code })
+//   POST /api/auth/link/poll          → { pending, expiresIn } | { no, session, card }  (app, body { pollToken })
 //   PUT  /api/license                 → card (x-session)
 //   GET  /api/license/:no             → public card
 import { PROTOCOL_VERSION, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from '../../shared/constants.ts';
@@ -224,6 +227,11 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     return json(200, await licenseStub(env).login(claims.sub, claims.name));
   }
   if (parts[1] === 'auth' && parts[2] === 'logout' && req.method === 'POST') { await licenseStub(env).logout(session); return json(200, {}); }
+  if (parts[1] === 'auth' && parts[2] === 'link' && req.method === 'POST') {
+    if (parts[3] === 'start') return out(await licenseStub(env).linkStart(ip));
+    if (parts[3] === 'complete') return out(await licenseStub(env).linkComplete(session, (await readBody(req)).code));
+    if (parts[3] === 'poll') return out(await licenseStub(env).linkPoll((await readBody(req)).pollToken));
+  }
   if (parts[1] === 'license') {
     if (!parts[2] && req.method === 'PUT') return out(await licenseStub(env).update(session, await readBody(req)));
     if (parts[2] && req.method === 'GET') {
