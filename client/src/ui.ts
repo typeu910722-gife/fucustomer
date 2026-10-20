@@ -191,7 +191,7 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
   });
 }
 
-export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean): void; start(): void; leave(): void; copy(): void }) {
+export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean): void; start(): void; leave(): void; copy(): void; config?(map: string, difficulty: string): void }) {
   const me = l.players.find(p => p.id === selfId);
   const isHost = l.hostId === selfId;
   const others = l.players.filter(p => p.id !== l.hostId && p.connected);
@@ -203,6 +203,15 @@ export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean
       <div class="bigcode" id="l-code">${esc(l.code)}</div>
       <div class="row"><button class="btn small" id="l-copy">複製房間碼</button></div>
       <div class="muted">人數 ${l.players.length}/${l.max}・第 ${l.day} 天</div>
+      ${l.map ? (() => {
+        const m = MAPS.find(x => x.id === l.map) ?? MAPS[0];
+        const d = DIFFICULTIES[(l.difficulty ?? 'normal') as Difficulty] ?? DIFFICULTIES.normal;
+        return isHost && h.config
+          ? `<div class="lobbycfg"><label>🏪 店面<select id="l-map">${MAPS.map(x => `<option value="${x.id}" ${x.id === m.id ? 'selected' : ''}>${x.icon} ${esc(x.name)}</option>`).join('')}</select></label>
+             <label>🎚 難度<select id="l-diff">${DIFFICULTY_IDS.map(k => `<option value="${k}" ${k === (l.difficulty ?? 'normal') ? 'selected' : ''}>${DIFFICULTIES[k].icon} ${DIFFICULTIES[k].name}</option>`).join('')}</select></label></div>
+             <div class="muted">換店面或難度後，其他人要重新按「準備」。</div>`
+          : `<div class="lobbycfg ro"><span class="tag">🏪 ${m.icon} ${esc(m.name)}</span><span class="tag">${d.icon} ${d.name}・${esc(d.desc)}</span></div>`;
+      })() : ''}
       <ul class="players">
         ${l.players.map(p => `<li><span class="dot" style="background:${hex(p.color)}"></span><b style="flex:1">${esc(p.name)}${p.id === selfId ? '（你）' : ''}</b>
           ${p.id === l.hostId ? '<span class="tag">👑 房主</span>' : ''}<span class="tag">${PLATFORM_ICON[p.platform] ?? esc(p.platform)}</span>
@@ -217,6 +226,8 @@ export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean
   on('l-ready', 'click', () => h.ready(!me?.ready));
   on('l-leave', 'click', () => h.leave());
   on('l-copy', 'click', () => h.copy());
+  const cfg = () => h.config?.(val('l-map'), val('l-diff'));
+  on('l-map', 'change', cfg); on('l-diff', 'change', cfg);
 }
 
 export function message(title: string, body: string, btn = '確定', onOk?: () => void) {

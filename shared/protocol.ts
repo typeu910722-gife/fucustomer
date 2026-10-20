@@ -85,6 +85,8 @@ export interface Snapshot {
 export interface LobbyPlayer { id: string; name: string; ready: boolean; connected: boolean; color: number; platform: string }
 export interface LobbyState {
   code: string; hostId: string; started: boolean; players: LobbyPlayer[]; max: number; day: number;
+  /** Store type and difficulty of a multiplayer room (the host can change them in the lobby). */
+  map?: string; difficulty?: string;
 }
 
 // ---- messages ----
@@ -94,6 +96,7 @@ export type ClientMsg =
   | { type: 'join'; code: string; name: string; token?: string }
   | { type: 'ready'; ready: boolean }
   | { type: 'start' }
+  | { type: 'lobbyCfg'; map?: string; difficulty?: string }
   | { type: 'input'; x: number; z: number; yaw: number; pitch: number; seq: number }
   | { type: 'act'; rid: string; kind: ActKind; target: Target }
   | { type: 'drop'; rid: string }

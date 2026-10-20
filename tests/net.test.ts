@@ -244,6 +244,28 @@ test('rooms on different store types run side by side on one server', async () =
   for (const c of [...boba, ...cloth]) c.close();
 });
 
+test('the host can change store type and difficulty in the lobby; others must re-ready', async () => {
+  const [h, j] = await room(2);
+  j.send({ type: 'ready', ready: true });
+  await h.until(() => !!h.lobby?.players.find(p => p.id === j.playerId)?.ready, 5000, 'guest ready');
+  j.send({ type: 'lobbyCfg', map: 'clothing', difficulty: 'hell' } as ClientMsg); // not the host: ignored
+  await sleep(300);
+  assert.equal(h.lobby!.map, 'convenience');
+  h.send({ type: 'lobbyCfg', map: 'clothing', difficulty: 'hell' } as ClientMsg);
+  await j.until(() => j.lobby?.map === 'clothing' && j.lobby?.difficulty === 'hell', 5000, 'lobby config');
+  assert.equal(j.lobby!.players.find(p => p.id === j.playerId)!.ready, false, 'guest has to ready again');
+  h.send({ type: 'lobbyCfg', map: 'not-a-map', difficulty: 'impossible' } as ClientMsg);
+  await sleep(300);
+  assert.equal(h.lobby!.map, 'clothing'); assert.equal(h.lobby!.difficulty, 'hell');
+  assert.equal((await api('GET', `/api/room/${h.code}`)).data.difficulty, 'hell');
+  await start([h, j]);
+  assert.deepEqual(h.snap!.shift.foods, [], 'clothing store sells no food');
+  h.send({ type: 'lobbyCfg', map: 'boba' } as ClientMsg); // too late once started
+  await sleep(300);
+  assert.equal((await api('GET', `/api/room/${h.code}`)).data.map, 'clothing');
+  h.close(); j.close();
+});
+
 test('friend store API: upload, lock, raid, reports (owner token required)', async () => {
   const up = await api('POST', '/api/stores', { name: '測試店', map: 'boba', money: 2000, rating: 3.5, shelves: { drinks: 4, snacks: 4, bento: 4 } });
   assert.equal(up.status, 200);

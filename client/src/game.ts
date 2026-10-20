@@ -4,7 +4,7 @@ import * as THREE from 'three';
 import {
   FOOD_INFO, INPUT_RATE, INTERACT_RANGE, KAREN_INFO, PRODUCT_INFO, QUICK_MESSAGES, RUN_SPEED, WALK_SPEED, shelfCapacity, EYE_HEIGHT,
 } from '../../shared/constants.ts';
-import { CURRENT_MAP, COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, AABB, clampToStore, resolveCollision } from '../../shared/map.ts';
+import { applyMap, CURRENT_MAP, COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, AABB, clampToStore, resolveCollision } from '../../shared/map.ts';
 import type { ShiftResult } from '../../shared/career.ts';
 import { BOSS_HOW, BOSS_PHASES } from '../../shared/constants.ts';
 import { NEED_LABEL, SIG_KARENS, SigNeed, isSig, sigWaitReason } from '../../shared/sigkarens.ts';
@@ -151,6 +151,8 @@ export class Game {
         break;
       case 'lobby':
         this.lobby = m.lobby;
+        // the host switched the store type in the lobby: rebuild the 3D store before the game starts
+        if (!m.lobby.started && !this.started && m.lobby.map && m.lobby.map !== CURRENT_MAP.id) this.switchMap(m.lobby.map);
         if (!m.lobby.started) this.showLobby();
         break;
       case 'snap': this.onSnap(m.s); break;
@@ -181,6 +183,14 @@ export class Game {
     else if (this.started) { el.classList.remove('hidden'); el.textContent = detail ?? '連線中…'; }
   }
 
+  private switchMap(id: string) {
+    applyMap(id);
+    const canvas = $('view') as HTMLCanvasElement;
+    this.view.renderer.dispose();
+    this.view = new StoreView(canvas, this.settings.quality, this.settings.fov);
+    this.view.setQuality(this.settings.quality);
+  }
+
   private showLobby() {
     if (!this.lobby || this.started) return;
     UI.lobbyScreen(this.lobby, this.selfId, {
@@ -188,6 +198,7 @@ export class Game {
       start: () => this.send({ type: 'start' }),
       leave: () => { saveLastSession(null); this.exit(); },
       copy: () => { void navigator.clipboard?.writeText(this.lobby!.code); this.toast('已複製房間碼', 'good'); },
+      config: (map, difficulty) => this.send({ type: 'lobbyCfg', map, difficulty }),
     });
   }
 

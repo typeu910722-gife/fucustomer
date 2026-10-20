@@ -86,7 +86,7 @@ export class Room {
   private rid: (len: number) => string;
   private opts: RoomOptions;
   /** This room's store type. The map state is shared by the whole process, so every entry point switches to it first. */
-  readonly mapId: string;
+  mapId: string;
 
   constructor(code: string, save: StoreSave | null | undefined, opts: RoomOptions = {}) {
     this.code = code;
@@ -98,7 +98,7 @@ export class Room {
     this.mapId = getMap(opts.shift?.map ?? opts.map).id;
     this.difficulty = isDifficulty(opts.difficulty) ? opts.difficulty : 'normal';
   }
-  readonly difficulty: Difficulty;
+  difficulty: Difficulty;
   /** Business-day config for this room's map and difficulty (career shifts use their own config). */
   private dayCfg() { return this.opts.shift ?? withDifficulty(dayConfig(), this.difficulty); }
   private useMap() { applyMap(this.mapId); }
@@ -220,6 +220,16 @@ export class Room {
         if (!this.started) { m.ready = !!msg.ready; this.broadcastLobby(); }
         else if (w) setReady(w, playerId, !!msg.ready);
         break;
+      case 'lobbyCfg': {
+        // the host can switch store type / difficulty until the game starts (multiplayer business days only)
+        if (this.started || this.solo || this.opts.shift || playerId !== this.hostId) return;
+        if (typeof msg.map === 'string' && getMap(msg.map).id === msg.map) this.mapId = msg.map;
+        if (isDifficulty(msg.difficulty)) this.difficulty = msg.difficulty;
+        for (const x of this.members.values()) if (x.playerId !== this.hostId) x.ready = false; // everyone re-confirms
+        this.opts.onCheckpoint?.(this.checkpoint());
+        this.broadcastLobby();
+        break;
+      }
       case 'start':
         if (this.started || playerId !== this.hostId) return;
         if (![...this.members.values()].filter(x => x.connected).every(x => x.ready || x.playerId === this.hostId)) {
@@ -347,7 +357,7 @@ export class Room {
 
   lobbyState(): LobbyState {
     return {
-      code: this.code, hostId: this.hostId, started: this.started, max: MAX_PLAYERS, day: this.world?.day ?? this.save.day,
+      code: this.code, hostId: this.hostId, started: this.started, max: MAX_PLAYERS, day: this.world?.day ?? this.save.day, map: this.mapId, difficulty: this.difficulty,
       players: [...this.members.values()].sort((a, b) => a.joinOrder - b.joinOrder)
         .map(m => ({ id: m.playerId, name: m.name, ready: m.ready, connected: m.connected, color: m.color, platform: m.platform })),
     };
