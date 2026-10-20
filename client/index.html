@@ -186,11 +186,20 @@
     #t-run { width: 58px; height: 58px; right: calc(152px + var(--safe-r)); bottom: calc(114px + var(--safe-b)); }
     #t-ping { width: 52px; height: 52px; right: calc(224px + var(--safe-r)); bottom: calc(36px + var(--safe-b)); }
     #t-menu, #t-chat, #t-shop { width: 46px; height: 46px; right: calc(10px + var(--safe-r)); border-radius: 14px; font-size: 18px; }
-    #t-menu { top: calc(10px + var(--safe-t)); } #t-chat { top: calc(64px + var(--safe-t)); } #t-shop { top: calc(118px + var(--safe-t)); }
+    #t-menu, #t-chat, #t-shop { top: calc(10px + var(--safe-t)); }
+    #t-chat { right: calc(62px + var(--safe-r)); } #t-shop { right: calc(114px + var(--safe-r)); }
     body.touch #rightinfo { right: auto; left: calc(10px + var(--safe-l)); top: calc(118px + var(--safe-t)); width: 200px; transform: scale(.72); transform-origin: top left; }
     body.touch #minimap { width: 150px; height: 102px; }
     body.touch #topbar { transform: translateX(-50%) scale(.78); transform-origin: top center; }
-    body.touch #feed { left: auto; right: calc(66px + var(--safe-r)); top: calc(10px + var(--safe-t)); width: 200px; }
+    body.touch #feed { left: auto; right: calc(10px + var(--safe-r)); top: calc(66px + var(--safe-t)); width: 190px; }
+    body.touch #phasebanner { bottom: auto; top: calc(52px + var(--safe-t)); }
+    body.touch.shiftmode #phasebanner { top: calc(80px + var(--safe-t)); }
+    body.touch:has(#phasebanner:not(:empty)) #hintbar { top: calc(128px + var(--safe-t)); }
+    body.touch #phasebanner .btn { font-size: 14px; padding: 6px 12px; }
+    body.touch #burst { left: calc(10px + var(--safe-l)); bottom: calc(8px + var(--safe-b)); transform: scale(.8); transform-origin: bottom left; }
+    body.touch:has(#phasebanner:not(:empty)) #burst { bottom: calc(8px + var(--safe-b)); }
+    body.touch:has(#phasebanner:not(:empty)) #stamina { bottom: calc(52px + var(--safe-b)); }
+    body.touch:has(#phasebanner:not(:empty)) #toasts { top: calc(100px + var(--safe-t)); }
     body.touch #toasts { top: calc(46px + var(--safe-t)); }
     body.touch #alert { bottom: calc(150px + var(--safe-b)); font-size: 14px; }
     body.touch #helpkeys { display: none; }
@@ -316,6 +325,15 @@
     .spinner { font-size: 64px; display: inline-block; animation: cart 1s ease-in-out infinite alternate; }
     @keyframes cart { from { transform: translateX(-40px) rotate(-6deg); } to { transform: translateX(40px) rotate(6deg); } }
     .tip { font-weight: 700; color: var(--ink2); }
+    .row > h2 { flex: 0 0 auto !important; margin-right: auto; }
+    .mapcard { display: flex; flex-direction: column; gap: 6px; border-top: 12px solid var(--mc, var(--accent)); }
+    .mapname { display: flex !important; align-items: center; gap: 8px; font-size: 20px !important; }
+    .mapicon { font-size: 30px; width: 46px; height: 46px; display: inline-flex; align-items: center; justify-content: center; background: var(--cream2); border: 3px solid var(--ink); border-radius: 50%; }
+    .mapcard .row { margin-top: auto; }
+    .mapcard .row .btn { margin: 4px 0 0; }
+    body:has(#phasebanner:not(:empty)) #burst { bottom: calc(132px + var(--safe-b)); }
+    body:has(#phasebanner:not(:empty)) #stamina { bottom: calc(84px + var(--safe-b)); }
+    #sum-ready { position: sticky; bottom: 6px; z-index: 2; }
     #quickmenu { position: fixed; z-index: 40; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(420px, 90vw); }
     #quickmenu .btn { text-align: left; }
 

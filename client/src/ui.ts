@@ -238,7 +238,7 @@ export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map
     <div class="grid2">${MAPS.map(m => {
       const sv = saves[m.id];
       const foods = [m.coffee && `${m.coffee.icon}${m.coffee.food}`, m.meal && `${m.meal.icon}${m.meal.food}`].filter(Boolean).join('、') || '不賣吃的';
-      return `<div class="shopitem mapcard"><b style="font-size:20px">${m.icon} ${esc(m.name)}</b>
+      return `<div class="shopitem mapcard" style="--mc:${hex(m.theme.accent)}"><b class="mapname"><span class="mapicon">${m.icon}</span>${esc(m.name)}</b>
         <span class="muted">${esc(m.desc)}</span>
         <span class="muted">商品：${(['drinks', 'snacks', 'bento'] as const).map(p => esc(m.products[p].name)).join('、')}・現做：${esc(foods)}</span>
         <div class="row">${sv ? `<button class="btn primary" data-map-cont="${m.id}">繼續（第 ${sv.day} 天）</button>` : ''}

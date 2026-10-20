@@ -286,7 +286,7 @@ export class Game {
       case 'settings': UI.settingsMenu(this.settings, s => { this.applySettings(s); this.openOverlay('pause'); }, true); break;
       case 'help': UI.helpScreen(() => this.openOverlay('pause')); break;
       case 'quick': UI.quickMenu(i => { this.send({ type: 'quick', msg: i }); this.closeOverlay(); }, () => this.closeOverlay()); break;
-      case 'shop': UI.show(`<div class="card wide"><div id="shop-body"></div><button class="btn primary" id="shop-close">關閉 (B)</button></div>`, 'screen overlay');
+      case 'shop': UI.show(`<div class="card wide"><h2>🛒 採購・升級</h2><div id="shop-body"></div><button class="btn primary" id="shop-close">關閉${this.touch ? '' : ' (B)'}</button></div>`, 'screen overlay');
         $('shop-close').addEventListener('click', () => this.closeOverlay());
         this.renderShop(); break;
       case 'summary': UI.show(`<div class="card wide" id="sum-body"></div>`, 'screen overlay'); this.renderSummary(); break;
