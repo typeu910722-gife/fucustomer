@@ -36,7 +36,8 @@ await pg.waitForTimeout(2400);
 // put him at register 1 and stand in front of him
 await pg.evaluate(() => {
   const g = window.__game, w = g.conn.room.world, me = [...w.players.values()][0];
-  const c = w.customers.find(k => k.kind === 'custom');
+  const c = w.customers.find(k => k.kind === 'custom'); window.__cid = c.id;
+  w.cfg.karens = []; // no more karens after this one, so we always check the same customer
   for (const o of w.customers) if (o !== c && Math.hypot(o.x - 16.5, o.z - 12.5) < 2.5) o.gone = true;
   c.x = 16.5; c.z = 12.5; c.state = 'atRegister'; c.path = []; c.items = ['drinks']; c.shopping = []; c.life = 999; c.patience = c.patienceMax = 999; w.registers[0] = c.id;
   g.pos = { x: 16.5, z: 13.6 }; g.yaw = Math.PI; g.pitch = 0.05; me.x = 16.5; me.z = 13.6;
@@ -45,9 +46,10 @@ await pg.waitForFunction(() => /複誦/.test(document.getElementById('prompt')?.
 out.prompt = await pg.evaluate(() => document.getElementById('prompt')?.innerText ?? '');
 await pg.screenshot({ path: `${OUT}/r11-custom.png` });
 await pg.keyboard.down('e');
-await pg.waitForFunction(() => window.__game.conn.room.world.customers.find(k => k.kind === 'custom')?.resolved, null, { timeout: 10000 }).catch(() => {});
+await pg.waitForFunction(() => window.__game.conn.room.world.customers.find(k => k.id === window.__cid)?.resolved, null, { timeout: 10000 }).catch(() => {});
 await pg.keyboard.up('e');
-out.resolved = await pg.evaluate(() => window.__game.conn.room.world.customers.find(k => k.kind === 'custom')?.resolved ?? null);
+out.resolved = await pg.evaluate(() => window.__game.conn.room.world.customers.find(k => k.id === window.__cid)?.resolved ?? null);
+if (out.resolved !== true) out.debug = await pg.evaluate(() => { const w = window.__game.conn.room.world; const me = [...w.players.values()][0]; const c = w.customers.find(k => k.id === window.__cid); return { me: { x: me.x, z: me.z, busy: me.busy }, c: c && { state: c.state, x: c.x, z: c.z, gone: c.gone, held: c.heldBy }, paused: window.__game.conn.room.paused, customs: w.customers.filter(k => k.kind === 'custom').map(k => [k.id, k.resolved]), toasts: document.getElementById('toasts').innerText }; });
 out.errors = errors;
 console.log(JSON.stringify(out, null, 1));
 if (errors.length || !/轉職/.test(out.scene) || !/早餐/.test(out.title) || !/客製魔人/.test(out.card) || !/複誦/.test(out.prompt) || out.resolved !== true) process.exitCode = 1;
