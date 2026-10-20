@@ -3,7 +3,7 @@ import {
   ABILITY_INFO, ABILITY_LEVEL, Ability, CHAPTERS, CareerProfile, GEAR, GEAR_IDS, GEAR_MAX, GearId, MAX_LEVEL, RANKS, Reward, SKILLS,
   SKILL_MAX, ShiftResult, SkillTree, buyGear, chapterUnlocked, expToNext, findShift, gearPrice, rankOf, sanitizeProfile, shiftUnlocked,
   ENDLESS_ID, endlessUnlocked, DAILY_ID, DAILY_MODS, dailyPlan, dailyUnlocked, localDate,
-  spendSkill,
+  spendSkill, STAR_RATING, STAR_CHAOS, STAR_REVENUE,
 } from '../../shared/career.ts';
 import { ACHIEVEMENTS, Achievement } from '../../shared/achievements.ts';
 import { STORE_FUND, STORE_RESERVE, WAGES, WageMode, canOpenStore, closeStore, hireStaff, openStore, staffPace, withdraw } from '../../shared/ownstore.ts';
@@ -296,7 +296,7 @@ export function resultScreen(r: ShiftResult, reward: Reward, p: CareerProfile, f
       ${lvl}
       ${newAbil.map(a => `<div class="levelup">🔓 新能力：${ABILITY_INFO[a].name} — ${ABILITY_INFO[a].desc}</div>`).join('')}
       ${achHtml(fresh)}
-      <p class="muted" style="text-align:center">★1 達成營業額・★2 口碑 3.5 以上且混亂低於 60%・★3 營業額達 130% 且奧客零失誤、生氣離開不超過 1 人</p>
+      <p class="muted" style="text-align:center">★1 達成營業額・★2 口碑 ${STAR_RATING} 以上且混亂低於 ${STAR_CHAOS}%・★3 營業額達 ${Math.round(STAR_REVENUE * 100)}% 且奧客零失誤、生氣離開不超過 1 人</p>
       <div class="row">
         <button class="btn" id="r-retry">🔁 再挑戰</button>
         ${nextId ? `<button class="btn primary" id="r-next">下一班 ▶</button>` : ''}

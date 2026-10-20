@@ -10,7 +10,7 @@
 // are a consistency check of the data, not a substitute for play-testing.
 import { Room } from '../shared/room.ts';
 import { Bot, botMessages } from '../shared/bot.ts';
-import { CHAPTERS, GEAR_IDS, buildShiftConfig, modsFor, newProfile, starsFor, type CareerProfile } from '../shared/career.ts';
+import { CHAPTERS, GEAR_IDS, STAR_CHAOS, STAR_RATING, STAR_REVENUE, buildShiftConfig, modsFor, newProfile, starsFor, type CareerProfile } from '../shared/career.ts';
 import { KAREN_INFO, type KarenKind } from '../shared/constants.ts';
 import type { Snapshot } from '../shared/protocol.ts';
 import { writeFileSync } from 'node:fs';
@@ -46,7 +46,7 @@ export interface Run {
   /** Seconds after opening when revenue reached the goal (null = never). */
   timeToTarget: number | null;
   chaosPeak: number; ratingMin: number; lost: number; karensFailed: number; bossDefeated?: boolean;
-  /** Final rating / chaos, and which star conditions were met (rating ≥3.5 & chaos <60; revenue ≥130%, no failed karen, ≤1 lost). */
+  /** Final rating / chaos, and which star conditions were met (see starsFor in shared/career.ts). */
   rating: number; chaos: number; starRating: boolean; starRevenue: boolean;
   karens: string[]; repeats: number;
   /** Seconds the bot had nothing to do while the store was open, and how much of that was in the first 30 s. */
@@ -109,7 +109,7 @@ export function playShift(id: string, skill: Skill, seed: number): Run {
     id, skill, seed, won: res.won, stars: starsFor(res), revenue: res.revenue, goal: res.goal, failReason: res.failReason,
     timeToTarget, chaosPeak: Math.round(chaosPeak), ratingMin: Math.round(ratingMin * 100) / 100, lost: res.angryLeft, karensFailed: res.karensFailed,
     bossDefeated: res.bossDefeated, rating: res.rating, chaos: res.chaos,
-    starRating: res.rating >= 3.5 && res.chaos < 60, starRevenue: res.revenue >= res.goal * 1.3 && res.karensFailed === 0 && res.angryLeft <= 1, karens, repeats, idle: Math.round(idle * 10) / 10, idleEarly: Math.round(idleEarly * 10) / 10, openTime: cfg.length,
+    starRating: res.rating >= STAR_RATING && res.chaos < STAR_CHAOS, starRevenue: res.revenue >= res.goal * STAR_REVENUE && res.karensFailed === 0 && res.angryLeft <= 1, karens, repeats, idle: Math.round(idle * 10) / 10, idleEarly: Math.round(idleEarly * 10) / 10, openTime: cfg.length,
   };
 }
 
@@ -150,10 +150,11 @@ export function mainShiftIds(only = ''): string[] {
   return CHAPTERS.flatMap(c => c.shifts.map(s => s.id)).filter(id => !want.length || want.some(p => p.includes('-') ? id === p : id.startsWith(p + '-')));
 }
 
-export function runAll(ids: string[], seeds: number, skills: Skill[] = SKILL_IDS, log?: (s: string) => void): Row[] {
+export function runAll(ids: string[], seeds: number, skills: Skill[] = SKILL_IDS, log?: (s: string) => void, sink?: Run[], seedBase = 1000): Row[] {
   const rows: Row[] = [];
   for (const id of ids) for (const sk of skills) {
-    const runs = Array.from({ length: seeds }, (_, i) => playShift(id, sk, 1000 + i * 17));
+    const runs = Array.from({ length: seeds }, (_, i) => playShift(id, sk, seedBase + i * 17));
+    sink?.push(...runs);
     rows.push(summarize(runs));
     log?.(`${id} ${sk} pass ${(rows[rows.length - 1].pass * 100).toFixed(0)}% stars ${rows[rows.length - 1].stars.join('/')}`);
   }
@@ -226,7 +227,9 @@ if (process.argv[1]?.endsWith('scripts/balance.ts')) {
   const ids = mainShiftIds(arg('--only') ?? '');
   const skills = (arg('--skills')?.split(',') as Skill[] | undefined) ?? SKILL_IDS;
   const t0 = Date.now();
-  const rows = runAll(ids, seeds, skills, s => process.stderr.write(s + '\n'));
+  const all: Run[] = [];
+  const rows = runAll(ids, seeds, skills, s => process.stderr.write(s + '\n'), all, Number(arg('--seed-base') ?? 1000));
+  if (arg('--runs')) writeFileSync(arg('--runs')!, JSON.stringify(all));
   const md = report(rows, seeds);
   if (arg('--json')) writeFileSync(arg('--json')!, JSON.stringify(rows, null, 1));
   if (arg('--md')) writeFileSync(arg('--md')!, md + '\n');

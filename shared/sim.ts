@@ -93,6 +93,8 @@ export interface World {
   power: number; event: { kind: 'rush' | 'outage'; left: number; pulse: number } | null; nextEvent: number;
   guardTimer: number; hintQueue: { at: number; text: string }[]; result: ShiftResult | null;
   bossSpawned: boolean; bossDefeated: boolean; bossTimer: number; rampTimer: number; openTime: number;
+  /** Kind of the last karen spawned this shift ('' = none yet). */
+  lastKaren?: string;
   /** Karens handled today, by kind (goes into the shift result for the 奧客圖鑑). */
   handled: Record<string, number>;
 }
@@ -1597,7 +1599,7 @@ export function tick(w: World, dt: number) {
       w.phaseLeft -= dt;
       if (w.phaseLeft <= 0 || allReady(w)) {
         setPhase(w, 'open'); w.clock = OPEN_MINUTE; w.phaseLeft = w.cfg.length;
-        w.dayStats = emptyStats(w.rating); w.handled = {}; w.spawnTimer = 2; w.karenTimer = w.cfg.firstKaren; w.saveOut = null; w.nextEvent = w.cfg.firstEvent;
+        w.dayStats = emptyStats(w.rating); w.handled = {}; w.spawnTimer = 2; w.karenTimer = w.cfg.firstKaren; w.lastKaren = ''; w.saveOut = null; w.nextEvent = w.cfg.firstEvent;
         w.openTime = w.time; w.bossTimer = w.cfg.bossAt; w.rampTimer = 0;
         toast(w, shift ? `🏪 ${w.cfg.title}：開始上班！目標營業額 $${w.cfg.goal}` : `🏪 第 ${w.day} 天開始營業！`, 'good');
         ev(w, { e: 'sfx', name: 'open' });
@@ -1622,7 +1624,12 @@ export function tick(w: World, dt: number) {
           const active = w.customers.filter(c => c.kind !== 'normal' && c.kind !== 'boss' && !c.resolved && !c.gone);
           if (active.length < Math.floor(w.cfg.maxKarens) + Math.floor((n - 1) / 2)) {
             const avail = w.cfg.karens.filter(k => !active.some(a => a.kind === k));
-            spawnCustomer(w, pick(w, avail.length ? avail : w.cfg.karens));
+            // the shift's featured karen (listed first, the one its hint explains) comes first; after that avoid
+            // the same kind twice in a row when there is another choice
+            const fresh = avail.filter(k => k !== w.lastKaren);
+            const kind = shift && !w.lastKaren && avail.includes(w.cfg.karens[0]) ? w.cfg.karens[0] : pick(w, fresh.length ? fresh : avail.length ? avail : w.cfg.karens);
+            w.lastKaren = kind;
+            spawnCustomer(w, kind);
           }
         }
       }

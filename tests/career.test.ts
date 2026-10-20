@@ -58,7 +58,12 @@ test('chapters unlock by previous clear and level; shifts in order', () => {
 test('stars and rewards: first clear full EXP, replay 60%, fail 35%', () => {
   const base: ShiftResult = { shiftId: '1-1', won: true, failReason: '', revenue: 100, goal: 60, rating: 4, chaos: 10, served: 8, angryLeft: 0, karensResolved: 0, karensFailed: 0, ejected: 0, cleaned: 1, maxCombo: 0 };
   assert.equal(starsFor(base), 3);
-  assert.equal(starsFor({ ...base, revenue: 61, rating: 3 }), 1);
+  // balance pass (docs/BALANCE.md): ★2 needs rating ≥ 2.8 (was 3.5), ★3 needs 115% of the goal (was 130%)
+  assert.equal(starsFor({ ...base, revenue: 61, rating: 2.7 }), 1);
+  assert.equal(starsFor({ ...base, revenue: 61, rating: 2.8 }), 2);
+  assert.equal(starsFor({ ...base, revenue: 69, rating: 2.7 }), 2);
+  assert.equal(starsFor({ ...base, revenue: 68, rating: 2.7 }), 1);
+  assert.equal(starsFor({ ...base, rating: 2.8, chaos: 60 }), 2);
   const p = newProfile();
   const r1 = applyResult(p, base);
   assert.equal(r1.firstClear, true); assert.equal(r1.exp, Math.round(120 * 1.15));
