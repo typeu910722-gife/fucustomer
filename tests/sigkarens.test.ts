@@ -241,3 +241,14 @@ test('chapters 8–10 run through every new store, unlock in order, and have sto
   assert.equal(sceneBefore('10-1'), 'ch10-intro'); assert.equal(sceneBefore('10-2'), null);
   applyMap();
 });
+
+test('every signature karen has a small held prop for the 3D model', async () => {
+  const { buildKarenProp } = await import('../client/src/karen-props.ts');
+  for (const k of SIG_KINDS) {
+    const o = buildKarenProp(k);
+    assert.ok(o && o.children.length > 0, `${k} prop`);
+    let meshes = 0; o!.traverse(x => { if ((x as any).isMesh) meshes++; });
+    assert.ok(meshes <= 16, `${k} prop is cheap (${meshes} meshes)`);
+  }
+  assert.equal(buildKarenProp('cutter'), null);
+});
