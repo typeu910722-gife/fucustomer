@@ -6,10 +6,11 @@ import {
   UPGRADES, UPGRADE_IDS, UpgradeId, brewTime, checkoutTime, heatTime, shelfCapacity,
 } from './constants.ts';
 import {
-  CHARGE_SPOT, COFFEE_MACHINE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DOOR_X0, DOOR_X1, ENTRANCE, MICROWAVE, MOP_RACK,
-  PLAYER_SPAWNS, QUEUE_SPOTS, REGISTERS, SHELVES, SPAWN_OUTSIDE, STORE_D, WANDER_SPOTS, CURRENT_MAP, TRYON_SPOTS, clampToStore, distToAABB, findPath,
+  CHARGE_SPOT, COFFEE_MACHINE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DECOR, DOOR_X0, DOOR_X1, ENTRANCE, MICROWAVE, MOP_RACK,
+  PLAYER_SPAWNS, QUEUE_SPOTS, REGISTERS, SHELVES, SPAWN_OUTSIDE, STORE_D, WANDER_SPOTS, CURRENT_MAP, TRYON_SPOTS, CAMP_SPOTS, clampToStore, distToAABB, findPath,
   resolveCollision, shelfBrowseSpots, applyMap,
 } from './map.ts';
+import { SIG_KARENS, SigKarenDef, SigNeed, isSig, sigDef, sigWaitReason } from './sigkarens.ts';
 import type {
   ActKind, CustomerKind, DayStats, GameEvent, Held, Phase, Snapshot, StoreSave, Target,
 } from './protocol.ts';
@@ -39,7 +40,8 @@ export interface PlayerState {
 
 type CState =
   | 'enter' | 'toShelf' | 'browse' | 'toFood' | 'waitFood' | 'queue' | 'toRegister' | 'atRegister'
-  | 'leaving' | 'toComplain' | 'complain' | 'wander' | 'flee' | 'toEat' | 'eat' | 'held' | 'flying' | 'toSummon' | 'summon' | 'toCharge' | 'charge' | 'toTry' | 'tryon';
+  | 'leaving' | 'toComplain' | 'complain' | 'wander' | 'flee' | 'toEat' | 'eat' | 'held' | 'flying' | 'toSummon' | 'summon' | 'toCharge' | 'charge' | 'toTry' | 'tryon'
+  | 'toCamp' | 'camp';
 
 export interface Flight { vx: number; vy: number; vz: number; y: number; t: number; thrown: boolean; by: string }
 
@@ -62,6 +64,8 @@ export interface Customer {
   stunT?: number;
   /** Time this karen last shoved a worker (makes hitting back self-defence for a while). */
   shoveAt?: number;
+  /** Store-signature karens: how long they keep it up in total (for the overhead bar). */
+  lifeMax?: number;
 }
 
 export interface World {
@@ -319,7 +323,7 @@ function spawnCustomer(w: World, kind: CustomerKind) {
     c.speed = 1.7; c.life = 70; c.knockTimer = 6;
   } else if (kind === 'boss') {
     c.speed = 1.9; c.phase = 1; c.patienceMax = 1e9; c.life = 1e9; c.anger = 0;
-  }
+  } else if (isSig(kind)) sigSpawn(w, c, SIG_KARENS[kind]);
   c.patience = c.patienceMax;
   if (kind !== 'normal' && kind !== 'boss' && w.cfg.mode === 'shift') {
     if (w.cfg.chapter >= 3 && w.rng() < 0.2) { c.heavy = true; c.speed *= 0.85; }
@@ -329,7 +333,7 @@ function spawnCustomer(w: World, kind: CustomerKind) {
   if (kind !== 'normal') {
     ev(w, { e: 'karen', kind, id: c.id });
     if (kind === 'boss') toast(w, '👑 奧客之王駕到！第 1 階段「插隊霸王」：請他排隊或直接丟出門', 'bad');
-    else if (kind !== 'hog' || w.upgrades.camera > 0) toast(w, `⚠ ${KAREN_INFO[kind].name}：${KAREN_INFO[kind].hint}`, 'bad');
+    else if ((kind !== 'hog' && !sigDef(kind)?.hidden) || w.upgrades.camera > 0) toast(w, `⚠ ${KAREN_INFO[kind].name}：${KAREN_INFO[kind].hint}`, 'bad');
   }
   ev(w, { e: 'sfx', name: 'door', x: SPAWN_OUTSIDE.x, z: SPAWN_OUTSIDE.z });
   nextStep(w, c);
@@ -348,6 +352,7 @@ function nextStep(w: World, c: Customer) {
   if (c.kind === 'hog' && !c.resolved) { goEat(w, c); return; }
   if (c.kind === 'charger' && !c.resolved) { c.state = 'toCharge'; setGoal(c, CHARGE_SPOT); return; }
   if (c.kind === 'tryhard' && !c.resolved) { c.state = 'toTry'; setGoal(c, pick(w, TRYON_SPOTS)); return; }
+  if (isSig(c.kind) && !c.resolved && sigNextStep(w, c, SIG_KARENS[c.kind])) return;
   if (c.shopping.length) {
     c.state = 'toShelf';
     setGoal(c, pick(w, shelfBrowseSpots(c.shopping[0])));
@@ -534,7 +539,9 @@ function updateCustomer(w: World, c: Customer, dt: number) {
   if (c.stunT && c.stunT > 0) { c.stunT = Math.max(0, c.stunT - dt); c.moving = false; return; }
   const arrived = moveAlong(c, dt);
   const drain = (cutterActive(w) && c.kind !== 'cutter' ? 2.2 : 1) * (w.power < 1 ? 1.3 : 1)
-    * (w.customers.some(s => s.kind === 'streamer' && !s.resolved && Math.hypot(s.x - c.x, s.z - c.z) < 3) ? 1.35 : 1);
+    * (w.customers.some(s => s.kind === 'streamer' && !s.resolved && Math.hypot(s.x - c.x, s.z - c.z) < 3) ? 1.35 : 1)
+    * (c.kind === 'normal' ? sigDrain(w, c) : 1);
+  if (isSig(c.kind) && !c.resolved && sigUpdate(w, c, dt, arrived)) return;
   switch (c.state) {
     case 'enter': if (arrived) nextStep(w, c); break;
     case 'toShelf': if (arrived) { c.state = 'browse'; c.timer = 1.4 + w.rng() * 1.2; c.yaw = faceShelf(c); } break;
@@ -553,7 +560,8 @@ function updateCustomer(w: World, c: Customer, dt: number) {
       break;
     case 'toFood': if (arrived) { c.state = 'waitFood'; c.timer = 50 * m.patience; c.patienceMax = c.timer; c.yaw = Math.PI / 2; } break;
     case 'waitFood':
-      c.timer -= dt * (w.power < 1 ? 1.3 : 1);
+      c.timer -= dt * (w.power < 1 ? 1.3 : 1) * (c.kind === 'normal' ? sigDrain(w, c) : 1);
+      if (c.timer <= 0 && isSig(c.kind) && !c.resolved) { sigFail(w, c, SIG_KARENS[c.kind]); break; }
       if (c.timer <= 0 && c.kind === 'fickle' && !c.resolved) { failKaren(w, c, -0.2, 6, '🧋 改單達人等不到他要的那杯，罵罵咧咧走了'); leave(w, c, true); break; }
       if (c.timer <= 0) { c.foodFailed = true; c.mood -= 35; adjRating(w, -0.06); adjChaos(w, 3); toast(w, `${FOOD_INFO[c.want!].icon} ${FOOD_INFO[c.want!].name}等太久，顧客放棄了`, 'bad'); c.patienceMax = (55 + w.rating * 6) * m.patience; c.patience = c.patienceMax; nextStep(w, c); }
       break;
@@ -713,6 +721,177 @@ function fleeSpot(w: World, c: Customer, p: PlayerState) {
   return best;
 }
 
+// ---------------- store-signature karens (data in sigkarens.ts) ----------------
+function holds(p: PlayerState, need: SigNeed) {
+  if (need === 'box' || need === 'mop') return p.held?.kind === need;
+  return p.held?.kind === need || p.held2?.kind === need;
+}
+function needName(need: SigNeed) {
+  return need === 'coffee' ? FOOD_INFO.coffee.name || '飲料' : need === 'meal' ? FOOD_INFO.meal.name || '熱食' : need === 'mop' ? '拖把（西側牆邊）' : '一箱貨（倉庫）';
+}
+function takeFood(p: PlayerState, kind: 'coffee' | 'meal') { if (p.held?.kind === kind) { p.held = p.held2; p.held2 = null; } else p.held2 = null; }
+
+function sigSpawn(w: World, c: Customer, d: SigKarenDef) {
+  c.life = d.life ?? 70; c.lifeMax = c.life; c.knockTimer = d.every ?? 5;
+  if (d.tpl === 'till' || d.tpl === 'haggle') {
+    c.shopping.push(pick(w, PRODUCTS)); if (w.rng() < 0.5) c.shopping.push(pick(w, PRODUCTS));
+    c.patienceMax = 400;
+    if (d.tpl === 'haggle') { c.anger = d.heat ?? 30; c.lifeMax = undefined; }
+  } else if (d.tpl === 'redo') {
+    c.want = d.food && w.cfg.foods.includes(d.food) ? d.food : w.cfg.foods[0] ?? null;
+    c.patienceMax = 200; c.lifeMax = undefined;
+    if (!c.want) { c.resolved = true; c.shopping.push(pick(w, PRODUCTS)); } // this store makes nothing: he is just a customer
+  } else c.speed = d.tpl === 'roam' ? 1.8 : 1.6;
+}
+
+/** Where he goes next; false = shop and queue like everyone else (till / haggle / redo). */
+function sigNextStep(w: World, c: Customer, d: SigKarenDef): boolean {
+  if (d.tpl === 'camp' || d.tpl === 'sneak') { c.state = 'toCamp'; setGoal(c, sigSpot(w, c, d)); return true; }
+  if (d.tpl === 'roam') { c.state = 'wander'; c.speed = 1.7; setGoal(c, randomWanderSpot(w)); return true; }
+  if (d.tpl === 'refund') { c.state = 'toComplain'; setGoal(c, COMPLAINT_SPOT); return true; }
+  return false;
+}
+
+function sigSpot(w: World, c: Customer, d: SigKarenDef) {
+  if (d.spot === 'shelf') {
+    const stocked = PRODUCTS.filter(p => w.shelves[p] > 0 && p !== c.eatShelf);
+    const p = stocked.length ? pick(w, stocked) : pick(w, PRODUCTS);
+    c.eatShelf = p;
+    return pick(w, shelfBrowseSpots(p));
+  }
+  const taken = w.customers.filter(o => o !== c && (o.state === 'camp' || o.state === 'toCamp')).map(o => o.path[o.path.length - 1] ?? o);
+  const free = CAMP_SPOTS.filter(s => Math.hypot(s.x - c.x, s.z - c.z) > 0.8 && !taken.some(t => Math.hypot(t.x - s.x, t.z - s.z) < 0.6));
+  return pick(w, free.length ? free : CAMP_SPOTS);
+}
+
+/** Customers near a loud karen, or anyone in line while the 器材霸主 hogs the machine, lose patience faster. */
+function sigDrain(w: World, c: Customer) {
+  let f = 1;
+  for (const k of w.customers) {
+    if (k.resolved || k.state !== 'camp' || !isSig(k.kind)) continue;
+    const d = SIG_KARENS[k.kind];
+    if (d.effects?.includes('queue') && (c.state === 'queue' || c.state === 'toRegister' || c.state === 'atRegister' || c.state === 'waitFood')) f *= 1.5;
+    if (d.effects?.includes('aura') && Math.hypot(k.x - c.x, k.z - c.z) < (d.aura ?? 3)) f *= 1.8;
+  }
+  return f;
+}
+
+/** Periodic effects while he is at it; runs out of time = the store loses. */
+function sigTick(w: World, c: Customer, d: SigKarenDef, dt: number) {
+  c.life -= dt; c.knockTimer -= dt;
+  if (c.knockTimer <= 0) {
+    c.knockTimer = d.every ?? 5;
+    adjChaos(w, 1);
+    for (const e of d.effects ?? []) {
+      if (e === 'stock') {
+        const own = c.eatShelf && d.spot === 'shelf' ? c.eatShelf : null;
+        const stocked = PRODUCTS.filter(p => w.shelves[p] > 0);
+        const p = own && w.shelves[own] > 0 ? own : own ? null : stocked.length ? pick(w, stocked) : null;
+        if (p) { w.shelves[p]--; if (d.tpl === 'sneak') c.eaten.push(p); ev(w, { e: 'sfx', name: 'knock', x: c.x, z: c.z }); }
+        else if (own && c.state === 'camp') { c.state = 'toCamp'; setGoal(c, sigSpot(w, c, d)); } // shelf is empty: move on to the next one
+      }
+      if (e === 'mess') addSpill(w, c.x, c.z);
+      if (e === 'money') w.money -= d.drain ?? 2;
+    }
+  }
+  if (c.life <= 0) sigFail(w, c, d);
+}
+
+function sigFail(w: World, c: Customer, d: SigKarenDef) {
+  let lost = d.failMoney ?? 0;
+  if (d.tpl === 'sneak') lost += c.eaten.reduce((s, p) => s + PRODUCT_INFO[p].price, 0);
+  if (lost) w.money -= lost;
+  if (d.tpl === 'haggle') { addSpill(w, c.x, c.z); addSpill(w, c.x, c.z); ev(w, { e: 'sfx', name: 'crash', x: c.x, z: c.z }); }
+  failKaren(w, c, -0.25, 8, `${d.fail}${lost ? `（損失 $${lost}）` : ''}`);
+  leave(w, c, true);
+}
+
+/** Template behaviour; returns true when it took care of this tick. */
+function sigUpdate(w: World, c: Customer, dt: number, arrived: boolean): boolean {
+  const d = SIG_KARENS[c.kind as keyof typeof SIG_KARENS];
+  switch (c.state) {
+    case 'toCamp':
+      if (arrived) { c.state = 'camp'; c.yaw = d.spot === 'shelf' ? faceShelf(c) : faceDecor(c); }
+      return true;
+    case 'camp': sigTick(w, c, d, dt); return true;
+    case 'wander': case 'flee': {
+      if (d.tpl !== 'roam') return false;
+      sigTick(w, c, d, dt);
+      if (c.resolved) return true;
+      if (d.flee && c.state === 'wander') {
+        const near = nearestPlayer(w, c);
+        if (near && near.d < 2.4) { c.state = 'flee'; c.speed = 2.3; setGoal(c, fleeSpot(w, c, near.p)); return true; }
+      }
+      if (arrived) { c.state = 'wander'; c.speed = 1.7; setGoal(c, randomWanderSpot(w)); }
+      return true;
+    }
+    case 'toComplain': if (arrived) { c.state = 'complain'; c.yaw = 0; } return true;
+    case 'complain': c.life -= dt; if (c.life <= 0) sigFail(w, c, d); return true;
+    case 'atRegister':
+      if (d.tpl === 'haggle') {
+        c.anger += (d.heatRate ?? 3) * dt * w.cfg.mods.angerRate;
+        if (c.anger >= 100) { c.anger = 100; sigFail(w, c, d); return true; }
+      } else if (d.tpl === 'till') {
+        c.life -= dt;
+        if (c.life <= 0) { sigFail(w, c, d); return true; }
+      }
+      return false;
+  }
+  return false;
+}
+
+/** The main action (alt = the second choice). Validated by check(). */
+function sigAct(w: World, p: PlayerState, c: Customer, alt: boolean) {
+  const d = SIG_KARENS[c.kind as keyof typeof SIG_KARENS];
+  ev(w, { e: 'sfx', name: 'calm', x: c.x, z: c.z });
+  if (alt) {
+    if (d.altCost) w.money -= d.altCost;
+    if (d.altNeed) { takeFood(p, d.altNeed); c.want = d.altNeed; c.foodDone = true; }
+    sigResolve(w, p, c, d, 0.05, `${d.icon} ${p.name}「${d.alt}」——${d.ok}（口碑 +0.05）`);
+    return;
+  }
+  c.hits++;
+  if (d.need === 'coffee' || d.need === 'meal') { takeFood(p, d.need); c.want = d.need; c.foodDone = true; }
+  if (d.need === 'box' && p.held?.kind === 'box') {
+    const n = Math.min(2, p.held.qty);
+    for (let i = 0; i < n; i++) c.items.push(p.held.product);
+    p.held.qty -= n; if (p.held.qty <= 0) p.held = null;
+  }
+  if (d.tpl === 'haggle') c.anger = Math.max(0, c.anger - (d.heatDrop ?? 30));
+  const need = d.presses ?? 1;
+  if (c.hits < need) {
+    toast(w, `${d.icon} ${(d.step ?? '還要再 {n} 次').replace('{n}', String(need - c.hits))}`, 'info');
+    if (d.relocate && (d.tpl === 'camp' || d.tpl === 'sneak')) { c.state = 'toCamp'; setGoal(c, sigSpot(w, c, d)); }
+    else if (d.tpl === 'roam') { c.state = 'wander'; setGoal(c, randomWanderSpot(w)); }
+    return;
+  }
+  const rating = d.need ? 0.15 : 0.1;
+  sigResolve(w, p, c, d, rating, `${d.icon} ${p.name}：${d.ok}（口碑 +${rating}）`);
+}
+
+function sigResolve(w: World, p: PlayerState, c: Customer, d: SigKarenDef, rating: number, text: string) {
+  resolveKaren(w, c, p, rating, text);
+  c.anger = 0;
+  c.patienceMax = (55 + w.rating * 6) * w.cfg.mods.patience; c.patience = c.patienceMax;
+  if (d.tpl === 'till' || d.tpl === 'haggle' || d.tpl === 'redo') return; // stays in line / keeps waiting, now an ordinary customer
+  if (d.tpl === 'refund') { leave(w, c, false); return; }
+  if (d.tpl === 'sneak') { c.items.push(...c.eaten); c.eaten = []; if (!c.items.length) c.items.push(c.eatShelf ?? pick(w, PRODUCTS)); }
+  else if (d.buys && !c.items.length && !c.foodDone) c.items.push(c.eatShelf ?? pick(w, PRODUCTS));
+  if (c.items.length || c.foodDone) joinQueue(w, c, false); else leave(w, c, false);
+}
+
+function faceDecor(c: Customer) {
+  let best = c.yaw, bd = Infinity;
+  for (const b of [...DECOR, ...SHELVES.map(s => s.box)]) {
+    const d = distToAABB(c.x, c.z, b);
+    if (d < bd) { bd = d; const cx = Math.min(Math.max(c.x, b.x0), b.x1), cz = Math.min(Math.max(c.z, b.z0), b.z1); best = Math.atan2(cx - c.x, cz - c.z); }
+  }
+  return best;
+}
+
+/** For the overhead bar: states in which his countdown is running. */
+function sigBarState(c: Customer) { return c.state === 'camp' || c.state === 'wander' || c.state === 'flee' || c.state === 'complain' || c.state === 'atRegister'; }
+
 // ---------------- actions ----------------
 function targetDist(w: World, p: PlayerState, t: Target): number {
   switch (t.t) {
@@ -750,6 +929,7 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
       const cc = id != null ? customer(w, id) : undefined;
       if (!cc || cc.state !== 'atRegister') return { ok: false, reason: '沒有顧客等待結帳' };
       if (cc.kind === 'custom' && !cc.resolved) return { ok: false, reason: '他還在改單！先對他「複誦點單」' };
+      if (isSig(cc.kind) && !cc.resolved && (SIG_KARENS[cc.kind].tpl === 'till' || SIG_KARENS[cc.kind].tpl === 'haggle')) return { ok: false, reason: `${SIG_KARENS[cc.kind].name}還卡著！先對他「${SIG_KARENS[cc.kind].act}」` };
       if (p.held && !isFood(p.held)) return { ok: false, reason: '手上有東西' };
       return { ok: true, dur: checkoutTime(w.upgrades.scanner) * m.checkout };
     }
@@ -842,6 +1022,21 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
       if (!c || c.kind !== 'charger' || c.resolved) return { ok: false, reason: '不需要' };
       if (p.held?.kind !== 'coffee' && p.held2?.kind !== 'coffee') return { ok: false, reason: CURRENT_MAP.coffee ? `先去${FOOD_INFO.coffee.verb}` : '這間店沒有飲料可以請他' };
       return { ok: true, dur: 0.3 };
+    case 'sigAct': case 'sigAlt': {
+      if (!c || c.resolved) return { ok: false, reason: '不需要' };
+      const d = sigDef(c.kind);
+      if (!d) return { ok: false, reason: '不需要' };
+      const wait = sigWaitReason(c.kind, c.state);
+      if (wait) return { ok: false, reason: wait };
+      if (kind === 'sigAct') {
+        if (d.need && !holds(p, d.need)) return { ok: false, reason: `先拿${needName(d.need)}過來` };
+        return { ok: true, dur: (d.dur ?? 1.2) / m.calm };
+      }
+      if (!d.alt) return { ok: false, reason: '沒有別的辦法' };
+      if (d.altNeed && !holds(p, d.altNeed)) return { ok: false, reason: `先拿${needName(d.altNeed)}過來` };
+      if (d.altCost && w.money < d.altCost) return { ok: false, reason: '錢不夠' };
+      return { ok: true, dur: 0.3 };
+    }
     case 'pickup': {
       if (t.t !== 'item') return { ok: false, reason: '目標錯誤' };
       const it = w.items.find(i => i.id === t.id);
@@ -906,6 +1101,17 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
           break;
         }
         resolveKaren(w, c!, p, 0.12, `🧋 第二杯終於對了！改單達人滿意地去結帳（口碑 +0.12）`);
+      }
+      if (isSig(c!.kind) && !c!.resolved) {
+        const d = SIG_KARENS[c!.kind];
+        c!.hits++;
+        if (c!.hits <= (d.rejects ?? 0)) {
+          c!.timer = c!.patienceMax; // wants it redone
+          toast(w, `${d.icon} ${(d.step ?? '').replace('{n}', String((d.rejects ?? 0) + 1 - c!.hits))}`, 'info');
+          ev(w, { e: 'sfx', name: 'deliver', x: c!.x, z: c!.z });
+          break;
+        }
+        resolveKaren(w, c!, p, 0.12, `${d.icon} ${d.ok}（口碑 +0.12）`);
       }
       c!.foodDone = true; c!.mood = Math.min(100, c!.mood + 10);
       ev(w, { e: 'sfx', name: 'deliver', x: c!.x, z: c!.z });
@@ -1015,6 +1221,8 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
       ev(w, { e: 'sfx', name: 'deliver', x: c!.x, z: c!.z });
       leave(w, c!, false);
       break;
+    case 'sigAct': sigAct(w, p, c!, false); break;
+    case 'sigAlt': sigAct(w, p, c!, true); break;
     case 'checkBag':
       c!.items = c!.eaten.length ? [...c!.eaten] : [pick(w, PRODUCTS)]; c!.eaten = [];
       resolveKaren(w, c!, p, 0.1, `🧾 ${p.name} 抓到偷吃奧客，他要去結帳了`);
@@ -1462,7 +1670,7 @@ export function tick(w: World, dt: number) {
 
 export function snapshot(w: World, now: number): Snapshot {
   const reveal = (c: Customer) => {
-    if (c.kind !== 'hog' || c.resolved) return true;
+    if ((c.kind !== 'hog' && !sigDef(c.kind)?.hidden) || c.resolved) return true;
     if (w.upgrades.camera > 0) return true;
     for (const p of w.players.values()) if (Math.hypot(p.x - c.x, p.z - c.z) < 4) return true;
     return false;
@@ -1481,12 +1689,13 @@ export function snapshot(w: World, now: number): Snapshot {
       busy: p.busy ? { kind: p.busy.kind, p: Math.min(1, (w.time - p.busy.start) / p.busy.dur) } : null,
     })),
     customers: w.customers.map(c => ({
-      id: c.id, kind: c.kind, x: r2(c.x), z: r2(c.z), yaw: r2(c.yaw), state: c.state,
-      patience: Math.max(0, Math.min(1, c.state === 'waitFood' ? c.timer / c.patienceMax : c.kind === 'charger' ? c.life / 75 : c.patience / c.patienceMax)),
+      id: c.id, kind: c.kind, x: r2(c.x), z: r2(c.z), yaw: r2(c.yaw), state: c.state === 'camp' && sigDef(c.kind)?.sit ? 'charge' : c.state,
+      patience: Math.max(0, Math.min(1, c.state === 'waitFood' ? c.timer / c.patienceMax : c.kind === 'charger' ? c.life / 75
+        : c.lifeMax && !c.resolved && sigBarState(c) ? c.life / c.lifeMax : c.patience / c.patienceMax)),
       anger: Math.round(c.anger), resolved: c.resolved, revealed: reveal(c), items: c.items.length,
       want: c.want && !c.foodDone && !c.foodFailed ? c.want : null, look: c.look, moving: c.moving,
       y: c.fly ? r2(c.fly.y) : c.state === 'held' ? 0.25 : 0, held: c.state === 'held', flying: !!c.fly, down: c.downT ? r2(c.downT) : 0,
-      heavy: !!c.heavy, vip: !!c.vip && near4(c), stun: c.stunT ? r2(c.stunT) : 0, violent: c.kind !== 'normal' && !c.resolved && isViolent(w, c), phase: c.kind === 'charger' || c.kind === 'fickle' ? c.hits : c.phase,
+      heavy: !!c.heavy, vip: !!c.vip && near4(c), stun: c.stunT ? r2(c.stunT) : 0, violent: c.kind !== 'normal' && !c.resolved && isViolent(w, c), phase: c.kind === 'charger' || c.kind === 'fickle' || isSig(c.kind) ? c.hits : c.phase,
     })),
     spills: w.spills.map(s => ({ id: s.id, x: r2(s.x), z: r2(s.z) })),
     items: w.items.map(i => ({ id: i.id, x: r2(i.x), z: r2(i.z), held: i.held })),

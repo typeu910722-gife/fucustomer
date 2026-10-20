@@ -7,19 +7,23 @@ import { PRODUCT_INFO } from '../../shared/constants.ts';
 import { CURRENT_MAP } from '../../shared/map.ts';
 import type { CustomerSnap, Held } from '../../shared/protocol.ts';
 import type { Quality } from './storage.ts';
+import { INK, Label, UI_FONT, roundRect } from './labels.ts';
 
 // ---------- canvas text ----------
+export { Label, roundRect };
+/** Text on a flat rounded panel (wall signs, posters). Uses the UI font (see labels.ts for the font-ready refresh). */
 export function textCanvas(lines: { text: string; color?: string; size?: number; bold?: boolean }[], w = 512, h = 128, bg = 'rgba(15,16,26,0.82)', bar?: { v: number; color: string }) {
   const c = document.createElement('canvas'); c.width = w; c.height = h;
   const g = c.getContext('2d')!;
-  if (bg) { g.fillStyle = bg; roundRect(g, 4, 4, w - 8, h - 8, 26); g.fill(); }
+  // cartoon panel: thick ink outline like the 2D UI
+  if (bg) { g.fillStyle = bg; roundRect(g, 5, 5, w - 10, h - 10, 26); g.fill(); g.lineWidth = 8; g.strokeStyle = INK; roundRect(g, 5, 5, w - 10, h - 10, 26); g.stroke(); }
   const total = lines.reduce((s, l) => s + (l.size ?? 44) * 1.15, 0) + (bar ? 22 : 0);
   let y = (h - total) / 2;
   for (const l of lines) {
     const size = l.size ?? 44;
-    g.font = `${l.bold === false ? 600 : 900} ${size}px "Noto Sans TC","PingFang TC","Microsoft JhengHei",sans-serif`;
+    g.font = `${l.bold === false ? 600 : 900} ${size}px ${UI_FONT}`;
     g.fillStyle = l.color ?? '#fff'; g.textAlign = 'center'; g.textBaseline = 'top';
-    g.fillText(l.text, w / 2, y + size * 0.05); y += size * 1.15;
+    g.fillText(l.text, w / 2, y + size * 0.05, w - 24); y += size * 1.15;
   }
   if (bar) {
     g.fillStyle = 'rgba(255,255,255,0.2)'; roundRect(g, 40, y + 4, w - 80, 14, 7); g.fill();
@@ -27,38 +31,7 @@ export function textCanvas(lines: { text: string; color?: string; size?: number;
   }
   return c;
 }
-export function roundRect(g: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  g.beginPath(); g.moveTo(x + r, y); g.arcTo(x + w, y, x + w, y + h, r); g.arcTo(x + w, y + h, x, y + h, r); g.arcTo(x, y + h, x, y, r); g.arcTo(x, y, x + w, y, r); g.closePath();
-}
 export const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
-
-const labelCache = new Map<string, THREE.CanvasTexture>();
-
-export class Label {
-  sprite: THREE.Sprite; key = ''; private tex: THREE.CanvasTexture | null = null;
-  constructor(public scaleW = 1.4, public scaleH = 0.35) {
-    this.sprite = new THREE.Sprite(new THREE.SpriteMaterial({ depthTest: true, transparent: true }));
-    this.sprite.scale.set(scaleW, scaleH, 1);
-    this.sprite.renderOrder = 10;
-    this.sprite.visible = false; // an unset label would render as a white square
-  }
-  set(key: string, draw: () => HTMLCanvasElement) {
-    if (key === this.key) return;
-    this.key = key;
-    if (!key) { this.sprite.visible = false; return; }
-    this.sprite.visible = true;
-    // label textures are cached by content and shared between characters (no canvas redraw/upload per change)
-    let tex = labelCache.get(key);
-    if (!tex) {
-      tex = new THREE.CanvasTexture(draw()); tex.colorSpace = THREE.SRGBColorSpace;
-      labelCache.set(key, tex);
-      if (labelCache.size > 300) { const k = labelCache.keys().next().value!; labelCache.get(k)!.dispose(); labelCache.delete(k); }
-    }
-    this.tex = tex;
-    (this.sprite.material as THREE.SpriteMaterial).map = this.tex;
-    (this.sprite.material as THREE.SpriteMaterial).needsUpdate = true;
-  }
-}
 
 // ---------- shared materials & geometries ----------
 type MatOpts = { emissive?: number; rough?: number; metal?: number; transparent?: boolean; opacity?: number };
@@ -190,15 +163,17 @@ const onHead = (x: number, y: number, r = HEAD_R) => Math.sqrt(Math.max(0, r * r
 export class Human {
   group = new THREE.Group();
   body: THREE.Mesh; head: THREE.Mesh; legL: THREE.Group; legR: THREE.Group; armL: THREE.Group; armR: THREE.Group;
-  hand: THREE.Group; label = new Label(); icon = new Label(1.7, 0.55);
+  hand: THREE.Group;
+  /** Name tag (staff) and status / karen tag (customers); both shrink when close and fade right in front of the camera. */
+  label = new Label({ k: 0.0026, maxScreen: 0.045, fade: [0.9, 1.9], fadeMin: 0.15 }); icon = new Label({ k: 0.0026, maxScreen: 0.05, fade: [0.9, 2.1], fadeMin: 0.15 });
   phase = 0; heldKey = ''; private t = Math.random() * 10;
-  private mouth: THREE.Mesh; private browL: THREE.Mesh; private browR: THREE.Mesh; private basket: THREE.Object3D | null = null;
+  private face: THREE.Mesh; private faceKey = ''; private basket: THREE.Object3D | null = null;
   private torso = new THREE.Group();
   constructor(q: Quality, opts: Look) {
     const g = this.group;
     const lo = q === 'low';
     const seg = lo ? 8 : 12;
-    const skinM = mat(opts.skin, q), shirtM = mat(opts.shirt, q), pantsM = mat(opts.pants, q), hairM = mat(opts.hair, q, { rough: 0.6 });
+    const skinM = mat(opts.skin, q), shirtM = mat(opts.shirt, q), pantsM = mat(opts.pants, q), hairM = mat(opts.hair, q);
     const shoeM = mat(opts.apron ? 0x343a40 : [0x343a40, 0xf8f9fa, 0x862e9c, 0xc92a2a][(opts.shirt >> 5) % 4], q);
     const soleM = mat(0xf1f3f5, q);
     const w = opts.build ?? 1, zs = 0.78 * Math.sqrt(w), lw = Math.sqrt(w);
@@ -259,9 +234,6 @@ export class Human {
       put(H, SPH(0.014, 6, 4), white, x + 0.014, eyeY + 0.02, onHead(x, eyeY) + 0.008);
       put(H, SPH(0.05, 8, 5), basic(0xff9eaa), s * 0.19, -0.085, onHead(s * 0.19, -0.085) - 0.018, 0, s * 0.5, 0, 1.1, 0.55, 0.35); // blush
     }
-    this.browL = put(H, RB(0.075, 0.02, 0.02, 0.008), dark, -eyeX, 0.075, onHead(eyeX, 0.075) + 0.004);
-    this.browR = put(H, RB(0.075, 0.02, 0.02, 0.008), dark, eyeX, 0.075, onHead(eyeX, 0.075) + 0.004);
-    this.mouth = put(H, geo('mouth', () => new THREE.SphereGeometry(0.036, 8, 6).scale(1.2, 0.38, 0.5)), basic(0x8c2f39), 0, -0.13, onHead(0, -0.13) - 0.002);
     // hair
     const hs = opts.hairStyle;
     if (hs !== 2) {
@@ -302,7 +274,11 @@ export class Human {
       put(H, TOR(HEAD_R + 0.04, 0.02, 4, 16, Math.PI), hm, 0, 0.0, 0);
       for (const s of [-1, 1]) put(H, CYL(0.075, 0.075, 0.07, 10), mat(0xff6b6b, q), s * (HEAD_R + 0.02), -0.01, 0, 0, 0, Math.PI / 2);
     }
+    if (opts.apron) staffHat(q, H);
     this.mergeStaticParts();
+    // brows + mouth: one mesh whose (shared, cached) geometry is swapped per expression
+    this.face = new THREE.Mesh(faceGeo('0|0|1|1'), vertexColorMat(basic(0))!);
+    this.face.position.set(0, HEAD_Y, 0); this.torso.add(this.face);
     this.hand = new THREE.Group(); this.hand.position.set(0, 0.78, 0.36); this.hand.scale.setScalar(0.85); g.add(this.hand);
     this.label.sprite.position.y = LABEL_Y; g.add(this.label.sprite);
     this.icon.sprite.position.y = ICON_Y; g.add(this.icon.sprite);
@@ -311,15 +287,15 @@ export class Human {
   }
   /**
    * Merge the torso + head + hair + accessories into one mesh per material.
-   * Arms, brows and mouth stay separate (they animate); `head` becomes an empty anchor for later accessories.
+   * Arms, legs and the face stay separate (they animate); `head` becomes an empty anchor for later accessories.
    */
   private mergeStaticParts() {
     const t = this.torso;
     const headPos = this.head.position.clone();
-    for (const keep of [this.browL, this.browR, this.mouth]) { keep.position.add(headPos); t.add(keep); }
-    mergeInto(t, new Set([this.armL, this.armR, this.browL, this.browR, this.mouth]));
-    for (const lg of [this.legL, this.legR]) mergeInto(lg);
-    for (const ag of [this.armL, this.armR]) mergeInto(ag);
+    // characters don't cast real shadows (a blob shadow under them is far cheaper); see StoreView
+    mergeInto(t, new Set([this.armL, this.armR]), false);
+    for (const lg of [this.legL, this.legR]) mergeInto(lg, new Set(), false);
+    for (const ag of [this.armL, this.armR]) mergeInto(ag, new Set(), false);
     this.head = new THREE.Mesh(); this.head.position.copy(headPos); t.add(this.head);
   }
 
@@ -332,6 +308,7 @@ export class Human {
     put(b, TOR(0.1, 0.012, 4, 10, Math.PI), mat(0xe03131, q), 0, -0.39, 0.02);
     put(b, RB(0.1, 0.08, 0.1, 0.02), mat(0x74c0fc, q), -0.05, -0.36, 0.02);
     put(b, CYL(0.035, 0.035, 0.12, 8), mat(0xffd43b, q), 0.07, -0.35, 0.02);
+    mergeInto(b, new Set(), false);
     this.armL.add(b); this.basket = b;
   }
   animate(dt: number, moving: boolean, speed = 1, pose: Pose = 'normal') {
@@ -344,14 +321,15 @@ export class Human {
     this.torso.position.y = Math.abs(Math.sin(this.phase)) * (moving ? 0.05 : 0) + breathe;
     this.torso.rotation.z = moving ? Math.sin(this.phase) * 0.06 : 0;
     this.armL.rotation.z = -0.12; this.armR.rotation.z = 0.12;
-    this.mouth.scale.set(1, 1, 1); this.browL.rotation.z = 0; this.browR.rotation.z = 0;
-    if (this.heldKey) { this.armL.rotation.x = -1.2; this.armR.rotation.x = -1.2; return; }
+    // expression: brow tilt (left, right) and mouth stretch (x, y)
+    let face: Face = [0, 0, 1, 1];
+    if (this.heldKey) { this.armL.rotation.x = -1.2; this.armR.rotation.x = -1.2; this.setFace(face); return; }
     switch (pose) {
       case 'angry': { // stomping, arms shaking in the air
         const sh = Math.sin(this.t * 22) * 0.25;
         this.armL.rotation.x = -2.6 + sh; this.armR.rotation.x = -2.6 - sh; this.armL.rotation.z = -0.3; this.armR.rotation.z = 0.3;
         this.torso.rotation.z = Math.sin(this.t * 14) * 0.05;
-        this.browL.rotation.z = -0.5; this.browR.rotation.z = 0.5; this.mouth.scale.set(0.7, 3.5, 1);
+        face = [-0.5, 0.5, 0.7, 3.5];
         if (!moving) { this.legL.rotation.x = Math.max(0, Math.sin(this.t * 10)) * 0.4; }
         break;
       }
@@ -359,23 +337,28 @@ export class Human {
         this.armL.rotation.x = -1.6 + Math.sin(this.t * 25) * 0.6; this.armR.rotation.x = -1.6 + Math.cos(this.t * 25) * 0.6;
         this.armL.rotation.z = -0.9; this.armR.rotation.z = 0.9;
         this.legL.rotation.x = Math.sin(this.t * 30) * 0.8; this.legR.rotation.x = -Math.sin(this.t * 30) * 0.8;
-        this.mouth.scale.set(1.2, 4, 1); this.browL.rotation.z = 0.4; this.browR.rotation.z = -0.4;
+        face = [0.4, -0.4, 1.2, 4];
         break;
       }
-      case 'pay': this.armR.rotation.x = -1.3 + Math.sin(this.t * 3) * 0.08; this.armL.rotation.x = -s * 0.8; this.mouth.scale.set(1.3, 1.6, 1); break;
+      case 'pay': this.armR.rotation.x = -1.3 + Math.sin(this.t * 3) * 0.08; this.armL.rotation.x = -s * 0.8; face = [0, 0, 1.3, 1.6]; break;
       case 'dazed': // flat on the pavement, limbs out, swirly-eyed
         this.armL.rotation.z = -1.2 + Math.sin(this.t * 3) * 0.1; this.armR.rotation.z = 1.2 - Math.sin(this.t * 3) * 0.1;
-        this.legL.rotation.z = -0.25; this.legR.rotation.z = 0.25; this.mouth.scale.set(1.3, 2.2, 1);
-        this.browL.rotation.z = 0.5; this.browR.rotation.z = -0.5; break;
+        this.legL.rotation.z = -0.25; this.legR.rotation.z = 0.25; face = [0.5, -0.5, 1.3, 2.2]; break;
       case 'sitAngry': // just got unplugged: legs out, shaking a fist at you
         this.legL.rotation.x = -1.45; this.legR.rotation.x = -1.4; this.armR.rotation.x = -2.4 + Math.sin(this.t * 18) * 0.3; this.armL.rotation.x = -0.9;
-        this.mouth.scale.set(0.8, 3, 1); this.browL.rotation.z = -0.5; this.browR.rotation.z = 0.5; break;
+        face = [-0.5, 0.5, 0.8, 3]; break;
       case 'sit': // on the floor, legs out, staring at the phone
         this.legL.rotation.x = -1.45; this.legR.rotation.x = -1.4; this.armR.rotation.x = -1.1; this.armL.rotation.x = -0.9; this.armL.rotation.z = 0.25;
-        this.mouth.scale.set(1.1, 0.8, 1); this.browL.rotation.z = 0.15; this.browR.rotation.z = -0.15; break;
-      case 'film': this.armR.rotation.x = -1.9; this.armL.rotation.x = -s * 0.6; this.mouth.scale.set(1.4, 2.5, 1); break;
+        face = [0.15, -0.15, 1.1, 0.8]; break;
+      case 'film': this.armR.rotation.x = -1.9; this.armL.rotation.x = -s * 0.6; face = [0, 0, 1.4, 2.5]; break;
       default: this.armL.rotation.x = -s * 0.8; this.armR.rotation.x = s * 0.8 + (moving ? 0 : Math.sin(this.t * 1.3) * 0.04);
     }
+    this.setFace(face);
+  }
+  private setFace(f: Face) {
+    const key = f.join('|');
+    if (key === this.faceKey) return;
+    this.faceKey = key; this.face.geometry = faceGeo(key);
   }
   setHeld(q: Quality, held: Held | null) {
     const key = held ? (held.kind === 'box' ? 'box' + held.product : held.kind) : '';
@@ -383,6 +366,67 @@ export class Human {
     this.heldKey = key;
     this.hand.clear();
     if (held) this.hand.add(heldModel(q, held));
+  }
+}
+
+type Face = [number, number, number, number];
+const EYE_X = 0.115;
+/** Brows + mouth for an expression "browL|browR|mouthX|mouthY", in torso space relative to the head centre. Shared by everyone. */
+function faceGeo(key: string) {
+  return geo('face' + key, () => {
+    const [bl, br, mx, my] = key.split('|').map(Number);
+    const dark = new THREE.Color(0x2b2230), lip = new THREE.Color(0x8c2f39);
+    const part = (g: THREE.BufferGeometry, col: THREE.Color, m: THREE.Matrix4) => {
+      const c = g.clone().applyMatrix4(m);
+      for (const k of Object.keys(c.attributes)) if (!['position', 'normal', 'uv'].includes(k)) c.deleteAttribute(k);
+      paint(c, col); return c.index ? c.toNonIndexed() : c;
+    };
+    const m4 = (x: number, y: number, z: number, rz: number, sx = 1, sy = 1) =>
+      new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(0, 0, rz)), new THREE.Vector3(sx, sy, 1));
+    const brow = RB(0.075, 0.02, 0.02, 0.008), mouth = geo('mouth', () => new THREE.SphereGeometry(0.036, 8, 6).scale(1.2, 0.38, 0.5));
+    return mergeGeometries([
+      part(brow, dark, m4(-EYE_X, 0.075, onHead(EYE_X, 0.075) + 0.004, bl)),
+      part(brow, dark, m4(EYE_X, 0.075, onHead(EYE_X, 0.075) + 0.004, br)),
+      part(mouth, lip, m4(0, -0.13, onHead(0, -0.13) - 0.002, 0, mx, my)),
+    ], false)!;
+  });
+}
+
+/** Work hat for staff, in the map's colours: a different style per shop. Built in head space (merged with the head). */
+function staffHat(q: Quality, H: THREE.Object3D) {
+  const TH = CURRENT_MAP.theme, R = HEAD_R;
+  const acc = mat(TH.accent, q), wain = mat(TH.wainscot, q), white = mat(0xffffff, q);
+  switch (CURRENT_MAP.id) {
+    case 'breakfast': { // puffy little chef's toque with an accent band
+      put(H, CYL(R * 0.82, R * 0.86, 0.11, 14), white, 0, R * 0.78, -0.03, -0.22);
+      put(H, CYL(R * 0.87, R * 0.87, 0.045, 14), acc, 0, R * 0.7, -0.01, -0.22);
+      for (const [x, z, r] of [[0, -0.07, 0.17], [-0.12, -0.02, 0.13], [0.12, -0.02, 0.13], [0, 0.07, 0.13]]) put(H, SPH(r, 10, 8), white, x, R * 1.1 + 0.02, z - 0.04, 0, 0, 0, 1, 0.8, 1);
+      break;
+    }
+    case 'boba': { // sun visor: a band round the head + a wide brim, logo dot
+      put(H, CYL(R * 1.07, R * 1.07, 0.08, 16, true), acc, 0, R * 0.55, -0.02, -0.18);
+      put(H, geo('visorBrim', () => new THREE.CylinderGeometry(0.2, 0.2, 0.02, 14, 1, false, -1.2, 2.4).scale(1.3, 1, 1)), acc, 0, R * 0.52, R * 0.95, 0.12);
+      put(H, CYL(0.045, 0.045, 0.012, 10), mat(0xffffff, q), 0, R * 0.62, R * 1.02, Math.PI / 2 - 0.2);
+      break;
+    }
+    case 'clothing': { // slouchy beret with a stalk
+      put(H, SPH(R * 1.12, 14, 8), acc, 0.05, R * 0.75, -0.04, -0.15, 0, -0.18, 1.05, 0.38, 1.05);
+      put(H, CYL(0.018, 0.022, 0.05, 6), acc, 0.05, R * 1.2, -0.04, 0, 0, -0.2);
+      break;
+    }
+    case 'chicken': { // fast-food paper garrison cap with a stripe
+      put(H, geo('garrison', () => new THREE.CylinderGeometry(0.0, R * 0.95, 0.2, 4, 1).rotateY(Math.PI / 4).scale(0.7, 1, 1.25)), wain, 0, R * 0.92, -0.02, -0.12);
+      put(H, CYL(R * 1.02, R * 1.03, 0.07, 14, true), wain, 0, R * 0.64, -0.02, -0.15);
+      put(H, CYL(R * 1.04, R * 1.04, 0.025, 14, true), mat(TH.accent, q), 0, R * 0.66, -0.02, -0.15);
+      break;
+    }
+    default: { // convenience store: baseball cap in the store colour with a white front panel
+      put(H, DOME(R * 1.1, Math.PI * 0.42, 14, 4), acc, 0, 0.03, 0, -0.12);
+      put(H, RB(0.34, 0.03, 0.2, 0.012), acc, 0, 0.15, R + 0.02, 0.18);
+      put(H, SPH(0.03, 6, 4), acc, 0, R * 1.1 + 0.02, -0.04);
+      put(H, RB(0.15, 0.09, 0.02, 0.008), white, 0, R * 0.78, R * 0.73, -0.75);
+      put(H, CYL(0.025, 0.025, 0.01, 8), mat(TH.wainscot, q), 0, R * 0.79, R * 0.745, Math.PI / 2 - 0.75);
+    }
   }
 }
 
@@ -409,6 +453,7 @@ export function heldModel(q: Quality, held: Held): THREE.Object3D {
     put(g, RB(0.36, 0.08, 0.15, 0.03), mat(0x4dabf7, q), 0, -0.45, 0.42, 0.5);
     for (let i = 0; i < 5; i++) put(g, CAP(0.02, 0.12, 4), mat(0xf1f3f5, q), -0.14 + i * 0.07, -0.53, 0.47, 0.5);
   }
+  mergeInto(g, new Set(), false);
   return g;
 }
 let steam: THREE.MeshBasicMaterial | null = null;
@@ -498,7 +543,9 @@ export function karenAccessory(q: Quality, h: Human, kind: string) {
     put(h.armL, RB(0.24, 0.3, 0.04, 0.015), mat(0x63e6be, q), 0, -0.48, 0.12);
     put(h.armL, TOR(0.12, 0.01, 3, 10, Math.PI), basic(0xadb5bd), 0, -0.33, 0.12);
   }
-  if (extra.children.length) { h.head.add(extra); mergeInto(extra); }
+  if (extra.children.length) { h.head.add(extra); mergeInto(extra, new Set(), false); }
+  // props held in the hands: fold them into the arm meshes (one draw call per arm)
+  for (const a of [h.armL, h.armR]) if (a.children.length > 1) mergeInto(a, new Set(), false);
 }
 
 // ---------- props ----------

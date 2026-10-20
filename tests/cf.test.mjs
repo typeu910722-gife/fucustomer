@@ -13,6 +13,8 @@ import { mkdtempSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createServer } from 'node:http';
+import { generateKeyPairSync, sign } from 'node:crypto';
 import WebSocket from 'ws';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -23,11 +25,24 @@ const WS = HTTP.replace(/^http/, 'ws') + '/ws';
 const PERSIST = mkdtempSync(path.join(tmpdir(), 'bk-cf-'));
 let proc = null;
 
+// A local RSA key stands in for Google's sign-in keys (served as a JWKS by a tiny local HTTP server).
+const { privateKey, publicKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+const jwk = { ...publicKey.export({ format: 'jwk' }), kid: 'k1', alg: 'RS256', use: 'sig' };
+const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url');
+function idToken(claims, kid = 'k1', key = privateKey) {
+  const h = b64({ alg: 'RS256', kid, typ: 'JWT' }), p = b64(claims);
+  return `${h}.${p}.${sign('RSA-SHA256', Buffer.from(`${h}.${p}`), key).toString('base64url')}`;
+}
+const CLIENT_ID = 'client-1';
+const goodClaims = () => ({ sub: '1234567890', aud: CLIENT_ID, iss: 'https://accounts.google.com', exp: Math.floor(Date.now() / 1000) + 600, name: '王小明', email: 'x@example.com' });
+const jwksServer = createServer((req, res) => { res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'max-age=60' }); res.end(JSON.stringify({ keys: [jwk] })); });
+let JWKS_URL = '';
+
 async function startWrangler() {
   if (process.env.CF_URL) return;
   const bin = path.join(CF_DIR, 'node_modules', '.bin', 'wrangler');
   if (!existsSync(bin)) throw new Error('wrangler not installed: run `cd cloudflare && npm install` first');
-  proc = spawn(bin, ['dev', '--local', '--ip', '127.0.0.1', '--port', String(PORT), '--persist-to', PERSIST, '--log-level', 'warn', '--var', 'BK_TIME_SCALE:6'], {
+  proc = spawn(bin, ['dev', '--local', '--ip', '127.0.0.1', '--port', String(PORT), '--persist-to', PERSIST, '--log-level', 'warn', '--var', 'BK_TIME_SCALE:6', '--var', `GOOGLE_CLIENT_ID:${CLIENT_ID}`, '--var', `GOOGLE_CERTS_URL:${JWKS_URL}`], {
     cwd: CF_DIR, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' },
   });
@@ -107,15 +122,20 @@ async function start(cs) {
   cs[0].send({ type: 'start' });
   for (const c of cs) await c.until(() => !!c.me(), 8000, 'first snapshot');
 }
-async function api(method, p, body, token) {
+async function api(method, p, body, token, session) {
   const headers = { 'content-type': 'application/json' };
   if (token) headers['x-owner-token'] = token;
+  if (session) headers['x-session'] = session;
   const r = await fetch(HTTP + p, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: r.status, cors: r.headers.get('access-control-allow-origin'), data: await r.json().catch(() => ({})) };
 }
 
-before(async () => { await startWrangler(); });
-after(async () => { await stopWrangler(); });
+before(async () => {
+  await new Promise(r => jwksServer.listen(0, '127.0.0.1', r));
+  JWKS_URL = `http://127.0.0.1:${jwksServer.address().port}/certs`;
+  await startWrangler();
+});
+after(async () => { await stopWrangler(); jwksServer.close(); });
 
 test('health + CORS', async () => {
   const h = await api('GET', '/health');
@@ -267,8 +287,56 @@ test('five simulated players run a full co-op day; day-end save reaches every cl
   cs.forEach(c => c.close());
 });
 
+test('Google ID token check (WebCrypto port): signature, audience, issuer, expiry', async () => {
+  const { verifyGoogleIdToken } = await import('../cloudflare/src/auth.ts');
+  const keys = async () => [jwk];
+  const now = Date.now(), good = goodClaims();
+  assert.equal((await verifyGoogleIdToken(idToken(good), CLIENT_ID, keys, now))?.sub, '1234567890');
+  assert.equal(await verifyGoogleIdToken(idToken(good), 'other-client', keys, now), null, 'wrong audience');
+  assert.equal(await verifyGoogleIdToken(idToken({ ...good, iss: 'evil.com' }), CLIENT_ID, keys, now), null, 'wrong issuer');
+  assert.equal(await verifyGoogleIdToken(idToken({ ...good, exp: Math.floor(now / 1000) - 10 }), CLIENT_ID, keys, now), null, 'expired');
+  const other = generateKeyPairSync('rsa', { modulusLength: 2048 }).privateKey;
+  assert.equal(await verifyGoogleIdToken(idToken(good, 'k1', other), CLIENT_ID, keys, now), null, 'signed by someone else');
+  assert.equal(await verifyGoogleIdToken(idToken(good, 'nope'), CLIENT_ID, keys, now), null, 'unknown key id');
+  const [h, , sig] = idToken(good).split('.');
+  assert.equal(await verifyGoogleIdToken(`${h}.${b64({ ...good, sub: 'hacker' })}.${sig}`, CLIENT_ID, keys, now), null, 'tampered payload');
+  assert.equal(await verifyGoogleIdToken('garbage', CLIENT_ID, keys, now), null);
+  assert.equal(await verifyGoogleIdToken(idToken(good), '', keys, now), null, 'sign-in off without a client id');
+});
+
+test('Google sign-in + licence cards over HTTP (worker + LicenseDO)', { skip: !!process.env.CF_URL }, async () => {
+  assert.equal((await api('GET', '/api/auth/config')).data.googleClientId, CLIENT_ID);
+  assert.equal((await api('POST', '/api/auth/google', { credential: 'garbage' })).status, 401);
+  assert.equal((await api('POST', '/api/auth/google', { credential: idToken({ ...goodClaims(), aud: 'x' }) })).status, 401);
+  const a = await api('POST', '/api/auth/google', { credential: idToken(goodClaims()) });
+  assert.equal(a.status, 200);
+  assert.match(a.data.no, /^\d{4}-\d{4}$/);
+  const again = await api('POST', '/api/auth/google', { credential: idToken(goodClaims()) });
+  assert.equal(again.data.no, a.data.no, 'same account, same licence');
+  assert.notEqual(again.data.session, a.data.session);
+  assert.equal((await api('PUT', '/api/license', { level: 9 }, undefined, 'bad')).status, 401);
+  const u = await api('PUT', '/api/license', { name: '社畜<b>', level: 28, rank: '區域督導', stars: 40, quote: '上班好累' }, undefined, a.data.session);
+  assert.equal(u.status, 200); assert.equal(u.data.name, '社畜b'); assert.equal(u.data.level, 28);
+  const pub = await api('GET', `/api/license/${a.data.no}`);
+  assert.equal(pub.status, 200); assert.equal(pub.data.level, 28);
+  const text = JSON.stringify(pub.data);
+  assert.ok(!text.includes('1234567890') && !text.includes('session') && !text.includes('owner') && !text.includes('example.com'), 'public card has no private data');
+  assert.equal((await api('GET', '/api/license/0000-0000')).status, 404);
+  assert.equal((await api('GET', '/api/license/junk')).status, 404);
+  assert.equal((await api('POST', '/api/auth/logout', {}, undefined, a.data.session)).status, 200);
+  assert.equal((await api('PUT', '/api/license', { level: 1 }, undefined, a.data.session)).status, 401, 'logged-out session no longer works');
+  assert.equal((await api('PUT', '/api/license', { level: 30 }, undefined, again.data.session)).status, 200, 'other device still signed in');
+  // up to 5 devices: after 5 more sign-ins the oldest remaining session is dropped
+  for (let i = 0; i < 5; i++) await api('POST', '/api/auth/google', { credential: idToken(goodClaims()) });
+  assert.equal((await api('PUT', '/api/license', { level: 31 }, undefined, again.data.session)).status, 401, 'oldest of >5 sessions dropped');
+  const b = await api('POST', '/api/auth/google', { credential: idToken({ ...goodClaims(), sub: '999', name: '別人' }) });
+  assert.notEqual(b.data.no, a.data.no);
+  assert.equal(b.data.card.name, '別人');
+});
+
 test('restart: room restored from the SQLite checkpoint, player rejoins with token', { timeout: 120_000, skip: !!process.env.CF_URL }, async () => {
   const up = await api('POST', '/api/stores', { name: '持久店', money: 100 });
+  const lic = await api('POST', '/api/auth/google', { credential: idToken({ ...goodClaims(), sub: 'persist-1' }) });
   const [a, b] = await room(2, { difficulty: 'hard' });
   await start([a, b]);
   const code = a.code, token = a.token, id = a.playerId, day = a.snap.day;
@@ -277,6 +345,9 @@ test('restart: room restored from the SQLite checkpoint, player rejoins with tok
   await startWrangler();
   // friend store survived
   assert.equal((await api('GET', `/api/stores/${up.data.code}`)).data.name, '持久店');
+  // licence card and its session survived
+  assert.equal((await api('GET', `/api/license/${lic.data.no}`)).status, 200);
+  assert.equal((await api('PUT', '/api/license', { level: 5 }, undefined, lic.data.session)).data.level, 5);
   const a2 = new Client('a2'); await a2.connect();
   a2.send({ type: 'join', code, name: '', token });
   await a2.until(() => !!a2.me(), 10000, 'restored snapshot');

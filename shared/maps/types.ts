@@ -78,6 +78,8 @@ export interface MapDef {
   karens?: import('../constants.ts').KarenKind[];
   /** Where 試穿狂 stands (in front of a fitting room); needed only if the map uses that karen. */
   tryOnSpots?: Pt[];
+  /** Where squatting store karens (試吃狂, 一杯坐整天, 器材霸主…) settle in: next to tables, sample stands, machines. Default: wander spots. */
+  campSpots?: Pt[];
   playerSpawns: Pt[];
   /** Open floor spots where wandering karens stroll to. */
   wander: Pt[];

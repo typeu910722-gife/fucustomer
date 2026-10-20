@@ -13,7 +13,9 @@ export type CustomerKind = 'normal' | KarenKind;
 
 export type ActKind =
   | 'checkout' | 'brew' | 'deliver' | 'takeBox' | 'stock' | 'returnBox' | 'takeMop' | 'returnMop'
-  | 'clean' | 'calm' | 'coupon' | 'askQueue' | 'stopFilm' | 'checkBag' | 'pickup' | 'heat' | 'grab' | 'stopLitter' | 'unplug' | 'treat' | 'repeatOrder' | 'recommend' | 'limitTry' | 'knock' | 'heckle';
+  | 'clean' | 'calm' | 'coupon' | 'askQueue' | 'stopFilm' | 'checkBag' | 'pickup' | 'heat' | 'grab' | 'stopLitter' | 'unplug' | 'treat' | 'repeatOrder' | 'recommend' | 'limitTry' | 'knock' | 'heckle'
+  /** Store-signature karens (sigkarens.ts): main action and the alternative choice. */
+  | 'sigAct' | 'sigAlt';
 
 /** A target is either a static fixture or a dynamic entity id. */
 export type Target =

@@ -10,15 +10,18 @@
   "durable_objects": {
     "bindings": [
       { "name": "ROOMS", "class_name": "RoomDO" },
-      { "name": "STORES", "class_name": "StoreDO" }
+      { "name": "STORES", "class_name": "StoreDO" },
+      { "name": "LICENSES", "class_name": "LicenseDO" }
     ]
   },
   // Workers Free plan only allows SQLite-backed Durable Objects.
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["RoomDO", "StoreDO"] }
+    { "tag": "v1", "new_sqlite_classes": ["RoomDO", "StoreDO", "LicenseDO"] }
   ],
   "vars": {
     // Test-only time fast-forward for the simulation. Keep "1" in production.
-    "BK_TIME_SCALE": "1"
+    "BK_TIME_SCALE": "1",
+    // Public Google OAuth web client ID (not a secret). Empty = Google sign-in off.
+    "GOOGLE_CLIENT_ID": ""
   }
 }

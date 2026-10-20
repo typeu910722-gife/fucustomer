@@ -1,9 +1,15 @@
 import type { RoomDO } from './room-do.ts';
 import type { StoreDO } from './store-do.ts';
+import type { LicenseDO } from './license-do.ts';
 
 export interface Env {
   ROOMS: DurableObjectNamespace<RoomDO>;
   STORES: DurableObjectNamespace<StoreDO>;
+  LICENSES: DurableObjectNamespace<LicenseDO>;
+  /** Public Google OAuth web client ID. Empty = Google sign-in off (GET /api/auth/config returns null). Not a secret. */
+  GOOGLE_CLIENT_ID?: string;
+  /** Test-only: JWKS URL standing in for Google's keys. Only honoured for http://127.0.0.1 / localhost URLs. */
+  GOOGLE_CERTS_URL?: string;
   /** Test-only simulation fast-forward (string from wrangler vars). Keep "1" in production. */
   BK_TIME_SCALE?: string;
 }

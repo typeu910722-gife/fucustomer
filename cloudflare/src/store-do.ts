@@ -4,6 +4,7 @@
 // scores are capped, and the owner collects (and clears) damage reports.
 // server/stores.ts uses node:crypto, so the logic is mirrored here with WebCrypto. Keep the numbers in sync.
 import { DurableObject } from 'cloudflare:workers';
+import { randomToken, sha256Hex } from './auth.ts';
 import type { Env } from './env.ts';
 
 export interface RaidReport { at: number; raider: string; score: number; outside: boolean; money: number; rating: number }
@@ -23,14 +24,6 @@ export const OUTSIDE_MAX_SCORE = 30;
 export type Result<T> = { ok: true; value: T } | { ok: false; status: number; error: string };
 const fail = (status: number, error: string): { ok: false; status: number; error: string } => ({ ok: false, status, error });
 
-async function sha256Hex(t: string) {
-  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(t));
-  return [...new Uint8Array(d)].map(b => b.toString(16).padStart(2, '0')).join('');
-}
-function randomToken() {
-  const b = crypto.getRandomValues(new Uint8Array(18));
-  return btoa(String.fromCharCode(...b)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
 const str = (v: unknown, max: number, d = '') => (typeof v === 'string' ? v.slice(0, max) : d);
 const num = (v: unknown, lo: number, hi: number, d: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
 function cleanShelves(v: unknown) {
@@ -61,7 +54,7 @@ export class StoreDO extends DurableObject<Env> {
   /** 409 means the code is taken; the worker then tries another code. */
   async create(code: string, body: Record<string, unknown>): Promise<Result<{ code: string; token: string }>> {
     if (await this.load()) return fail(409, 'code taken');
-    const token = randomToken();
+    const token = randomToken(18);
     const t = Date.now();
     const s: FriendStore = {
       code, name: str(body.name, 16, '某人的店') || '某人的店', map: str(body.map, 24, 'convenience') || 'convenience',

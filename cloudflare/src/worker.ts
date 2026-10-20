@@ -13,16 +13,23 @@
 //   PUT  /api/stores/:code            → owner update (x-owner-token)
 //   POST /api/stores/:code/raid       → raid report
 //   GET  /api/stores/:code/reports    → owner collects reports (x-owner-token)
+//   GET  /api/auth/config             → { googleClientId: string | null }
+//   POST /api/auth/google             → { no, session, card }  (body { credential } = Google ID token)
+//   POST /api/auth/logout             → {}  (x-session)
+//   PUT  /api/license                 → card (x-session)
+//   GET  /api/license/:no             → public card
 import { PROTOCOL_VERSION, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from '../../shared/constants.ts';
 import { closeReason, MAX_MSG_BYTES, type Env } from './env.ts';
 import { STORE_CODE_ALPHABET, STORE_CODE_LENGTH, type Result } from './store-do.ts';
+import { GOOGLE_CERTS, jwksFetcher, verifyGoogleIdToken } from './auth.ts';
 
 export { RoomDO } from './room-do.ts';
 export { StoreDO } from './store-do.ts';
+export { LicenseDO } from './license-do.ts';
 
 const CORS = {
   'access-control-allow-origin': '*',
-  'access-control-allow-headers': 'content-type, x-owner-token',
+  'access-control-allow-headers': 'content-type, x-owner-token, x-session',
   'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
 };
 const json = (status: number, body: unknown) =>
@@ -66,6 +73,13 @@ async function readBody(req: Request): Promise<Record<string, unknown>> {
 
 const roomStub = (env: Env, code: string) => env.ROOMS.get(env.ROOMS.idFromName(code));
 const storeStub = (env: Env, code: string) => env.STORES.get(env.STORES.idFromName(code));
+const licenseStub = (env: Env) => env.LICENSES.get(env.LICENSES.idFromName('licenses'));
+
+/** Google's JWKS, or (tests only) a local stand-in; any other override is ignored so production can't be repointed. */
+function certsUrl(env: Env) {
+  const u = env.GOOGLE_CERTS_URL ?? '';
+  return /^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(u) ? u : GOOGLE_CERTS;
+}
 
 /** Pick an unused room code and reserve it in that room's Durable Object. */
 async function allocateRoom(env: Env): Promise<string | null> {
@@ -199,6 +213,23 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     const code = parts[2].toUpperCase();
     const info = ROOM_CODE_RE.test(code) ? await roomStub(env, code).info(code) : null;
     return info ? json(200, info) : json(404, { error: '找不到房間' });
+  }
+  const clientId = env.GOOGLE_CLIENT_ID ?? '';
+  const session = req.headers.get('x-session') ?? undefined;
+  if (parts[1] === 'auth' && parts[2] === 'config' && req.method === 'GET') return json(200, { googleClientId: clientId || null });
+  if (parts[1] === 'auth' && parts[2] === 'google' && req.method === 'POST') {
+    if (!clientId) return json(503, { error: '伺服器還沒設定 Google 登入' });
+    const claims = await verifyGoogleIdToken((await readBody(req)).credential, clientId, jwksFetcher(certsUrl(env)));
+    if (!claims) return json(401, { error: 'Google 登入驗證失敗' });
+    return json(200, await licenseStub(env).login(claims.sub, claims.name));
+  }
+  if (parts[1] === 'auth' && parts[2] === 'logout' && req.method === 'POST') { await licenseStub(env).logout(session); return json(200, {}); }
+  if (parts[1] === 'license') {
+    if (!parts[2] && req.method === 'PUT') return out(await licenseStub(env).update(session, await readBody(req)));
+    if (parts[2] && req.method === 'GET') {
+      const no = decodeURIComponent(parts[2]);
+      return /^\d{4}-\d{4}$/.test(no) ? out(await licenseStub(env).get(no)) : json(404, { error: '查無此證照' });
+    }
   }
   if (parts[1] === 'stores') {
     const code = (parts[2] ?? '').toUpperCase();

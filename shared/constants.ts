@@ -1,4 +1,5 @@
 // Game-wide tuning values shared by server, solo simulation and client.
+import { SIG_KARENS, SIG_KINDS, type SigKind } from './sigkarens.ts';
 
 export const PROTOCOL_VERSION = 1;
 export const MAX_PLAYERS = 5;
@@ -60,8 +61,8 @@ export const PREP_SECONDS = 60;
 export const CLOSING_MAX_SECONDS = 60;
 export const DAILY_RENT = 60;
 
-export type KarenKind = 'cutter' | 'rager' | 'streamer' | 'hog' | 'litterer' | 'charger' | 'custom' | 'fickle' | 'tryhard' | 'boss';
-export const KAREN_INFO: Record<KarenKind, { name: string; hint: string; how: string }> = {
+export type KarenKind = 'cutter' | 'rager' | 'streamer' | 'hog' | 'litterer' | 'charger' | 'custom' | 'fickle' | 'tryhard' | 'boss' | SigKind;
+const BASE_KAREN_INFO: Record<Exclude<KarenKind, SigKind>, { name: string; hint: string; how: string }> = {
   cutter: { name: '插隊奧客', hint: '有人插隊！其他顧客耐心快速下降', how: '靠近按互動「請排隊」' },
   rager: { name: '退貨大鬧', hint: '客訴怒氣上升中！滿了會砸店', how: '互動「安撫」（可多人同時），或次要鍵發折價券 $30' },
   streamer: { name: '直播亂拍', hint: '直播客到處拍片撞翻商品，會躲人', how: '追上並互動「請停止拍攝」' },
@@ -73,6 +74,11 @@ export const KAREN_INFO: Record<KarenKind, { name: string; hint: string; how: st
   tryhard: { name: '試穿狂', hint: '霸佔試衣間試穿一大堆，衣服丟得到處都是', how: '靠近互動「限試穿 3 件」，他就會挑一件去結帳' },
   boss: { name: '奧客之王', hint: '傳說中的奧客之王駕到！他會分階段鬧事', how: '依階段處理：請排隊→安撫→制止拍攝→清掉小弟→丟出門或全店退散' },
 };
+/** Every karen's name, warning and how to handle it (store-signature karens come from sigkarens.ts). */
+export const KAREN_INFO = {
+  ...BASE_KAREN_INFO,
+  ...Object.fromEntries(SIG_KINDS.map(k => [k, { name: SIG_KARENS[k].name, hint: SIG_KARENS[k].hint, how: SIG_KARENS[k].how }])),
+} as Record<KarenKind, { name: string; hint: string; how: string }>;
 
 export const BOSS_PHASES = ['', '插隊霸王', '退貨暴君', '直播帝王', '召喚小弟', '強弩之末'];
 export const BOSS_HOW = ['', '靠近按互動「請排隊」（或丟出門）', '持續安撫到怒氣歸零（或丟出門）', '追上制止拍攝 2 次（或丟出門）', '先處理掉他叫來的小弟', '抓起丟出門，或全店退散收尾！'];

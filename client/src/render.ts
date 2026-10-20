@@ -13,6 +13,7 @@ import {
 } from '../../shared/map.ts';
 import type { CustomerSnap, Held, PlayerSnap, Snapshot } from '../../shared/protocol.ts';
 import type { Quality } from './storage.ts';
+import { INK, PillOpts, isFontReady, labelTexture, pillCanvas, popCanvas, textTexture, whenFontReady } from './labels.ts';
 
 // ---------- helpers ----------
 export { textCanvas };
@@ -25,7 +26,61 @@ function boxMesh(b: AABB, h: number, m: THREE.Material, y0 = 0) {
   return mesh;
 }
 
-/** Speckled terrazzo-like tiles with grout lines. */
+/**
+ * Packs the canvases of the static wall signs into one texture, so every sign shares a material and the static
+ * merge turns them into a single draw call. Signs are redrawn once the UI font has loaded.
+ */
+class SignAtlas {
+  private items: { draw: () => HTMLCanvasElement; c: HTMLCanvasElement; geos: THREE.BufferGeometry[]; x: number; y: number; s: number }[] = [];
+  readonly mat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+  private canvas = document.createElement('canvas');
+  private tex: THREE.CanvasTexture | null = null;
+  /** A plane (w × h metres) showing the canvas drawn by `draw`. */
+  mesh(w: number, h: number, draw: () => HTMLCanvasElement): THREE.Mesh {
+    const g = new THREE.PlaneGeometry(w, h);
+    this.items.push({ draw, c: draw(), geos: [g], x: 0, y: 0, s: 1 });
+    return new THREE.Mesh(g, this.mat);
+  }
+  /** Lay the canvases out (shelf packing), remap the planes' UVs and build the texture. */
+  pack() {
+    if (!this.items.length) return;
+    const W = 2048, pad = 6;
+    let scale = 1, H = 0;
+    for (; scale > 0.2; scale *= 0.8) {
+      let x = 0, y = 0, row = 0;
+      for (const it of [...this.items].sort((a, b) => b.c.height - a.c.height)) {
+        const w = Math.ceil(it.c.width * scale), h = Math.ceil(it.c.height * scale);
+        if (x + w + pad > W) { x = 0; y += row + pad; row = 0; }
+        it.x = x; it.y = y; it.s = scale; x += w + pad; row = Math.max(row, h);
+      }
+      H = y + row;
+      if (H <= 2048) break;
+    }
+    H = Math.min(2048, 2 ** Math.ceil(Math.log2(Math.max(64, H))));
+    this.canvas.width = W; this.canvas.height = H;
+    this.redraw(false);
+    for (const it of this.items) {
+      const w = it.c.width * it.s, h = it.c.height * it.s;
+      for (const g of it.geos) {
+        const uv = g.attributes.uv as THREE.BufferAttribute;
+        for (let i = 0; i < uv.count; i++) uv.setXY(i, (it.x + uv.getX(i) * w) / W, 1 - (it.y + (1 - uv.getY(i)) * h) / H);
+      }
+    }
+    this.tex = new THREE.CanvasTexture(this.canvas); this.tex.colorSpace = THREE.SRGBColorSpace; this.tex.anisotropy = 4;
+    this.mat.map = this.tex; this.mat.needsUpdate = true;
+    if (!isFontReady()) whenFontReady(() => this.redraw(true));
+  }
+  private redraw(fresh: boolean) {
+    const g = this.canvas.getContext('2d')!;
+    g.fillStyle = '#2a1f3d'; g.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    for (const it of this.items) {
+      if (fresh) it.c = it.draw();
+      g.drawImage(it.c, it.x, it.y, it.c.width * it.s, it.c.height * it.s);
+    }
+    if (this.tex) this.tex.needsUpdate = true;
+  }
+}
+
 /** Item mesh for a product shape (instanced on shelves). */
 function productGeometry(shape: string): THREE.BufferGeometry {
   const lathe = (pts: [number, number][], seg: number) => new THREE.LatheGeometry(pts.map(([r, y]) => new THREE.Vector2(r, y)), seg);
@@ -108,6 +163,65 @@ function tileTexture(a: string, b: string, n = 8) {
 
 const _v = new THREE.Vector3(), _q = new THREE.Quaternion();
 
+// ---------- overhead customer tags ----------
+/** A customer's overhead tag: the full pill, an optional compact (icon-only) form used when far away or crowded. */
+interface Tag { key: string; full: PillOpts; compact: PillOpts | null; prio: number }
+const GOOD = '#39c96b', BAD = '#ff5d5d', WARN = '#ffc23d';
+const KAREN_BG: Record<string, string> = {
+  cutter: '#ff9f1c', rager: '#ff5d5d', streamer: '#8f6bff', hog: '#868e96', litterer: '#4fb35a', charger: '#48a6ff',
+  custom: '#ffc23d', fickle: '#ff7eb6', tryhard: '#9775fa', boss: '#5f3dc4',
+};
+const q20 = (v: number) => Math.round(Math.max(0, Math.min(1, v)) * 20) / 20;
+function customerTag(c: CustomerSnap): Tag | null {
+  const loose = !c.held && !c.flying;
+  if (c.kind === 'boss' && !c.resolved && loose) {
+    const ph = ['', '插隊霸王', '退貨暴君', '直播帝王', '召喚小弟', '強弩之末'][c.phase] ?? '';
+    const bar = c.phase === 2 ? { v: q20(c.anger / 100), color: BAD } : { v: q20((c.phase - 1) / 4), color: WARN };
+    return { key: `boss${c.phase}|${bar.v}`, full: { text: `👑 奧客之王・${ph}`, bg: KAREN_BG.boss, fg: '#ffe066', bar }, compact: null, prio: 3 };
+  }
+  if (c.stun > 0 && loose) {
+    return { key: 'stun' + (c.heavy ? 'h' : ''), full: { text: c.heavy ? '💫 暈了！現在抓得動' : '💫 暈了', bg: WARN, fg: INK }, compact: { text: '💫', bg: WARN, fg: INK }, prio: 2 };
+  }
+  if (c.down > 0) return { key: 'down', full: { text: '💫 好痛…', size: 40 }, compact: { text: '💫', size: 40 }, prio: 0 };
+  if (!loose) return { key: c.held ? 'held' : 'fly', full: { text: c.held ? '😵 放開我！' : '😱 啊——', size: 44 }, compact: null, prio: 2 };
+  if (c.kind !== 'normal' && !c.resolved && c.revealed) {
+    const extras = `${c.vip ? '💼 好像有背景' : ''}${c.vip && c.heavy ? '・' : ''}${c.heavy ? '🏋 抓不動' : ''}`;
+    const badge = (c.vip ? '💼' : '') + (c.heavy ? '🏋' : '');
+    let name = '', bar: PillOpts['bar'];
+    switch (c.kind) {
+      case 'rager': name = c.violent ? '🤬 失控！可正當防衛' : '😡 退貨大鬧'; bar = { v: q20(c.anger / 100), color: c.anger > 70 ? '#ff3b3b' : '#ffa94d' }; break;
+      case 'cutter': name = '⚠ 插隊！'; break;
+      case 'streamer': name = '📱 直播亂拍'; break;
+      case 'hog': name = '❓ 偷吃中'; break;
+      case 'litterer': name = '🗑 亂丟垃圾'; break;
+      case 'charger': name = c.phase ? '🔌 又插回去了！' : '🔌 霸佔插座'; bar = { v: q20(c.patience), color: '#3bc9db' }; break;
+      case 'custom': name = c.state === 'atRegister' ? '🍳 我要改單…' : '🍳 客製魔人'; break;
+      case 'fickle': name = c.phase ? '🧋 我要改甜度！' : '🧋 改單達人'; break;
+      case 'tryhard': name = '👕 試穿中…'; break;
+      default: return null;
+    }
+    const bg = c.violent ? '#d6336c' : KAREN_BG[c.kind] ?? '#ff5d5d', fg = bg === WARN ? INK : undefined;
+    const icon = name.split(' ')[0] + (c.violent && c.kind !== 'rager' ? '🤬' : '') + badge;
+    return {
+      key: `k${c.kind}|${name}|${extras}|${c.violent ? 1 : 0}|${bar?.v ?? ''}`,
+      full: { text: name, sub: extras || undefined, subFg: fg ? INK : '#fff3bf', bg, fg, bar, size: 44 },
+      compact: { text: icon, bg, fg, bar, size: 40 }, prio: 1,
+    };
+  }
+  if (c.want && (c.state === 'waitFood' || c.state === 'toFood')) {
+    const v = q20(c.patience);
+    const t: PillOpts = { text: c.want === 'meal' ? '🍱' : '☕', size: 38, bar: { v, color: v < 0.3 ? BAD : WARN } };
+    return { key: `cf${c.want}|${v}`, full: t, compact: null, prio: 0 };
+  }
+  if (c.state === 'queue' || c.state === 'atRegister' || c.state === 'toRegister') {
+    const v = q20(c.patience);
+    const t: PillOpts = { text: c.state === 'atRegister' ? '💳' : '⏳', size: 38, bar: { v, color: v < 0.3 ? BAD : GOOD } };
+    return { key: `q${c.state === 'atRegister' ? 1 : 0}|${v}`, full: t, compact: null, prio: 0 };
+  }
+  if (c.state === 'leaving' && c.kind === 'normal' && c.patience <= 0.01) return { key: 'angry', full: { text: '💢', bg: BAD, size: 40 }, compact: null, prio: 0 };
+  return null;
+}
+
 // ---------- the store ----------
 interface Smoothed { x: number; z: number; yaw: number }
 
@@ -120,8 +234,10 @@ export class StoreView {
   private crateStacks = new Map<Product, THREE.Group>();
   private mopsOnRack: THREE.Object3D[] = [];
   private register2: THREE.Object3D[] = [];
+  private reg2On = false;
+  private stationLabels: { l: Label; on: () => boolean }[] = [];
   private doorL!: THREE.Mesh; private doorR!: THREE.Mesh; private doorOpen = 0;
-  private customers = new Map<number, { h: Human; s: Smoothed; kind: string }>();
+  private customers = new Map<number, { h: Human; s: Smoothed; kind: string; tag: Tag | null; compactT: number }>();
   private players = new Map<string, { h: Human; s: Smoothed }>();
   private spills = new Map<number, THREE.Mesh>();
   private items = new Map<number, THREE.Object3D>();
@@ -131,7 +247,8 @@ export class StoreView {
   private viewHeld = new THREE.Group();
   private viewHeldKey = '';
   private time = 0;
-  private clockLabel = new Label(2.2, 0.55);
+  private clockHands: THREE.Object3D[] = [];
+  private atlas = new SignAtlas();
   private coffeeSteam: THREE.Mesh[] = [];
   private spillGeo = new THREE.CircleGeometry(0.45, 20);
   private spillMat = new THREE.MeshBasicMaterial({ color: 0x8a6d3b, transparent: true, opacity: 0.85 });
@@ -173,6 +290,7 @@ export class StoreView {
     this.scene.add(this.highlight);
     const before = new Set(this.scene.children);
     this.build();
+    this.atlas.pack();
     this.mergeStatic(before);
     this.resize();
   }
@@ -260,19 +378,19 @@ export class StoreView {
     this.exitGlow = new THREE.Mesh(new THREE.PlaneGeometry(DOOR_X1 - DOOR_X0, 2.6), new THREE.MeshBasicMaterial({ color: 0xff922b, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
     this.exitGlow.position.set(12, 1.3, STORE_D + 0.05); this.exitGlow.userData.dynamic = true; S.add(this.exitGlow);
     // sign
-    const sign = new THREE.Mesh(new THREE.PlaneGeometry(4.5, 0.9), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: CURRENT_MAP.sign.text, size: 70, color: '#fff' }], 1024, 200, CURRENT_MAP.sign.bg)) }));
+    const sign = this.atlas.mesh(4.5, 0.9, () => textCanvas([{ text: CURRENT_MAP.sign.text, size: 70, color: '#fff' }], 1024, 200, CURRENT_MAP.sign.bg));
     sign.position.set(12, 2.86, STORE_D - 0.02); sign.rotation.y = Math.PI; sign.scale.set(0.8, 0.62, 1); S.add(sign);
     const sign2 = sign.clone(); sign2.position.set(12, 2.9, STORE_D + 0.32); sign2.rotation.y = 0; sign2.scale.set(1, 1, 1); S.add(sign2);
-    const exitSign = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.25), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '出口 EXIT', size: 64, color: '#fff' }], 512, 160, '#2b8a3e')) }));
+    const exitSign = this.atlas.mesh(0.7, 0.25, () => textCanvas([{ text: '出口 EXIT', size: 64, color: '#fff' }], 512, 160, '#2b8a3e'));
     exitSign.position.set(12, 2.4, STORE_D - 0.03); exitSign.rotation.y = Math.PI; S.add(exitSign);
     // wall socket by the window (where 充電霸王 squats)
     const plate = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.14, 0.03), mat(0xf8f9fa, this.q)); plate.position.set(OUTLET.x, 0.35, OUTLET.z - 0.02); S.add(plate);
-    const chargeSign = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.22), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '🔌 充電座', size: 60, color: '#fff' }], 512, 180, '#1098ad')) }));
+    const chargeSign = this.atlas.mesh(0.6, 0.22, () => textCanvas([{ text: '🔌 充電座', size: 60, color: '#fff' }], 512, 180, '#1098ad'));
     chargeSign.position.set(OUTLET.x, 0.75, OUTLET.z - 0.03); chargeSign.rotation.y = Math.PI; S.add(chargeSign);
     this.beacon = new THREE.Mesh(new THREE.SphereGeometry(0.12, 10, 8), new THREE.MeshBasicMaterial({ color: 0x5c1a1a }));
     this.beacon.position.set(13.9, 2.9, STORE_D - 0.25); this.beacon.userData.dynamic = true; S.add(this.beacon);
     if (q !== 'low') { this.beaconLight = new THREE.PointLight(0xff3b30, 0, 9, 1.5); this.beaconLight.position.copy(this.beacon.position).add(new THREE.Vector3(0, -0.3, -0.4)); S.add(this.beaconLight); }
-    const stockSign = new THREE.Mesh(new THREE.PlaneGeometry(1.6, 0.4), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '倉庫 STOCK', size: 60 }], 512, 128, '#495057')) }));
+    const stockSign = this.atlas.mesh(1.6, 0.4, () => textCanvas([{ text: '倉庫 STOCK', size: 60 }], 512, 128, '#495057'));
     stockSign.position.set(3.4, 2.4, 5.27); S.add(stockSign);
     // shelves
     for (const sh of SHELVES) {
@@ -341,7 +459,7 @@ export class StoreView {
       inst.count = 0; inst.castShadow = true; inst.frustumCulled = false;
       S.add(inst);
       this.shelfInst.set(sh.product, { mesh: inst, slots });
-      const lbl = new THREE.Mesh(new THREE.PlaneGeometry(1.2, 0.3), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: PRODUCT_INFO[sh.product].name, size: 64 }], 512, 128, '#' + PRODUCT_INFO[sh.product].color.toString(16).padStart(6, '0'))) }));
+      const lbl = this.atlas.mesh(1.2, 0.3, () => textCanvas([{ text: PRODUCT_INFO[sh.product].name, size: 64 }], 512, 128, '#' + PRODUCT_INFO[sh.product].color.toString(16).padStart(6, '0')));
       if (isWall) { lbl.position.set(openX + face * 0.01, b.h + 0.25, (b.z0 + b.z1) / 2); lbl.rotation.y = face < 0 ? -Math.PI / 2 : Math.PI / 2; S.add(lbl); }
       else { lbl.position.set((b.x0 + b.x1) / 2, b.h + 0.25, b.z0 - 0.01); lbl.rotation.y = Math.PI; S.add(lbl); const l2 = lbl.clone(); l2.position.z = b.z1 + 0.01; l2.rotation.y = 0; S.add(l2); }
     }
@@ -356,8 +474,8 @@ export class StoreView {
       g.position.set(r.x, COUNTER.h + 0.05, r.z);
       mergeInto(g, new Set(), q === 'high');
       S.add(g);
-      const lbl = new Label(1.2, 0.3); lbl.set('reg' + r.idx, () => textCanvas([{ text: `收銀台 ${r.idx + 1}`, size: 54 }], 512, 128)); lbl.sprite.position.set(r.x, 2.2, r.z); S.add(lbl.sprite);
-      if (r.idx === 1) { this.register2 = [g, lbl.sprite]; }
+      this.stationLabel('reg' + r.idx, `🧾 收銀台 ${r.idx + 1}`, r.x, 2.1, r.z, r.idx === 1 ? () => this.reg2On : undefined);
+      if (r.idx === 1) { this.register2 = [g]; }
     }
     this.buildCounterDetails();
     // food stations (a map may have none)
@@ -384,7 +502,7 @@ export class StoreView {
       for (let i = 0; i < 3; i++) put(S, CYL(0.04, 0.03, 0.09, 8), mat([0xffffff, 0xffd8a8, 0xffffff][i], q), cx - 0.3 + i * 0.09, 0.955, cz - 0.28); // cup stack
     }
     for (let i = 0; i < 3; i++) { const st = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.4 })); st.position.copy(cm.position).add(new THREE.Vector3(0, 0.35, 0)); SA(st, hasCoffee); this.coffeeSteam.push(st); }
-    const cl = new Label(1.2, 0.3); cl.set('coffee' + FOOD_INFO.coffee.station, () => textCanvas([{ text: `${FOOD_INFO.coffee.icon} ${FOOD_INFO.coffee.station}`, size: 56 }], 512, 128)); cl.sprite.position.set(cm.position.x, 2.05, cm.position.z); SA(cl.sprite, hasCoffee);
+    if (hasCoffee) this.stationLabel('coffee' + FOOD_INFO.coffee.station, `${FOOD_INFO.coffee.icon} ${FOOD_INFO.coffee.station}`, cm.position.x, 2.15, cm.position.z);
     const mw = new THREE.Group(); mw.position.set((MICROWAVE.x0 + MICROWAVE.x1) / 2, 1.12, (MICROWAVE.z0 + MICROWAVE.z1) / 2);
     if (hasMeal) {
       const B0 = MICROWAVE, cx = mw.position.x, cz = mw.position.z, fz = B0.z1 - 0.16;
@@ -398,9 +516,9 @@ export class StoreView {
     }
     const mwDoor = new THREE.Mesh(new THREE.PlaneGeometry(0.42, 0.27), new THREE.MeshBasicMaterial({ color: 0x212529 })); mwDoor.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.14); mwDoor.rotation.y = 0; SA(mwDoor, hasMeal);
     this.microwaveGlow = new THREE.Mesh(new THREE.PlaneGeometry(0.43, 0.28), new THREE.MeshBasicMaterial({ color: 0xffa94d, transparent: true, opacity: 0 })); this.microwaveGlow.position.set(mw.position.x - 0.08, 1.12, MICROWAVE.z1 - 0.135); SA(this.microwaveGlow, hasMeal);
-    const ml2 = new Label(1.2, 0.3); ml2.set('mw' + FOOD_INFO.meal.station, () => textCanvas([{ text: `${FOOD_INFO.meal.icon} ${FOOD_INFO.meal.station}`, size: 56 }], 512, 128)); ml2.sprite.position.set(mw.position.x, 2.05, mw.position.z); SA(ml2.sprite, hasMeal);
+    if (hasMeal) this.stationLabel('mw' + FOOD_INFO.meal.station, `${FOOD_INFO.meal.icon} ${FOOD_INFO.meal.station}`, mw.position.x, 2.15, mw.position.z);
     const pickupMark = new THREE.Mesh(new THREE.CircleGeometry(0.5, 20), new THREE.MeshBasicMaterial({ color: 0xffd43b, transparent: true, opacity: 0.35 })); pickupMark.rotation.x = -Math.PI / 2; pickupMark.position.set(COFFEE_PICKUP.x, 0.01, COFFEE_PICKUP.z); SA(pickupMark, hasCoffee || hasMeal);
-    const pl = new Label(1.2, 0.3); pl.set('pick', () => textCanvas([{ text: '取餐區', size: 56 }], 512, 128)); pl.sprite.position.set(COFFEE_PICKUP.x, 2.3, COFFEE_PICKUP.z); SA(pl.sprite, hasCoffee || hasMeal);
+    if (hasCoffee || hasMeal) this.stationLabel('pick', '🛎 取餐區', COFFEE_PICKUP.x, 2.3, COFFEE_PICKUP.z, undefined, '#ffc23d');
     const compMark = new THREE.Mesh(new THREE.CircleGeometry(0.5, 20), new THREE.MeshBasicMaterial({ color: 0xff6b6b, transparent: true, opacity: 0.3 })); compMark.rotation.x = -Math.PI / 2; compMark.position.set(COMPLAINT_SPOT.x, 0.01, COMPLAINT_SPOT.z); S.add(compMark);
     // queue rope
     const R = CURRENT_MAP.rope;
@@ -418,22 +536,29 @@ export class StoreView {
     for (const c of CRATES) {
       S.add(boxMesh(c.box, 0.12, mat(0x795548, q)));
       const stack = new THREE.Group(); S.add(stack); this.crateStacks.set(c.product, stack);
-      const lbl = new Label(1.1, 0.28); lbl.set('cr' + c.product, () => textCanvas([{ text: `${PRODUCT_INFO[c.product].name}貨箱`, size: 52 }], 512, 128)); lbl.sprite.position.set((c.box.x0 + c.box.x1) / 2, 2.3, (c.box.z0 + c.box.z1) / 2); S.add(lbl.sprite);
+      this.stationLabel('cr' + c.product, `📦 ${PRODUCT_INFO[c.product].name}貨箱`, (c.box.x0 + c.box.x1) / 2, 2.2, (c.box.z0 + c.box.z1) / 2);
     }
     // mop rack
     S.add(boxMesh(MOP_RACK, 0.1, mat(0x495057, q)));
     for (let i = 0; i < 2; i++) {
       const mop = heldModel(q, { kind: 'mop' }); mop.rotation.x = -0.5; mop.position.set(0.35, 0.65, MOP_RACK.z0 + 0.4 + i * 0.6); S.add(mop); this.mopsOnRack.push(mop);
     }
-    const ml = new Label(1.0, 0.26); ml.set('mop', () => textCanvas([{ text: '🧹 拖把', size: 56 }], 512, 128)); ml.sprite.position.set(0.5, 2.0, (MOP_RACK.z0 + MOP_RACK.z1) / 2); S.add(ml.sprite);
+    this.stationLabel('mop', '🧹 拖把', 0.5, 2.0, (MOP_RACK.z0 + MOP_RACK.z1) / 2);
     this.buildDecor();
-    // wall clock
-    this.clockLabel.sprite.position.set(18.5, 2.6, 0.05); S.add(this.clockLabel.sprite);
     // posters
-    const poster = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.1), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: CURRENT_MAP.poster[0], size: 72, color: '#ffd43b' }, { text: CURRENT_MAP.poster[1], size: 54 }], 512, 256, CURRENT_MAP.sign.bg)) }));
+    const poster = this.atlas.mesh(2.2, 1.1, () => textCanvas([{ text: CURRENT_MAP.poster[0], size: 72, color: '#ffd43b' }, { text: CURRENT_MAP.poster[1], size: 54 }], 512, 256, CURRENT_MAP.sign.bg));
     poster.position.set(12, 2.0, 0.02); S.add(poster);
     put(S, RB(2.32, 1.22, 0.02, 0.008), mat(0xf8f9fa, q), 12, 2.0, 0.0);
     this.buildDetails();
+  }
+
+  /** Floating station name (cream pill). Hidden when the camera is right next to it: the interaction prompt says it then. */
+  private stationLabel(key: string, text: string, x: number, y: number, z: number, on: () => boolean = () => true, bg?: string) {
+    const l = new Label({ k: 0.0022, maxScreen: 0.036, minScreen: 0.02, fade: [1.3, 2.3] });
+    l.set(key, () => pillCanvas({ text, size: 46, bg }));
+    l.sprite.position.set(x, y, z); l.sprite.userData.dynamic = true; this.scene.add(l.sprite);
+    this.stationLabels.push({ l, on });
+    return l;
   }
 
   /** Is a floor spot free for a purely visual prop (not in anyone's way)? */
@@ -486,7 +611,7 @@ export class StoreView {
       jar.position.set(tj, top + 0.1, C.z1 - 0.2); S.add(jar);
       put(S, CYL(0.075, 0.075, 0.05, 10), mat(0xfcc419, q, { metal: 0.6, rough: 0.35 }), tj, top + 0.03, C.z1 - 0.2);
       put(S, TOR(0.085, 0.012, 4, 14), mat(0xd0ebff, q), tj, top + 0.2, C.z1 - 0.2, Math.PI / 2);
-      const tag = new THREE.Mesh(geo('tipTag', () => new THREE.PlaneGeometry(0.14, 0.07)), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: 'TIPS ♥', size: 50, color: '#fff' }], 256, 128, hex(TH.accent))) }));
+      const tag = this.atlas.mesh(0.14, 0.07, () => textCanvas([{ text: 'TIPS ♥', size: 50, color: '#fff' }], 256, 128, hex(TH.accent)));
       tag.position.set(tj, top + 0.1, C.z1 - 0.11); S.add(tag);
     }
     // service bell on the customer side
@@ -529,7 +654,7 @@ export class StoreView {
         put(S, RB(0.22, 0.06, dp - 0.6, 0.02), mat(0xdee2e6, q), fx + face * 0.06, 1.05, cz, 0, 0, face * -0.3);
         for (let i = 0; i < 9; i++) put(S, B(0.02, 0.012, 0.05), basic(i === 8 ? 0x51cf66 : 0x495057), fx + face * 0.1, 1.09, cz - 0.08 + (i % 3) * 0.08, 0, 0, face * -0.3);
         put(S, B(0.02, 0.02, 0.18), basic(0x212529), fx + face * 0.01, 1.2, cz + 0.4);
-        const sign = new THREE.Mesh(geo('atmSign', () => new THREE.PlaneGeometry(dp * 0.8, 0.22)), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '🏧 ATM 提款機', size: 56 }], 512, 128, '#0b4f8a')) }));
+        const sign = this.atlas.mesh(dp * 0.8, 0.22, () => textCanvas([{ text: '🏧 ATM 提款機', size: 56 }], 512, 128, '#0b4f8a'));
         sign.position.set(fx + face * 0.01, 1.75, cz); sign.rotation.y = face * Math.PI / 2; S.add(sign);
       } else if (d.kind === 'table') {
         put(S, CYL(0.06, 0.06, d.h - 0.05, 8), mat(0x495057, q), cx, (d.h - 0.05) / 2, cz);
@@ -558,7 +683,7 @@ export class StoreView {
         // wavy curtain: a row of soft folds
         for (let z = d.z0 + 0.15; z < d.z1 - 0.1; z += 0.17) put(S, CAP(0.06, d.h - 0.45, 6), mat(TH.accent, q), d.x1 - 0.04, d.h / 2 + 0.02, z);
         put(S, RB(0.04, 0.9, 0.4, 0.02), mat(0xdbe4ff, q, { rough: 0.15, metal: 0.3 }), d.x0 + 0.09, 1.3, cz); // mirror
-        const lbl = new Label(1.0, 0.26); lbl.set('fit', () => textCanvas([{ text: '👗 試衣間', size: 56 }], 512, 128)); lbl.sprite.position.set(cx, d.h + 0.4, cz); S.add(lbl.sprite);
+        this.stationLabel('fit', '👗 試衣間', cx, d.h + 0.35, cz);
       } else if (d.kind === 'mannequin') {
         const wm = mat(0xf1f3f5, q, { rough: 0.5 });
         put(S, CYL(0.25, 0.28, 0.06, 14), mat(0x495057, q), cx, 0.03, cz);
@@ -581,7 +706,7 @@ export class StoreView {
           put(S, RB(0.24, 0.2, 0.24, 0.03), mat(pal[i++ % pal.length], q), x, 0.6 + lvl * 0.2, z);
         }
         put(S, CYL(0.015, 0.015, 0.6, 6), mat(0x495057, q), cx, 1.4, cz);
-        const sale = new THREE.Mesh(geo('saleSign', () => new THREE.PlaneGeometry(0.7, 0.35)), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: '特價 SALE', size: 60, color: '#fff' }], 512, 256, '#f03e3e')), side: THREE.DoubleSide }));
+        const sale = new THREE.Mesh(geo('saleSign', () => new THREE.PlaneGeometry(0.7, 0.35)), new THREE.MeshBasicMaterial({ map: textTexture(() => textCanvas([{ text: '特價 SALE', size: 60, color: '#fff' }], 512, 256, '#f03e3e')), side: THREE.DoubleSide }));
         sale.position.set(cx, 1.75, cz); sale.rotation.y = 0.4; S.add(sale);
       }
       else { put(S, RB(w, d.h, dp, 0.05), mat(0xfab005, q), cx, d.h / 2, cz); }
@@ -685,7 +810,7 @@ export class StoreView {
     ];
     posters.forEach(([a, b, bg], i) => {
       const x = i === 0 ? 8.6 : 15.6;
-      const pm = new THREE.Mesh(geo('poster', () => new THREE.PlaneGeometry(1.2, 0.75)), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: a, size: 46 }, { text: b, size: 40, color: '#fff3bf' }], 512, 320, bg)) }));
+      const pm = this.atlas.mesh(1.2, 0.75, () => textCanvas([{ text: a, size: 46 }, { text: b, size: 40, color: '#fff3bf' }], 512, 320, bg));
       pm.position.set(x, 2.4, 0.02); S.add(pm);
       put(S, B(1.28, 0.83, 0.02), mat(0xf8f9fa, q), x, 2.4, 0.005);
     });
@@ -824,10 +949,13 @@ export class StoreView {
       }
     }
     this.mopsOnRack.forEach((m, i) => { m.visible = i < snap.mopsOnRack; });
-    this.register2.forEach(o => { o.visible = snap.upgrades.register2 > 0; });
-    const hh = Math.floor(snap.clock / 60), mm = Math.floor(snap.clock % 60);
-    const clk = `${String(hh).padStart(2, '0')}:${String(mm - (mm % 5)).padStart(2, '0')}`;
-    this.clockLabel.set(clk, () => textCanvas([{ text: '🕒 ' + clk, size: 64 }], 512, 128, '#212529'));
+    this.reg2On = snap.upgrades.register2 > 0;
+    this.register2.forEach(o => { o.visible = this.reg2On; });
+    // analog wall clock follows the in-game time
+    if (this.clockHands.length) {
+      this.clockHands[0].rotation.z = -((snap.clock / 60) % 12) / 12 * Math.PI * 2;
+      this.clockHands[1].rotation.z = -(snap.clock % 60) / 60 * Math.PI * 2;
+    }
     this.coffeeSteam.forEach((s, i) => { const t = (this.time * 0.6 + i / 3) % 1; s.position.y = 1.55 + t * 0.6; (s.material as THREE.MeshBasicMaterial).opacity = 0.4 * (1 - t); });
 
     // customers
@@ -839,7 +967,7 @@ export class StoreView {
       if (!e) {
         const h = new Human(q, customerLook(c));
         if (c.kind !== 'normal') karenAccessory(q, h, c.kind);
-        e = { h, s: { x: c.x, z: c.z, yaw: c.yaw }, kind: c.kind };
+        e = { h, s: { x: c.x, z: c.z, yaw: c.yaw }, kind: c.kind, tag: null, compactT: 0 };
         this.customers.set(c.id, e); this.scene.add(h.group);
       }
       if (c.flying || c.held) { e.s.x = c.x; e.s.z = c.z; } else this.smooth(e.s, c.x, c.z, c.yaw, dt);
@@ -863,36 +991,8 @@ export class StoreView {
       e.h.animate(dt, c.moving, c.kind === 'streamer' ? 1.4 : 1, pose as Pose);
       e.h.setBasket(q, c.items > 0 && !c.held && !c.flying && c.state !== 'atRegister');
       if (Math.abs(c.x - 12) < 2.2 && Math.abs(c.z - 16) < 2.2) doorNear = true;
-      // icons
-      let key = '', draw: (() => HTMLCanvasElement) | null = null;
-      if (c.kind === 'boss' && !c.resolved && !c.held && !c.flying) {
-        const ph = ['', '插隊霸王', '退貨暴君', '直播帝王', '召喚小弟', '強弩之末'][c.phase] ?? '';
-        key = 'boss' + c.phase + (c.phase === 2 ? Math.round(c.anger / 5) : '');
-        draw = () => textCanvas([{ text: `👑 奧客之王・${ph}`, size: 44, color: '#ffe066' }], 512, 150, 'rgba(80,20,120,0.92)', c.phase === 2 ? { v: c.anger / 100, color: '#ff6b6b' } : { v: (c.phase - 1) / 4, color: '#ffd43b' });
-      } else if (c.stun > 0 && !c.held && !c.flying) { key = 'stun' + (c.heavy ? 'h' : ''); draw = () => textCanvas([{ text: c.heavy ? '💫 暈了！現在抓得動' : '💫 暈了', size: 46, color: '#fff3bf' }], 512, 128, 'rgba(15,16,26,0.7)'); }
-      else if (c.down > 0) { key = 'down'; draw = () => textCanvas([{ text: '💫 好痛…', size: 50 }], 512, 128, 'rgba(15,16,26,0.6)'); }
-      else if (c.held || c.flying) { key = c.held ? 'held' : 'fly'; draw = () => textCanvas([{ text: c.held ? '😵 放開我！' : '😱 啊——', size: 50 }], 512, 128, 'rgba(15,16,26,0.7)'); }
-      else if (c.kind !== 'normal' && !c.resolved && c.revealed) {
-        const tag = (c.violent ? '🤬' : '') + (c.vip ? '💼' : '') + (c.heavy ? '🏋' : '');
-        if (tag && c.kind !== 'rager') { key = 'tag' + c.kind + tag + (c.kind === 'charger' ? Math.round(c.patience * 10) + '' + c.phase : ''); const name = { cutter: '⚠ 插隊！', streamer: '📱 直播亂拍', hog: '❓ 偷吃中', litterer: '🗑 亂丟垃圾', charger: c.phase ? '🔌 又插回去了！' : '🔌 霸佔插座', custom: '🍳 客製魔人', fickle: '🧋 改單達人', tryhard: '👕 試穿狂' }[c.kind as string] ?? ''; draw = () => textCanvas([{ text: name, size: 44, color: '#ffe066' }, { text: `${c.vip ? '💼 好像有背景' : ''}${c.vip && c.heavy ? '・' : ''}${c.heavy ? '🏋 抓不動' : ''}`, size: 34, color: '#ffc9c9' }], 512, 170, 'rgba(60,20,40,0.9)'); }
-        else if (c.kind === 'rager') { const a = c.anger; key = 'r' + Math.round(a / 4) + tag; draw = () => textCanvas([{ text: c.violent ? '🤬 失控！可正當防衛' : '😡 退貨大鬧', size: 46, color: '#ffc9c9' }, ...(c.vip || c.heavy ? [{ text: `${c.vip ? '💼 好像有背景' : ''}${c.vip && c.heavy ? '・' : ''}${c.heavy ? '🏋 抓不動' : ''}`, size: 32, color: '#ffe066' }] : [])], 512, 150, 'rgba(120,10,30,0.88)', { v: a / 100, color: a > 70 ? '#ff3b3b' : '#ffa94d' }); }
-        else if (c.kind === 'cutter') { key = 'cut'; draw = () => textCanvas([{ text: '⚠ 插隊！', size: 54, color: '#ffe066' }], 512, 128, 'rgba(120,60,0,0.88)'); }
-        else if (c.kind === 'streamer') { key = 'str'; draw = () => textCanvas([{ text: '📱 直播亂拍', size: 50, color: '#d0bfff' }], 512, 128, 'rgba(60,20,120,0.88)'); }
-        else if (c.kind === 'hog') { key = 'hog'; draw = () => textCanvas([{ text: '❓ 偷吃中', size: 52, color: '#ffe066' }], 512, 128, 'rgba(60,60,60,0.88)'); }
-        else if (c.kind === 'custom') { key = 'cus' + c.state; draw = () => textCanvas([{ text: c.state === 'atRegister' ? '🍳 我要改單…' : '🍳 客製魔人', size: 48, color: '#ffe066' }], 512, 128, 'rgba(120,70,0,0.9)'); }
-        else if (c.kind === 'fickle') { key = 'fic' + c.phase; draw = () => textCanvas([{ text: c.phase ? '🧋 我要改甜度！' : '🧋 改單達人', size: 48, color: '#fcc2d7' }], 512, 128, 'rgba(110,20,60,0.9)'); }
-        else if (c.kind === 'tryhard') { key = 'try'; draw = () => textCanvas([{ text: '👕 試穿中…', size: 50, color: '#e5dbff' }], 512, 128, 'rgba(60,30,110,0.9)'); }
-        else if (c.kind === 'charger') { const v = c.patience; key = 'chg' + Math.round(v * 10) + c.phase; draw = () => textCanvas([{ text: c.phase ? '🔌 又插回去了！' : '🔌 霸佔插座', size: 46, color: '#99e9f2' }], 512, 150, 'rgba(10,60,80,0.9)', { v, color: '#3bc9db' }); }
-        else if (c.kind === 'litterer') { key = 'lit'; draw = () => textCanvas([{ text: '🗑 亂丟垃圾', size: 50, color: '#d8f5a2' }], 512, 128, 'rgba(40,70,20,0.88)'); }
-      } else if (c.want && (c.state === 'waitFood' || c.state === 'toFood')) {
-        const label = c.want === 'meal' ? '🍱 等熱便當' : '☕ 等咖啡';
-        key = 'cf' + c.want + Math.round(c.patience * 10); draw = () => textCanvas([{ text: label, size: 46 }], 512, 150, 'rgba(15,16,26,0.82)', { v: c.patience, color: c.patience < 0.3 ? '#ff6b6b' : '#ffd43b' });
-      } else if (c.state === 'queue' || c.state === 'atRegister' || c.state === 'toRegister') {
-        key = 'q' + Math.round(c.patience * 10) + c.state; draw = () => textCanvas([{ text: c.state === 'atRegister' ? '💳 等結帳' : '⏳ 排隊', size: 44 }], 512, 150, 'rgba(15,16,26,0.82)', { v: c.patience, color: c.patience < 0.3 ? '#ff6b6b' : '#51cf66' });
-      } else if (c.state === 'leaving' && c.kind === 'normal' && c.patience <= 0.01) {
-        key = 'angry'; draw = () => textCanvas([{ text: '💢', size: 80 }], 256, 128, '');
-      }
-      e.h.icon.set(key, draw ?? (() => document.createElement('canvas')));
+      // overhead status tag (picked here, laid out against the other tags in render())
+      e.tag = customerTag(c); e.compactT = Math.max(0, e.compactT - dt);
       // keep the status icon upright above a carried / knocked-down body (the group itself is rotated)
       const iy = c.flying ? ICON_Y : c.held ? 0.9 : lying ? 1.1 : ICON_Y;
       if (c.flying || (!c.held && !lying)) e.h.icon.sprite.position.set(0, ICON_Y, 0);
@@ -900,10 +1000,6 @@ export class StoreView {
         _v.set(0, iy, 0).applyQuaternion(_q.copy(e.h.group.quaternion).invert()).divide(e.h.group.scale);
         e.h.icon.sprite.position.copy(_v);
       }
-      // fade overhead labels that are right in front of the camera so they don't cover the view
-      const camD = Math.hypot(this.camera.position.x - e.s.x, this.camera.position.z - e.s.z);
-      (e.h.icon.sprite.material as THREE.SpriteMaterial).opacity = Math.max(0.12, Math.min(1, (camD - 1.0) / 1.6));
-      e.h.icon.sprite.scale.set(key === 'angry' ? 0.7 : 1.7, key === 'angry' ? 0.35 : (key.startsWith('r') || key.startsWith('q') || key.startsWith('cf') ? 0.5 : 0.42), 1);
       if (c.kind === 'rager' && !c.resolved && c.state === 'complain') e.h.group.position.x += Math.sin(this.time * 40) * 0.02 * (c.anger / 100);
     }
     for (const [id, e] of this.customers) if (!seen.has(id)) { this.scene.remove(e.h.group); this.customers.delete(id); }
@@ -929,7 +1025,7 @@ export class StoreView {
       e.h.setHeld(q, p.held);
       const status = !p.connected ? ' 📶斷線' : p.away ? ' 💤' : '';
       const lkey = p.name + status + (p.busy ? '…' : '');
-      e.h.label.set(lkey, () => textCanvas([{ text: p.name + status, size: 52, color: '#' + p.color.toString(16).padStart(6, '0') }], 512, 128));
+      e.h.label.set(lkey, () => pillCanvas({ text: p.name + status, dot: hex(p.color), size: 42 }));
       e.h.group.traverse(o => { const m = (o as THREE.Mesh).material as THREE.Material | undefined; if (m && 'opacity' in m && o !== e!.h.label.sprite) { m.transparent = !p.connected; m.opacity = p.connected ? 1 : 0.4; } });
       if (Math.abs(e.s.x - 12) < 2.2 && Math.abs(e.s.z - 16) < 2.2) doorNear = true;
     }
@@ -954,9 +1050,12 @@ export class StoreView {
     this.puffs = this.puffs.filter(p => { if (p.life <= 0) { this.scene.remove(p.s); p.s.material.dispose(); return false; } return true; });
     for (const r of this.rings) { r.life -= dt; const k = 1 + (0.7 - r.life) * (r.m.userData.size as number) * 2.2; r.m.scale.set(k, k, k); (r.m.material as THREE.MeshBasicMaterial).opacity = Math.max(0, r.life / 0.7); }
     this.rings = this.rings.filter(r => { if (r.life <= 0) { this.scene.remove(r.m); (r.m.material as THREE.Material).dispose(); r.m.geometry.dispose(); return false; } return true; });
-    (this.microwaveGlow.material as THREE.MeshBasicMaterial).opacity = snap.players.some(p => p.busy?.kind === 'heat') ? 0.6 + Math.sin(this.time * 8) * 0.2 : 0;
+    const heating = snap.players.some(p => p.busy?.kind === 'heat');
+    (this.microwaveGlow.material as THREE.MeshBasicMaterial).opacity = heating ? 0.6 + Math.sin(this.time * 8) * 0.2 : 0;
+    this.microwaveGlow.visible = heating && !!CURRENT_MAP.meal; // invisible glows cost a draw call too
     const me = snap.players.find(p => p.id === selfId);
     (this.exitGlow.material as THREE.MeshBasicMaterial).opacity = me?.grabbing != null ? 0.35 + Math.sin(this.time * 6) * 0.15 : 0;
+    this.exitGlow.visible = me?.grabbing != null;
     this.shake = Math.max(0, this.shake - dt); this.flash = Math.max(0, this.flash - dt);
     // door
     this.doorOpen += ((doorNear ? 1 : 0) - this.doorOpen) * Math.min(1, dt * 5);
@@ -989,7 +1088,7 @@ export class StoreView {
         const g = new THREE.Group();
         const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 3, 6), new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.6 })); beam.position.y = 1.5;
         const ring = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.5, 24), new THREE.MeshBasicMaterial({ color, side: THREE.DoubleSide })); ring.rotation.x = -Math.PI / 2; ring.position.y = 0.03;
-        const lbl = new Label(0.9, 0.3); lbl.set('ping', () => textCanvas([{ text: '📍 這裡', size: 60 }], 512, 160)); lbl.sprite.position.y = 3.2;
+        const lbl = new Label({ maxScreen: 0.05 }); lbl.set('ping', () => pillCanvas({ text: '📍 這裡', bg: '#48a6ff', size: 46 })); lbl.sprite.position.y = 3.2;
         g.add(beam, ring, lbl.sprite); g.position.set(pg.x, 0, pg.z);
         this.scene.add(g); this.pings.set(pg.id, g);
       }
@@ -1005,8 +1104,10 @@ export class StoreView {
   }
 
   floatText(text: string, x: number, z: number, color = '#69db7c') {
-    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text, size: 72, color }], 512, 128, '')), transparent: true, depthTest: false }));
-    s.scale.set(1.4, 0.35, 1); s.position.set(x, 2.0, z); s.renderOrder = 20;
+    const c = popCanvas(text, color);
+    const tex = new THREE.CanvasTexture(c); tex.colorSpace = THREE.SRGBColorSpace;
+    const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+    s.scale.set(0.42 * c.width / c.height, 0.42, 1); s.position.set(x, 2.0, z); s.renderOrder = 20;
     this.scene.add(s); this.floaters.push({ obj: s, life: 1.6, vy: 0.8 });
   }
 
@@ -1056,7 +1157,44 @@ export class StoreView {
     this.highlight.box.copy(box); this.highlight.visible = true;
   }
 
-  render() { this.renderer.render(this.scene, this.camera); }
+  render() {
+    this.layoutLabels();
+    this.renderer.render(this.scene, this.camera);
+  }
+
+  /**
+   * Station labels hide right next to the camera; customer tags are laid out nearest-first and a tag that would
+   * overlap a nearer (or more important) one, or is far away, shows its compact icon-only form instead.
+   */
+  private layoutLabels() {
+    const cam = this.camera; cam.updateMatrixWorld();
+    for (const { l, on } of this.stationLabels) l.sprite.visible = on() && l.sprite.position.distanceTo(cam.position) > (l.o.fade?.[0] ?? 0);
+    const vw = this.renderer.domElement.clientWidth || innerWidth, vh = this.renderer.domElement.clientHeight || innerHeight;
+    const list: { e: { h: Human; compactT: number }; t: Tag; d: number; x: number; y: number; on: boolean }[] = [];
+    for (const e of this.customers.values()) {
+      const t = e.tag;
+      if (!t) { e.h.icon.set('', () => document.createElement('canvas')); continue; }
+      const g = e.h.group;
+      _v.copy(e.h.icon.sprite.position).multiply(g.scale).applyQuaternion(g.quaternion).add(g.position);
+      const d = _v.distanceTo(cam.position);
+      _v.project(cam);
+      list.push({ e, t, d, x: (_v.x + 1) / 2 * vw, y: (1 - _v.y) / 2 * vh, on: _v.z < 1 && Math.abs(_v.x) < 1.3 && Math.abs(_v.y) < 1.3 });
+    }
+    list.sort((a, b) => b.t.prio - a.t.prio || a.d - b.d);
+    const placed: number[][] = [];
+    const hit = (x: number, y: number, hw: number, hh: number) => placed.some(([px, py, pw, ph]) => Math.abs(px - x) < pw + hw - 4 && Math.abs(py - y) < ph + hh - 2);
+    for (const it of list) {
+      const { e, t } = it;
+      let compact = !!t.compact && (it.d > 11 || e.compactT > 0);
+      if (it.on && t.compact && !compact) {
+        const [hw, hh] = e.h.icon.screenHalf(labelTexture(t.key + '|f', () => pillCanvas(t.full)), cam, it.d, vh);
+        if (hit(it.x, it.y, hw, hh)) { compact = true; e.compactT = 0.6; }
+      }
+      const key = t.key + (compact ? '|c' : '|f'), opts = compact ? t.compact! : t.full;
+      e.h.icon.set(key, () => pillCanvas(opts));
+      if (it.on) { const [hw, hh] = e.h.icon.screenHalf(labelTexture(key, () => pillCanvas(opts)), cam, it.d, vh); placed.push([it.x, it.y, hw, hh]); }
+    }
+  }
 
   customerWorldPos(id: number) { const e = this.customers.get(id); return e ? e.s : null; }
 }
