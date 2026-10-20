@@ -1,0 +1,13 @@
+"AppBuild"
+{
+	"AppID" "__APPID__"
+	"Desc" "FUCustomer __VERSION__"
+	"BuildOutput" "../output/"
+	"ContentRoot" "__CONTENT_ROOT__"
+	"SetLive" ""
+	"Preview" "0"
+	"Depots"
+	{
+		"__DEPOTID__" "depot_build___DEPOTID__.vdf"
+	}
+}

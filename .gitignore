@@ -16,3 +16,7 @@ desktop/web/
 steam_appid.txt
 .cache/
 /*.png
+
+# SteamPipe generated scripts / logs (steam/make-vdf.mjs)
+steam/build/
+steam/output/
