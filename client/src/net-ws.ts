@@ -53,11 +53,18 @@ export class WsConnection implements GameConnection {
 
   private isOpen() { return this.ws?.readyState === WebSocket.OPEN; }
 
+  /** The room goes in the URL so the Cloudflare server can hand the socket straight to that room (the Node server ignores it). */
+  private socketUrl() {
+    const room = this.everJoined && this.code ? this.code : this.intent.kind === 'join' ? this.intent.code : '';
+    const q = room ? `room=${encodeURIComponent(room)}` : 'create=1';
+    return this.url + (this.url.includes('?') ? '&' : '?') + q;
+  }
+
   private connect() {
     clearTimeout(this.retryTimer);
     this.onStatus(this.everJoined ? 'reconnecting' : 'connecting');
     let ws: WebSocket;
-    try { ws = new WebSocket(this.url); } catch (e) { this.scheduleRetry(); return; }
+    try { ws = new WebSocket(this.socketUrl()); } catch (e) { this.scheduleRetry(); return; }
     this.ws = ws;
     ws.onopen = () => {
       this.attempts = 0; this.lastRx = performance.now();

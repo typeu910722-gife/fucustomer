@@ -3,7 +3,7 @@
 // These are "multi-client on one machine" tests (模擬玩家/多開), not cross-device tests and not tests of the real
 // Cloudflare network (its CPU / duration / request limits are not enforced locally).
 //
-// Run:  (cd cloudflare && npm install) && node --import tsx --test --test-concurrency=1 tests/cf.test.mjs   (or: npm run test:cf)
+// Run:  (cd cloudflare && npm install) && node --import tsx --test --test-concurrency=1 tests/cf.test.mjs   (from the repo root)
 // Or against an already running `wrangler dev`:  CF_URL=http://127.0.0.1:8788 node --import tsx --test tests/cf.test.mjs
 // The spawned wrangler runs the simulation 6x faster (BK_TIME_SCALE=6, test only) so a full business day fits in the test.
 import { test, before, after } from 'node:test';
