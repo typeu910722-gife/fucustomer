@@ -3,6 +3,7 @@ import { MAPS } from '../../shared/maps/index.ts';
 import { KAREN_INFO, MAX_FILL_BOTS, MAX_PLAYERS, PRODUCT_INFO, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, PRODUCTS, UPGRADES, UPGRADE_IDS, shelfCapacity } from '../../shared/constants.ts';
 import type { LobbyState, Snapshot, StoreSave } from '../../shared/protocol.ts';
 import type { Settings } from './storage.ts';
+import { applyA11y } from './a11y.ts';
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from '../../shared/difficulty.ts';
 import { getLicense, renderGoogleButton, signOut } from './account.ts';
 import { weekBadge } from '../../shared/weekly.ts';
@@ -263,6 +264,13 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
           <label class="chk"><input type="checkbox" id="s-pinv" ${s.padInvertY ? 'checked' : ''}> 手把反轉 Y 軸</label>
           <label class="chk"><input type="checkbox" id="s-rumble" ${s.rumble ? 'checked' : ''}> 手把震動（被推、送走奧客、全店退散）</label>
         </section>
+        <section><h3>♿ 輔助功能</h3>
+          <label class="field">色盲友善（換掉難分辨的顏色；圖示與條紋一直都有）
+            <select id="s-cb"><option value="off">關</option><option value="rg">紅綠色盲（紅→橘、綠→藍）</option><option value="by">藍黃色盲（改用紅／青）</option></select></label>
+          <label class="field">字級（介面與選單大小）
+            <select id="s-text"><option value="1">100%</option><option value="1.15">115%</option><option value="1.3">130%</option></select></label>
+          <label class="chk"><input type="checkbox" id="s-cap" ${s.captions ? 'checked' : ''}> 音效字幕（畫面下方顯示「[客人生氣]」「[門鈴]」等重要聲音）</label>
+        </section>
       </div>
       <label class="field">自訂伺服器（留空使用預設）<input type="text" id="s-url" placeholder="wss://example.com/ws" value="${esc(s.serverUrl)}"></label>
       ${overlay ? '' : '<button class="btn info" id="s-backup">💾 存檔備份（換裝置）<span class="sub">匯出／匯入存檔碼，網頁、Android、Windows 互通</span></button>'}
@@ -270,6 +278,8 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
     </div>`, overlay ? 'screen overlay' : 'screen');
   (document.getElementById('s-q') as HTMLSelectElement).value = s.quality;
   (document.getElementById('s-fps-cap') as HTMLSelectElement).value = String(s.fpsCap ?? 0);
+  (document.getElementById('s-cb') as HTMLSelectElement).value = s.colorblind ?? 'off';
+  (document.getElementById('s-text') as HTMLSelectElement).value = String(s.textScale ?? 1);
   const upd = () => {
     const t = (id: string, v: string) => { document.getElementById(id)!.textContent = v; };
     t('s-sens-v', val('s-sens')); t('s-fov-v', val('s-fov')); t('s-pad-v', val('s-pad'));
@@ -284,11 +294,15 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
     ...s, quality: val('s-q') as Settings['quality'], sensitivity: Number(val('s-sens')), fov: Number(val('s-fov')), volume: Number(val('s-vol')), music: Number(val('s-music')),
     master: Number(val('s-master')), fpsCap: Number(val('s-fps-cap')), adaptive: chk('s-adapt'), renderScale: Number(val('s-scale')),
     invertY: chk('s-inv'), showFps: chk('s-fps'), padSens: Number(val('s-pad')), padInvertY: chk('s-pinv'), rumble: chk('s-rumble'), fullscreen, shake: chk('s-shake'), reduceMotion: chk('s-rmotion'),
+    colorblind: val('s-cb') as Settings['colorblind'], textScale: Number(val('s-text')), captions: chk('s-cap'),
     serverUrl: val('s-url').trim(),
   });
+  // accessibility options take effect right away (preview), and again on 完成
+  for (const id of ['s-cb', 's-text', 's-cap', 's-rmotion']) on(id, 'change', () => applyA11y(collect()));
+  const done = (st: Settings) => { applyA11y(st); onDone(st); };
   on('s-backup', 'click', () => backupScreen(() => settingsMenu(collect(), onDone, overlay)));
-  on('s-ok', 'click', () => onDone(collect()));
-  on('s-ok2', 'click', () => onDone(collect()));
+  on('s-ok', 'click', () => done(collect()));
+  on('s-ok2', 'click', () => done(collect()));
 }
 
 /** Lobby share/copy feedback survives lobby redraws (someone readying up re-renders the screen) for ~2 s. */
@@ -309,6 +323,13 @@ const LOBBY_CSS = `
 .players .lp { flex-wrap: wrap; row-gap: 4px; }
 .players .lp.off { opacity: .6; }
 .tag.ping { font-variant-numeric: tabular-nums; }
+.sigbars { letter-spacing: -1px; margin-left: 2px; } .sigbars i { font-style: normal; } .sigbars i.off { opacity: .22; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+.afkbox { background: #fff3bf; border: 3px solid var(--ink); border-radius: 12px; padding: 8px 10px; font-weight: 800; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; justify-content: space-between; }
+.afkbox .btn { width: auto; margin: 0; padding: 6px 12px; }
+.teamcard .players { max-height: 52vh; overflow: auto; }
+#h-team .tping { font-size: 11px; font-variant-numeric: tabular-nums; margin-left: 4px; white-space: nowrap; }
+#h-team .trecon { font-size: 11px; margin-left: 4px; white-space: nowrap; }
 .tag.ping.good { background: #d3f9d8; } .tag.ping.mid { background: #fff3bf; } .tag.ping.bad { background: #ffc9c9; }
 .tag.rdy { font-size: 14px; padding: 3px 10px; } .tag.rdy.ok { background: #8ce99a; } .tag.rdy.wait { background: #ffe066; }
 .lp-ctl { display: flex; gap: 4px; flex-basis: 100%; justify-content: flex-end; }
@@ -317,18 +338,28 @@ const LOBBY_CSS = `
 #l-net { background: #ffe066; border: 3px solid var(--ink); border-radius: 12px; padding: 6px 10px; font-weight: 900; white-space: pre-line; text-align: center; }
 .readysum { font-weight: 900; }
 `;
-/** Lobby update where only the pings changed: patch the ping tags in place (a full redraw would reset a half-confirmed kick). */
+/** Lobby / team-panel update where only the pings changed: patch the ping tags in place (a full redraw would reset a half-confirmed kick). */
 export function lobbyPings(l: LobbyState) {
   for (const p of l.players) {
     const el = document.querySelector<HTMLElement>(`.lp[data-pid="${CSS.escape(p.id)}"] .tag.ping`); if (!el) continue;
     el.className = `tag ping ${p.ping === undefined ? '' : pingClass(p.ping)}`;
-    el.textContent = `📶 ${p.ping === undefined ? '…' : `${p.ping} ms`}`;
+    el.innerHTML = pingText(p.ping);
   }
 }
+/** Lobby / team styles (also used by the in-shift team list, so a player who rejoins mid-shift gets them too). */
+export function ensureLobbyCss() { if (!document.getElementById('lobby-css')) { const st = document.createElement('style'); st.id = 'lobby-css'; st.textContent = LOBBY_CSS; document.head.appendChild(st); } }
 const pingClass = (ms: number) => (ms < 90 ? 'good' : ms < 200 ? 'mid' : 'bad');
+/** Signal bars: the quality reads from the shape (3 / 2 / 1 bars lit), not only from the colour. */
+export function pingBars(ms: number | undefined) {
+  if (ms === undefined) return '';
+  const n = ms < 90 ? 3 : ms < 200 ? 2 : 1;
+  return `<span class="sigbars" aria-hidden="true">${['▂', '▄', '▆'].map((b, i) => `<i${i < n ? '' : ' class="off"'}>${b}</i>`).join('')}</span>`;
+}
+export const pingWord = (ms: number) => (ms < 90 ? '訊號好' : ms < 200 ? '訊號普通' : '訊號差');
+const pingText = (ms: number | undefined) => (ms === undefined ? '📶 …' : `📶 ${ms} ms ${pingBars(ms)}<span class="sr">（${pingWord(ms)}）</span>`);
 
 export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean): void; start(): void; leave(): void; copy(): void; config?(map: string, difficulty: string, bots: boolean): void; kick?(id: string): void; makeHost?(id: string): void }, reconnecting = false) {
-  if (!document.getElementById('lobby-css')) { const st = document.createElement('style'); st.id = 'lobby-css'; st.textContent = LOBBY_CSS; document.head.appendChild(st); }
+  ensureLobbyCss();
   const me = l.players.find(p => p.id === selfId);
   const isHost = l.hostId === selfId;
   const others = l.players.filter(p => p.id !== l.hostId && p.connected);
@@ -368,7 +399,7 @@ export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean
       <ul class="players">
         ${l.players.map(p => `<li class="lp ${p.connected ? '' : 'off'}" data-pid="${esc(p.id)}"><span class="dot" style="background:${hex(p.color)}"></span><b style="flex:1">${esc(p.name)}${p.id === selfId ? '（你）' : ''}</b>
           ${p.id === l.hostId ? '<span class="tag">👑 房主</span>' : ''}<span class="tag">${p.bot ? '電腦店員' : PLATFORM_ICON[p.platform] ?? esc(p.platform)}</span>
-          ${p.bot || !p.connected ? '' : `<span class="tag ping ${p.ping === undefined ? '' : pingClass(p.ping)}" title="延遲">📶 ${p.ping === undefined ? '…' : `${p.ping} ms`}</span>`}
+          ${p.bot || !p.connected ? '' : `<span class="tag ping ${p.ping === undefined ? '' : pingClass(p.ping)}" title="延遲">${pingText(p.ping)}</span>`}
           ${!p.connected ? '<span class="tag off">斷線中</span>' : p.id === l.hostId ? '<span class="tag rdy ok">房主</span>' : p.ready ? '<span class="tag rdy ok">✅ 已準備</span>' : '<span class="tag rdy wait">⏳ 未準備</span>'}
           ${isHost && h.kick && p.id !== selfId && !p.bot ? `<span class="lp-ctl">${p.connected ? `<button class="btn small" data-mkhost="${esc(p.id)}">👑 交給他</button>` : ''}<button class="btn small" data-kick="${esc(p.id)}">🚪 請他離開</button></span>` : ''}</li>`).join('')}
       </ul>
@@ -403,13 +434,14 @@ export function message(title: string, body: string, btn = '確定', onOk?: () =
   on('msg-ok', 'click', () => { hide(); onOk?.(); });
 }
 
-export function pauseMenu(solo: boolean, code: string, h: { resume(): void; settings(): void; leave(): void; help(): void; endShift?: () => void }) {
+export function pauseMenu(solo: boolean, code: string, h: { resume(): void; settings(): void; leave(): void; help(): void; endShift?: () => void; team?: () => void; teamNote?: string }) {
   show(`
     <div class="card">
       <h2>選單</h2>
       ${solo ? '<p class="muted">單人遊戲已暫停。</p>' : `<p class="muted">⚠ 多人營業中：開選單<b>不會暫停</b>，隊友與顧客持續行動。房間碼 <b>${esc(code)}</b></p>`}
       <button class="btn primary" id="p-resume">回到遊戲</button>
       ${h.endShift ? '<button class="btn good" id="p-end">🌙 下班結算分數</button>' : ''}
+      ${h.team ? `<button class="btn info" id="p-team">👥 隊友${h.teamNote ? `<small>（${esc(h.teamNote)}）</small>` : ''}</button>` : ''}
       <button class="btn" id="p-help">玩法說明</button>
       <button class="btn" id="p-settings">設定</button>
       <button class="btn" id="p-leave">${solo ? '離開（本班不結算）' : '離開房間'}</button>
@@ -419,6 +451,65 @@ export function pauseMenu(solo: boolean, code: string, h: { resume(): void; sett
   on('p-settings', 'click', () => h.settings());
   on('p-leave', 'click', () => h.leave());
   on('p-help', 'click', () => h.help());
+  on('p-team', 'click', () => h.team?.());
+}
+
+/** Armed two-step buttons of the team panel, by key (survives a full redraw for the same 4 s as confirmTwice). */
+const armedUntil = new Map<string, number>();
+function armKeyed(btn: HTMLButtonElement, key: string, armedLabel: string, act: () => void) {
+  const label = btn.textContent ?? '';
+  const paint = (on: boolean) => { btn.textContent = on ? armedLabel : label; btn.classList.toggle('armed', on); };
+  const left = (armedUntil.get(key) ?? 0) - Date.now();
+  if (left > 0) { paint(true); window.setTimeout(() => { if (btn.isConnected) paint(false); }, left); }
+  btn.onclick = () => {
+    if ((armedUntil.get(key) ?? 0) > Date.now()) { armedUntil.delete(key); act(); return; }
+    armedUntil.set(key, Date.now() + 4000); paint(true);
+    window.setTimeout(() => { if (btn.isConnected && (armedUntil.get(key) ?? 0) <= Date.now()) paint(false); }, 4000);
+  };
+}
+
+export interface TeamHandlers { back(): void; kick(id: string): void; makeHost(id: string): void; addBot(): void; removeBot(id: string): void; vote(yes: boolean): void }
+/** Mid-shift 「隊友」 panel (pause menu): everyone sees pings / connection; the host can hand over the host role, ask someone
+ *  to leave and add or remove 電腦店員 (each needs a second press); the others can vote out an idle host. */
+export function teamPanel(l: LobbyState, selfId: string, h: TeamHandlers, selfReconnecting = false) {
+  ensureLobbyCss();
+  const isHost = l.hostId === selfId;
+  const host = l.players.find(p => p.id === l.hostId);
+  const me = l.players.find(p => p.id === selfId);
+  const nBots = l.players.filter(p => p.bot).length;
+  const botsOk = l.bots !== undefined; // multiplayer business days only
+  const canAdd = nBots < MAX_FILL_BOTS && l.players.length < l.max;
+  show(`
+    <div class="card wide lobbycard teamcard">
+      <h2>👥 隊友</h2>
+      <p class="muted">${isHost ? '你是房主：可以交出房主、請人離開、增減電腦店員（都要按兩次確認）。營業不會中斷。' : `房主：${esc(host?.name ?? '—')}。房主可以調整隊伍；房主太久沒動作時，大家可以投票換人。`}</p>
+      ${l.hostAfk && !isHost ? `<div class="afkbox" id="t-afk"><span>💤 房主 ${esc(host?.name ?? '')} 太久沒動作。投票換房主：${l.afkVotes ?? 0}/${l.afkNeed ?? 1} 票</span>
+        <button class="btn small ${me?.afkVote ? '' : 'good'}" id="t-vote">${me?.afkVote ? '收回我的票' : '🗳 投票換房主'}</button></div>` : ''}
+      <ul class="players">
+        ${l.players.map(p => {
+          const self = p.id === selfId;
+          const recon = !p.connected || (self && selfReconnecting);
+          return `<li class="lp ${p.connected ? '' : 'off'}" data-pid="${esc(p.id)}"><span class="dot" style="background:${hex(p.color)}"></span><b style="flex:1">${esc(p.name)}${self ? '（你）' : ''}</b>
+          ${p.id === l.hostId ? '<span class="tag">👑 房主</span>' : ''}<span class="tag">${p.bot ? '電腦店員' : PLATFORM_ICON[p.platform] ?? esc(p.platform)}</span>
+          ${recon ? '<span class="tag off">🔄 重新連線中…</span>' : p.bot ? '' : `<span class="tag ping ${p.ping === undefined ? '' : pingClass(p.ping)}" title="延遲">${pingText(p.ping)}</span>`}
+          ${p.afkVote ? '<span class="tag">🗳 已投票</span>' : ''}
+          ${isHost && !self ? `<span class="lp-ctl">${p.bot ? (botsOk ? `<button class="btn small" data-rmbot="${esc(p.id)}">🤖 請他下班</button>` : '')
+            : `${p.connected ? `<button class="btn small" data-mkhost="${esc(p.id)}">👑 交給他</button>` : ''}<button class="btn small" data-kick="${esc(p.id)}">🚪 請他離開</button>`}</span>` : ''}</li>`;
+        }).join('')}
+      </ul>
+      ${isHost && botsOk ? `<button class="btn" id="t-addbot" ${canAdd ? '' : 'disabled'}>🤖 ＋ 加一位電腦店員（${nBots}/${MAX_FILL_BOTS}${canAdd ? '' : l.players.length >= l.max ? '・店裡滿了' : '・已達上限'}）</button>` : ''}
+      ${isHost ? '<p class="muted">被請離開的人會回到主選單；店的進度保存到最近一次日結，今天的營收留在店裡一起結算。</p>' : ''}
+      <button class="btn primary" id="t-back">返回選單</button>
+    </div>`, 'screen overlay');
+  // two-step buttons whose armed state survives a redraw (someone reconnecting / the host changing redraws the panel)
+  const keyed = (sel: string, attr: string, label: string, act: (id: string) => void) =>
+    document.querySelectorAll<HTMLButtonElement>(sel).forEach(b => armKeyed(b, `${attr}:${b.getAttribute(attr) ?? ''}`, label, () => act(b.getAttribute(attr) ?? '')));
+  keyed('[data-kick]', 'data-kick', '再按一次：確定請他離開', id => h.kick(id));
+  keyed('[data-mkhost]', 'data-mkhost', '再按一次：交出房主', id => h.makeHost(id));
+  keyed('[data-rmbot]', 'data-rmbot', '再按一次：請他下班', id => h.removeBot(id));
+  keyed('#t-addbot', 'id', '再按一次：加一位電腦店員', () => h.addBot());
+  on('t-vote', 'click', () => h.vote(!me?.afkVote));
+  on('t-back', 'click', () => h.back());
 }
 
 export function helpScreen(onBack: () => void) {

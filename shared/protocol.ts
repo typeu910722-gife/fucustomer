@@ -93,6 +93,8 @@ export interface LobbyPlayer {
   id: string; name: string; ready: boolean; connected: boolean; color: number; platform: string; outfit?: Outfit; bot?: boolean;
   /** Round-trip time the player's client last reported (ms); omitted for bots and before the first measurement. */
   ping?: number;
+  /** This person voted to hand the host role on (the host has been idle for HOST_AFK_S). */
+  afkVote?: true;
 }
 export interface LobbyState {
   code: string; hostId: string; started: boolean; players: LobbyPlayer[]; max: number; day: number;
@@ -100,6 +102,10 @@ export interface LobbyState {
   map?: string; difficulty?: string;
   /** 電腦店員補位: the host lets server-run bots fill empty slots. */
   bots?: boolean;
+  /** The host has sent no input for HOST_AFK_S: the others may vote to hand the host role on. */
+  hostAfk?: boolean;
+  /** Votes so far / votes needed (a majority of the connected people other than the host); set while hostAfk. */
+  afkVotes?: number; afkNeed?: number;
 }
 
 // ---- messages ----
@@ -128,6 +134,10 @@ export type ClientMsg =
   | { type: 'kick'; id: string }
   /** Host only: hand the host role to another connected person. */
   | { type: 'host'; id: string }
+  /** Host only (multiplayer business days, lobby or mid-shift): add a 電腦店員 (within MAX_FILL_BOTS / free slots) or remove one. */
+  | { type: 'bot'; op: 'add' | 'remove'; id?: string }
+  /** The host has been idle for HOST_AFK_S: vote (yes) or withdraw (no) to hand the host role on; majority wins. */
+  | { type: 'voteHost'; yes: boolean }
   /** rtt: the client's last measured round trip (ms), shown next to its name in the lobby. */
   | { type: 'hb'; t: number; rtt?: number };
 

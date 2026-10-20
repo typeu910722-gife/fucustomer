@@ -1,7 +1,7 @@
 // Transport-agnostic room: lobby, membership, reconnect, host transfer and the game loop.
 // Used by the dedicated server (WebSocket connections) and by solo play (in-memory connection).
 import {
-  MAX_FILL_BOTS, MAX_PLAYERS, PLAYER_COLORS, QUICK_BURST, QUICK_MESSAGES, QUICK_MIN_GAP_MS, QUICK_WINDOW_MS, RECONNECT_GRACE_GAME_S, RECONNECT_GRACE_LOBBY_S, SNAPSHOT_RATE, TICK_RATE,
+  HOST_ACTION_BURST, HOST_ACTION_WINDOW_MS, HOST_AFK_S, MAX_FILL_BOTS, MAX_PLAYERS, PLAYER_COLORS, QUICK_BURST, QUICK_MESSAGES, QUICK_MIN_GAP_MS, QUICK_WINDOW_MS, RECONNECT_GRACE_GAME_S, RECONNECT_GRACE_LOBBY_S, SNAPSHOT_RATE, TICK_RATE,
 } from './constants.ts';
 import type { ClientMsg, GameEvent, LobbyState, ServerMsg, Snapshot, StoreSave, Target } from './protocol.ts';
 import { Bot, BotTeam, botMessages } from './bot.ts';
@@ -28,8 +28,17 @@ export interface Member {
   quickTimes?: number[];
   /** When the "too many messages" hint was last sent to this player. */
   quickWarnAt?: number;
-  /** Round trip the player's client last reported (ms), shown in the lobby. */
+  /** Round trip the player's client last reported (ms), shown in the lobby and the in-shift team list. */
   rtt?: number;
+  /** Last time this person did something (moved / looked around, acted, readied…), ms room clock: drives the host-AFK vote. */
+  activeAt?: number;
+  /** Last position / view sent, to tell real movement from the steady stream of unchanged inputs. */
+  lastIn?: [number, number, number, number];
+  /** Recent host tool uses (kick / hand over / bot), for the HOST_ACTION_BURST rate limit. */
+  adminTimes?: number[];
+  /** Voted to hand the host role on while the host is idle. */
+  afkVote?: boolean;
+  voteAt?: number;
 }
 
 const BOT_NAMES = ['🤖小陳', '🤖阿美', '🤖阿豪', '🤖佳佳'];
@@ -38,6 +47,8 @@ export interface RoomCheckpoint {
   code: string; save: StoreSave; hostId: string; started: boolean; savedAt: number; map?: string; difficulty?: Difficulty;
   /** 電腦店員補位 switched on (the bots themselves are not saved; they are re-created on restore). */
   bots?: boolean;
+  /** How many bots the host wants (lobby switch = MAX_FILL_BOTS, or set one by one mid-shift). */
+  botWant?: number;
   members: { playerId: string; name: string; token: string; color: number; platform: string; joinOrder: number; outfit?: Outfit }[];
 }
 
@@ -56,6 +67,8 @@ export interface RoomOptions {
   difficulty?: Difficulty;
   /** Free play with a hired clerk: day wage charged at each nightly settlement (own store passes it in `shift`). */
   staffWage?: number;
+  /** Host-AFK threshold (ms); defaults to HOST_AFK_S. Tests shorten it. */
+  hostAfkMs?: number;
 }
 
 const ACT_KINDS = new Set(['checkout', 'brew', 'deliver', 'takeBox', 'stock', 'returnBox', 'takeMop', 'returnMop', 'clean', 'calm', 'coupon', 'askQueue', 'stopFilm', 'checkBag', 'pickup', 'heat', 'grab', 'stopLitter', 'unplug', 'treat', 'repeatOrder', 'recommend', 'limitTry', 'knock', 'heckle', 'sigAct', 'sigAlt']);
@@ -107,6 +120,11 @@ export class Room {
   mapId: string;
   /** 電腦店員補位: the host lets bots fill empty slots (multiplayer business days only). */
   botFill = false;
+  /** How many fill-in bots the host wants (capped by MAX_FILL_BOTS and the free slots). */
+  botWant = 0;
+  /** Host-AFK state last announced (lobby broadcast when it flips). */
+  private afkShown = false;
+  private lastAfkCheck = 0;
   private bots = new Map<string, { bot: Bot; snap: Snapshot | null; rid: number; assistUntil: number }>();
   /** A person's 「我去補貨」: until then the bots leave restocking to the people (ms, room clock). */
   private humanRestockUntil = 0;
@@ -136,6 +154,7 @@ export class Room {
     const r = new Room(cp.code, cp.save, { ...opts, map: cp.map ?? opts.map, difficulty: cp.difficulty ?? opts.difficulty });
     r.hostId = cp.hostId;
     r.botFill = !!cp.bots && !r.solo && !opts.shift;
+    r.botWant = r.botFill ? Math.max(0, Math.min(MAX_FILL_BOTS, cp.botWant ?? MAX_FILL_BOTS)) : 0;
     const now = r.now();
     for (const m of cp.members) {
       r.members.set(m.playerId, {
@@ -157,7 +176,7 @@ export class Room {
   checkpoint(): RoomCheckpoint {
     return {
       code: this.code, save: this.save, hostId: this.hostId, started: this.started, savedAt: this.now(), map: this.mapId, difficulty: this.difficulty,
-      bots: this.botFill || undefined,
+      bots: this.botFill || undefined, botWant: this.botFill ? this.botWant : undefined,
       members: [...this.members.values()].filter(m => !m.bot).map(m => ({ playerId: m.playerId, name: m.name, token: m.token, color: m.color, platform: m.platform, joinOrder: m.joinOrder, outfit: m.outfit })),
     };
   }
@@ -172,7 +191,7 @@ export class Room {
   /** 電腦店員補位: add or remove bots so they fill free slots (up to MAX_FILL_BOTS) while at least one person is here. */
   syncBots(announce = true) {
     const humans = this.humanCount;
-    const target = this.botFill && humans > 0 && !this.solo && !this.opts.shift ? Math.min(MAX_FILL_BOTS, MAX_PLAYERS - humans) : 0;
+    const target = this.botFill && humans > 0 && !this.solo && !this.opts.shift ? Math.max(0, Math.min(this.botWant, MAX_FILL_BOTS, MAX_PLAYERS - humans)) : 0;
     let changed = false;
     while (this.bots.size > target) { this.removeBot([...this.bots.keys()].pop()!, announce); changed = true; }
     while (this.bots.size < target) { this.addBot(announce); changed = true; }
@@ -233,7 +252,7 @@ export class Room {
       for (const m of this.members.values()) {
         if (m.token === token) {
           if (m.conn && m.conn !== conn) m.conn.close('replaced');
-          m.conn = conn; m.connected = true; m.platform = platform;
+          m.conn = conn; m.connected = true; m.platform = platform; m.activeAt = this.now();
           const fit = sanitizeOutfit(outfit); if (fit) m.outfit = fit;
           const wp = this.world?.players.get(m.playerId);
           if (this.world && !wp) addPlayer(this.world, m.playerId, m.name, m.color).outfit = m.outfit;
@@ -256,7 +275,7 @@ export class Room {
     const m: Member = {
       playerId: 'p' + this.rid(8), name: sanitizeName(name, `店員${order + 1}`), token: this.rid(32), conn,
       ready: false, connected: true, disconnectedAt: 0, color, platform, joinOrder: order, lastQuickAt: 0, lastPingAt: 0,
-      outfit: sanitizeOutfit(outfit),
+      outfit: sanitizeOutfit(outfit), activeAt: this.now(),
     };
     this.members.set(m.playerId, m);
     if (!this.hostId || !this.members.get(this.hostId)) this.hostId = m.playerId;
@@ -305,6 +324,7 @@ export class Room {
     const candidates = [...this.members.values()].filter(m => m.connected && !m.bot).sort((a, b) => a.joinOrder - b.joinOrder);
     if (!candidates.length) return; // keep the old host id while nobody is online
     this.hostId = candidates[0].playerId;
+    this.clearAfkVotes(); candidates[0].activeAt = this.now();
     this.log(`${this.code}: host → ${candidates[0].name}`);
     this.broadcastEvents([{ e: 'toast', text: `👑 房主${host ? '斷線' : '離開'}了，由 ${candidates[0].name} 接任房主（${this.started ? '營業照常進行，不中斷' : '可以開始營業、踢人和改設定'}）`, tone: 'info' }]);
   }
@@ -314,6 +334,7 @@ export class Room {
     if (!m || !msg || typeof msg !== 'object') return;
     this.useMap();
     const w = this.world;
+    if (!m.bot) this.noteActivity(m, msg);
     switch (msg.type) {
       case 'ready':
         if (!this.started) { m.ready = !!msg.ready; this.broadcastLobby(); }
@@ -324,7 +345,7 @@ export class Room {
         if (this.started || this.solo || this.opts.shift || playerId !== this.hostId) return;
         if (typeof msg.map === 'string' && getMap(msg.map).id === msg.map) this.mapId = msg.map;
         if (isDifficulty(msg.difficulty)) this.difficulty = msg.difficulty;
-        if (typeof msg.bots === 'boolean') { this.botFill = msg.bots; this.syncBots(); }
+        if (typeof msg.bots === 'boolean') { this.botFill = msg.bots; this.botWant = msg.bots ? MAX_FILL_BOTS : 0; this.syncBots(); }
         for (const x of this.members.values()) if (x.playerId !== this.hostId && !x.bot) x.ready = false; // everyone re-confirms
         this.opts.onCheckpoint?.(this.checkpoint());
         this.broadcastLobby();
@@ -394,20 +415,54 @@ export class Room {
       case 'kick': {
         // host only, people only (bots come and go with the 電腦店員補位 switch), never yourself
         const target = typeof msg.id === 'string' ? this.members.get(msg.id) : undefined;
-        if (playerId !== this.hostId || this.solo || !target || target.bot || target.playerId === playerId) return;
-        target.conn?.send({ type: 'error', code: 'kicked', message: '房主把你請出了房間' });
+        if (playerId !== this.hostId || this.solo || !target || target.bot || target.playerId === playerId || !this.hostActionOk(m)) return;
+        target.conn?.send({ type: 'error', code: 'kicked', message: '房主請你先離開這個房間' });
         this.leave(target.playerId, 'kicked');
         this.opts.onCheckpoint?.(this.checkpoint());
         break;
       }
       case 'host': {
         const target = typeof msg.id === 'string' ? this.members.get(msg.id) : undefined;
-        if (playerId !== this.hostId || this.solo || !target || target.bot || !target.connected || target.playerId === playerId) return;
+        if (playerId !== this.hostId || this.solo || !target || target.bot || !target.connected || target.playerId === playerId || !this.hostActionOk(m)) return;
         this.hostId = target.playerId;
+        this.clearAfkVotes(); target.activeAt = this.now();
         this.log(`${this.code}: host handed to ${target.name}`);
         this.broadcastLobby();
         this.broadcastEvents([{ e: 'toast', text: `👑 ${m.name} 把房主交給了 ${target.name}`, tone: 'info' }]);
         this.opts.onCheckpoint?.(this.checkpoint());
+        break;
+      }
+      case 'bot': {
+        // host only, multiplayer business days only (lobby or mid-shift), within MAX_FILL_BOTS and the free slots
+        if (playerId !== this.hostId || this.solo || this.opts.shift || m.bot || (msg.op !== 'add' && msg.op !== 'remove') || !this.hostActionOk(m)) return;
+        if (msg.op === 'add') {
+          if (this.bots.size >= MAX_FILL_BOTS || this.members.size >= MAX_PLAYERS) {
+            m.conn?.send({ type: 'events', list: [{ e: 'hint', text: this.bots.size >= MAX_FILL_BOTS ? `電腦店員最多 ${MAX_FILL_BOTS} 位` : '店裡已經滿員了' }] });
+            return;
+          }
+          this.botFill = true; this.botWant = this.bots.size + 1;
+          this.addBot(true);
+        } else {
+          const t = typeof msg.id === 'string' ? this.members.get(msg.id) : undefined;
+          if (!t?.bot) return;
+          this.removeBot(t.playerId, true);
+          this.botWant = this.bots.size; this.botFill = this.botWant > 0;
+        }
+        this.opts.onCheckpoint?.(this.checkpoint());
+        this.broadcastLobby();
+        break;
+      }
+      case 'voteHost': {
+        const t = this.now();
+        if (this.solo || m.bot || playerId === this.hostId || !m.connected || t - (m.voteAt ?? 0) < 1000) return;
+        m.voteAt = t;
+        if (!this.hostAfk()) { m.afkVote = false; m.conn?.send({ type: 'events', list: [{ e: 'hint', text: '房主還在線上活動，現在不能投票換房主' }] }); return; }
+        this.afkShown = true;
+        const yes = msg.yes !== false;
+        if (!!m.afkVote === yes) return;
+        m.afkVote = yes;
+        if (yes) this.broadcastEvents([{ e: 'toast', text: `🗳 ${m.name} 投票換房主（${this.afkTally().yes}/${this.afkTally().need}）`, tone: 'info' }]);
+        if (!this.resolveAfkVote()) this.broadcastLobby();
         break;
       }
       case 'bg': {
@@ -434,6 +489,63 @@ export class Room {
         break;
       }
     }
+  }
+
+  /** Real activity (not the steady stream of unchanged inputs / heartbeats) resets the person's idle clock;
+   *  the host coming back cancels a running AFK vote. */
+  private noteActivity(m: Member, msg: ClientMsg) {
+    let active = false;
+    if (msg.type === 'input') {
+      const v: [number, number, number, number] = [Number(msg.x), Number(msg.z), Number(msg.yaw), Number(msg.pitch)];
+      const o = m.lastIn;
+      active = !!o && (Math.abs(v[0] - o[0]) > 0.05 || Math.abs(v[1] - o[1]) > 0.05 || Math.abs(v[2] - o[2]) > 0.02 || Math.abs(v[3] - o[3]) > 0.02);
+      m.lastIn = v;
+    } else active = msg.type !== 'hb' && msg.type !== 'bg' && msg.type !== 'voteHost' && msg.type !== 'leave' && msg.type !== 'pause';
+    if (!active) return;
+    m.activeAt = this.now();
+    if (m.playerId === this.hostId && this.afkShown) { this.afkShown = false; this.clearAfkVotes(); this.broadcastLobby(); }
+  }
+
+  /** The host is connected but has done nothing for the AFK threshold (multiplayer only). */
+  hostAfk() {
+    if (this.solo) return false;
+    const h = this.members.get(this.hostId);
+    if (!h || !h.connected || h.bot) return false;
+    return this.now() - (h.activeAt ?? this.now()) >= (this.opts.hostAfkMs ?? HOST_AFK_S * 1000);
+  }
+
+  private afkTally() {
+    const voters = [...this.members.values()].filter(x => x.connected && !x.bot && x.playerId !== this.hostId);
+    const yes = voters.filter(x => x.afkVote);
+    return { voters, yes: yes.length, need: Math.floor(voters.length / 2) + 1, yesList: yes };
+  }
+
+  private clearAfkVotes() { for (const x of this.members.values()) x.afkVote = false; }
+
+  /** A majority of the others voted: the earliest-joined voter takes over. Returns true when the host changed. */
+  private resolveAfkVote() {
+    if (!this.hostAfk()) return false;
+    const t = this.afkTally();
+    if (!t.yes || t.yes < t.need) return false;
+    const next = t.yesList.sort((a, b) => a.joinOrder - b.joinOrder)[0];
+    const old = this.members.get(this.hostId);
+    this.hostId = next.playerId; next.activeAt = this.now();
+    this.clearAfkVotes(); this.afkShown = false;
+    this.log(`${this.code}: host voted over to ${next.name}`);
+    this.broadcastLobby();
+    this.broadcastEvents([{ e: 'toast', text: `👑 ${old?.name ?? '房主'} 太久沒動作，大家投票由 ${next.name} 接任房主`, tone: 'info' }]);
+    this.opts.onCheckpoint?.(this.checkpoint());
+    return true;
+  }
+
+  /** Host tools are rate limited (HOST_ACTION_BURST per HOST_ACTION_WINDOW_MS; extra requests are dropped). */
+  private hostActionOk(m: Member) {
+    const t = this.now();
+    const times = (m.adminTimes ?? []).filter(x => t - x < HOST_ACTION_WINDOW_MS);
+    m.adminTimes = times;
+    if (times.length >= HOST_ACTION_BURST) return false;
+    times.push(t);
+    return true;
   }
 
   /** Fill-in bots react to a person's callout: one answers 「需要支援收銀」 / 「奧客在門口」 with 👍, and after 「我去補貨」
@@ -483,8 +595,22 @@ export class Room {
       if (now - m.disconnectedAt > grace) this.leave(m.playerId, 'timeout');
     }
     if (this.connectedCount === 0) { if (!this.emptySince) this.emptySince = now; } else this.emptySince = 0;
-    // lobby pings: refreshed every 2 s at most while somebody's changed
-    if (this.lobbyDirty && !this.started && now - this.lastLobbyAt > 2000) this.broadcastLobby();
+    // host AFK: announce when it starts; a vote can also pass when a voter's departure lowers the bar
+    if (now - this.lastAfkCheck >= 1000 && !this.solo) {
+      this.lastAfkCheck = now;
+      const afk = this.hostAfk();
+      if (afk !== this.afkShown) {
+        this.afkShown = afk;
+        if (!afk) this.clearAfkVotes();
+        this.broadcastLobby();
+        if (afk && this.connectedCount > 1) {
+          const h = this.members.get(this.hostId);
+          this.broadcastEvents([{ e: 'toast', text: `💤 房主 ${h?.name ?? ''} 已經 ${Math.round((this.opts.hostAfkMs ?? HOST_AFK_S * 1000) / 1000)} 秒沒動作：其他人可以在 選單 → 隊友 投票換房主`, tone: 'info' }]);
+        }
+      } else if (afk) this.resolveAfkVote();
+    }
+    // pings (lobby and the in-shift team list): refreshed every 2 s at most while somebody's changed
+    if (this.lobbyDirty && now - this.lastLobbyAt > 2000) this.broadcastLobby();
     if (!this.world || this.paused) return;
     tick(this.world, dt);
     this.flushResults();
@@ -517,8 +643,9 @@ export class Room {
     return {
       code: this.code, hostId: this.hostId, started: this.started, max: MAX_PLAYERS, day: this.world?.day ?? this.save.day, map: this.mapId, difficulty: this.difficulty,
       bots: this.solo || this.opts.shift ? undefined : this.botFill,
+      ...(this.afkShown ? { hostAfk: true, afkVotes: this.afkTally().yes, afkNeed: this.afkTally().need } : {}),
       players: [...this.members.values()].sort((a, b) => a.joinOrder - b.joinOrder)
-        .map(m => ({ id: m.playerId, name: m.name, ready: m.ready, connected: m.connected, color: m.color, platform: m.platform, outfit: m.outfit, bot: m.bot || undefined, ping: m.bot || !m.connected ? undefined : m.rtt })),
+        .map(m => ({ id: m.playerId, name: m.name, ready: m.ready, connected: m.connected, color: m.color, platform: m.platform, outfit: m.outfit, bot: m.bot || undefined, ping: m.bot || !m.connected ? undefined : m.rtt, afkVote: m.afkVote && this.afkShown ? true as const : undefined })),
     };
   }
 

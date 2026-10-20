@@ -53,10 +53,12 @@ function makeMat(color: number, q: Quality, opts: MatOpts) {
 }
 
 const geoCache = new Map<string, THREE.BufferGeometry>();
+/** Geometries from the shared cache: never disposed with one character. */
+const sharedGeos = new WeakSet<THREE.BufferGeometry>();
 /** Shared geometries for repeated character/prop parts. */
 export function geo<T extends THREE.BufferGeometry>(key: string, make: () => T): T {
   let g = geoCache.get(key) as T | undefined;
-  if (!g) { g = make(); geoCache.set(key, g); }
+  if (!g) { g = make(); geoCache.set(key, g); sharedGeos.add(g); }
   return g;
 }
 const basicCache = new Map<number, THREE.MeshBasicMaterial>();
@@ -364,6 +366,10 @@ export class Human {
     body.castShadow = false; body.receiveShadow = false;
     g.add(body); g.updateMatrixWorld(true);
     body.bind(skeleton, body.matrixWorld);
+    // culling sphere from the bind pose plus an arm's reach for raised arms / tumbling, instead of
+    // SkinnedMesh.computeBoundingSphere()'s bone transform of every vertex on the first frame (a hitch per spawn)
+    const geom = body.geometry; geom.computeBoundingSphere();
+    body.boundingSphere = geom.boundingSphere!.clone(); body.boundingSphere.radius += 0.6;
     this.body = body;
     // empty anchor at the head centre for accessories added later (karen marks, hats…)
     this.head = new THREE.Object3D(); this.head.position.copy(headPos); torso.add(this.head);
@@ -373,12 +379,17 @@ export class Human {
   setBasket(q: Quality, on: boolean) {
     if (on === !!this.basket) return;
     if (!on) { this.armL.remove(this.basket!); this.basket = null; return; }
-    const b = new THREE.Group();
-    put(b, RB(0.28, 0.15, 0.2, 0.03), mat(0xe03131, q), 0, -0.46, 0.02);
-    put(b, TOR(0.1, 0.012, 4, 10, Math.PI), mat(0xe03131, q), 0, -0.39, 0.02);
-    put(b, RB(0.1, 0.08, 0.1, 0.02), mat(0x74c0fc, q), -0.05, -0.36, 0.02);
-    put(b, CYL(0.035, 0.035, 0.12, 8), mat(0xffd43b, q), 0.07, -0.35, 0.02);
-    mergeInto(b, new Set(), false);
+    let t = basketTemplates.get(q);
+    if (!t) { // merged once per quality and shared (cloning shares geometry + material): no new buffers per customer
+      t = new THREE.Group();
+      put(t, RB(0.28, 0.15, 0.2, 0.03), mat(0xe03131, q), 0, -0.46, 0.02);
+      put(t, TOR(0.1, 0.012, 4, 10, Math.PI), mat(0xe03131, q), 0, -0.39, 0.02);
+      put(t, RB(0.1, 0.08, 0.1, 0.02), mat(0x74c0fc, q), -0.05, -0.36, 0.02);
+      put(t, CYL(0.035, 0.035, 0.12, 8), mat(0xffd43b, q), 0.07, -0.35, 0.02);
+      mergeInto(t, new Set(), false);
+      basketTemplates.set(q, t);
+    }
+    const b = t.clone();
     this.armL.add(b); this.basket = b;
   }
   animate(dt: number, moving: boolean, speed = 1, pose: Pose = 'normal') {
@@ -430,6 +441,19 @@ export class Human {
     if (key === this.faceKey) return;
     this.faceKey = key; this.face.geometry = faceGeo(key);
   }
+  /** Frees what belongs to this character only (its baked body and label materials) once it left the scene. */
+  dispose() {
+    // its own geometry: the baked body, merged karen accessories / props (not the shared cache, not held items or the
+    // basket, which are clones of shared templates)
+    const walk = (o: THREE.Object3D) => {
+      if (o === this.hand || o === this.basket) return;
+      const g = (o as THREE.Mesh).isMesh ? (o as THREE.Mesh).geometry : null;
+      if (g && !sharedGeos.has(g)) g.dispose();
+      for (const c of o.children) walk(c);
+    };
+    walk(this.group);
+    (this.label.sprite.material as THREE.Material).dispose(); (this.icon.sprite.material as THREE.Material).dispose();
+  }
   setHeld(q: Quality, held: Held | null) {
     const key = held ? (held.kind === 'box' ? 'box' + held.product : held.kind) : '';
     if (key === this.heldKey) return;
@@ -439,6 +463,7 @@ export class Human {
   }
 }
 
+const basketTemplates = new Map<Quality, THREE.Object3D>();
 const skinMats = new Map<Quality, THREE.Material>();
 /** The one vertex-coloured material every character body shares. */
 function skinMat(q: Quality) {
@@ -644,7 +669,18 @@ function staffHat(q: Quality, H: THREE.Object3D) {
   }
 }
 
+const heldTemplates = new Map<string, THREE.Object3D>();
+/**
+ * What a player / customer holds (also crates, mops, dropped items). Each kind is built and merged once per quality
+ * and then cloned (clones share geometry and materials), so picking things up doesn't allocate new GPU buffers.
+ */
 export function heldModel(q: Quality, held: Held): THREE.Object3D {
+  const key = q + '|' + (held.kind === 'box' ? 'box' + held.product : held.kind);
+  let t = heldTemplates.get(key);
+  if (!t) { t = buildHeldModel(q, held); heldTemplates.set(key, t); }
+  return t.clone();
+}
+function buildHeldModel(q: Quality, held: Held): THREE.Object3D {
   const g = new THREE.Group();
   if (held.kind === 'box') {
     put(g, RB(0.45, 0.3, 0.32, 0.035), mat(0xd2a679, q));

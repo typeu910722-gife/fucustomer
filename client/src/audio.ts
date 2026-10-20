@@ -123,6 +123,9 @@ export class Audio {
     this.endAt = Math.max(this.endAt, t + dur);
   }
 
+  /** Observers of play() requests (音效字幕). */
+  private playHooks: ((name: string, x: number | undefined, z: number | undefined, listener: { x: number; z: number }) => void)[] = [];
+  onPlay(f: (name: string, x: number | undefined, z: number | undefined, listener: { x: number; z: number }) => void) { this.playHooks.push(f); }
   private lastPlayed = new Map<string, number>();
   private voices = 0;
   /** End times (AudioContext seconds) of the voices still sounding, per effect name. */
@@ -133,6 +136,8 @@ export class Audio {
 
   /** `k` (0–1.4): strength of the juice layers (throw power, distance falloff for other players' actions). */
   play(name: string, x?: number, z?: number, k = 1) {
+    // listeners (音效字幕) hear every request, even muted / before the AudioContext exists; they never change the mix
+    for (const f of this.playHooks) { try { f(name, x, z, this.listener); } catch { /* a caption bug must not break sound */ } }
     const c = this.ctx; if (!c || !this.master) return;
     const now = performance.now();
     const gap = Audio.GAP[name] ?? 50;

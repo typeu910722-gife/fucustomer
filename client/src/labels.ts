@@ -1,6 +1,7 @@
 // Floating world labels in the cartoon UI style (cream / coloured pills, thick ink outline, Huninn font),
 // with a capped on-screen size and near-camera fading, plus the font-ready refresh for every canvas text.
 import * as THREE from 'three';
+import { barColor, cbMode, isDangerColor } from './a11y.ts';
 
 export const INK = '#2a1f3d', CREAM = '#fff6e5';
 export const UI_FONT = '"Huninn","PingFang TC","Microsoft JhengHei","Noto Sans TC",sans-serif';
@@ -124,7 +125,14 @@ export function pillCanvas(o: PillOpts): HTMLCanvasElement {
   if (o.bar) {
     const x = (W - barW) / 2, yy = y + 4;
     g.fillStyle = 'rgba(42,31,61,0.25)'; roundRect(g, x, yy, barW, barH, barH / 2); g.fill();
-    g.fillStyle = o.bar.color; roundRect(g, x, yy, Math.max(barH, barW * Math.max(0, Math.min(1, o.bar.v))), barH, barH / 2); g.fill();
+    const fw = Math.max(barH, barW * Math.max(0, Math.min(1, o.bar.v)));
+    g.fillStyle = barColor(o.bar.color); roundRect(g, x, yy, fw, barH, barH / 2); g.fill();
+    if (isDangerColor(o.bar.color)) { // danger is not colour-only: warning stripes over the fill (色盲友善)
+      g.save(); roundRect(g, x, yy, fw, barH, barH / 2); g.clip();
+      g.strokeStyle = 'rgba(42,31,61,0.55)'; g.lineWidth = 5;
+      for (let sx = x - barH; sx < x + fw + barH; sx += 14) { g.beginPath(); g.moveTo(sx, yy + barH); g.lineTo(sx + barH, yy); g.stroke(); }
+      g.restore();
+    }
     g.lineWidth = 4; g.strokeStyle = INK; roundRect(g, x, yy, barW, barH, barH / 2); g.stroke();
   }
   return c;
@@ -144,13 +152,16 @@ export function popCanvas(text: string, color: string, size = 72): HTMLCanvasEle
 
 // ---------- the sprite ----------
 const labelCache = new Map<string, THREE.CanvasTexture>();
+const cbKey = () => { const m = cbMode(); return m === 'off' ? '' : '|cb' + m; };
 /** Label texture for a content key (drawn once, shared by every label showing the same thing). */
 export function labelTexture(key: string, draw: () => HTMLCanvasElement): THREE.CanvasTexture {
+  key += cbKey(); // 色盲友善 palette changes the drawn colours
   let tex = labelCache.get(key);
   if (!tex) {
     tex = textTexture(draw); tex.anisotropy = 2;
     labelCache.set(key, tex);
-    if (labelCache.size > 400) { const k = labelCache.keys().next().value!; const t = labelCache.get(k)!; if (t !== tex) { t.dispose(); labelCache.delete(k); } }
+    // (bounded: each entry is a GPU texture; ~240 covers every tag / bar step in a busy shift without redrawing)
+    if (labelCache.size > 240) { const k = labelCache.keys().next().value!; const t = labelCache.get(k)!; if (t !== tex) { t.dispose(); labelCache.delete(k); } }
   }
   return tex;
 }
@@ -179,8 +190,9 @@ export class Label {
   }
   /** Shows the texture for `key` (drawn once and shared by every label with the same key). Empty key hides. */
   set(key: string, draw: () => HTMLCanvasElement) {
-    if (key === this.key) return;
-    this.key = key;
+    const full = key ? key + cbKey() : ''; // a palette switch redraws the label
+    if (full === this.key) return;
+    this.key = full;
     if (!key) { this.sprite.visible = false; return; }
     this.sprite.visible = true;
     const tex = labelTexture(key, draw);

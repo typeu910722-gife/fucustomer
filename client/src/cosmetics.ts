@@ -8,6 +8,7 @@ import { getCosmetic, type Loadout, type Outfit } from '../../shared/shop.ts';
 import type { Quality } from './storage.ts';
 import { B, CAP, CONE, CYL, DOME, HEAD_R, HAIR, Human, RB, SKIN, SPH, TOR, basic, mat, put } from './models.ts';
 import { font, textTexture } from './labels.ts';
+import { shiftCtx } from './shift-ctx.ts';
 
 const color = (id: string | undefined, fallback?: number) => getCosmetic(id)?.color ?? fallback;
 
@@ -99,13 +100,11 @@ function buildHat(q: Quality, H: THREE.Object3D, id: string, c1: number, c2: num
 }
 
 // ---------------- store decorations ----------------
-let storeDecor: Loadout | null = null;
-/** Set before a free-play / own-store game starts (null for career shifts and other people's stores). */
-export function setStoreDecor(l: Loadout | null) { storeDecor = l; }
+// what to build is set by the menu before a free-play / own-store game starts (shift-ctx.ts)
 
 /** Builds the equipped 燈牌 / 地墊 / 櫃台公仔 into the store (called by StoreView before it merges static meshes). */
 export function buildShopDecor(scene: THREE.Object3D, q: Quality) {
-  const l = storeDecor; if (!l) return;
+  const l = shiftCtx.decor; if (!l) return;
   const mat_ = getCosmetic(l.mat);
   if (mat_) {
     const g = new THREE.Group(); g.position.set(12, 0, STORE_D - 0.85); scene.add(g);

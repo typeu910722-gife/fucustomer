@@ -78,6 +78,9 @@ const idList = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((k): k i
 /** Allowed 幀率上限 values (0 = no cap: the browser syncs to the display's refresh rate). */
 export const FPS_CAPS = [0, 30, 40, 60, 120, 144] as const;
 
+/** Allowed 字級 values (HUD / menu scale). */
+export const TEXT_SCALES = [1, 1.15, 1.3] as const;
+
 /** Settings whitelist with range clamps. Shared by save codes and by loading settings from localStorage. */
 export function cleanSettings(v: unknown): Record<string, string | number | boolean> {
   const out: Record<string, string | number | boolean> = {};
@@ -90,6 +93,10 @@ export function cleanSettings(v: unknown): Record<string, string | number | bool
   if (v.quality === 'low' || v.quality === 'medium' || v.quality === 'high') out.quality = v.quality;
   if ((FPS_CAPS as readonly unknown[]).includes(v.fpsCap)) out.fpsCap = v.fpsCap as number;
   bool('invertY'); bool('showFps'); bool('adaptive'); bool('padInvertY'); bool('rumble'); bool('fullscreen'); bool('shake'); bool('reduceMotion');
+  // accessibility (round 26): 色盲友善 mode, 字級 (snapped to the three offered sizes), 音效字幕
+  if (v.colorblind === 'off' || v.colorblind === 'rg' || v.colorblind === 'by') out.colorblind = v.colorblind;
+  if (typeof v.textScale === 'number' && Number.isFinite(v.textScale)) out.textScale = TEXT_SCALES.reduce((a, b) => (Math.abs(b - (v.textScale as number)) < Math.abs(a - (v.textScale as number)) ? b : a));
+  bool('captions');
   return out; // serverUrl is deliberately dropped
 }
 

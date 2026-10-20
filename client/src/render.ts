@@ -231,7 +231,7 @@ function tileTexture(a: string, b: string, n = 8) {
   return t;
 }
 
-const _v = new THREE.Vector3(), _q = new THREE.Quaternion();
+const _v = new THREE.Vector3(), _q = new THREE.Quaternion(), _m4 = new THREE.Matrix4();
 
 // ---------- overhead customer tags ----------
 /** A customer's overhead tag: the full pill, an optional compact (icon-only) form used when far away or crowded. */
@@ -399,8 +399,6 @@ export class StoreView {
 
   setQuality(q: Quality) {
     this.q = q;
-    const pr = q === 'high' ? Math.min(devicePixelRatio, 2) : q === 'medium' ? Math.min(devicePixelRatio, 1.25) : Math.min(devicePixelRatio, 0.85);
-    this.renderer.setPixelRatio(pr);
     this.renderer.shadowMap.enabled = q === 'high';
     this.renderer.shadowMap.needsUpdate = true;
     this.resize();
@@ -413,9 +411,15 @@ export class StoreView {
   setResolutionScale(f: number) { this.resScale = Math.max(Math.min(0.5, this.maxScale), Math.min(this.maxScale, f)); this.resize(); }
   setMaxScale(m: number) { this.maxScale = Math.max(0.5, Math.min(1, Number.isFinite(m) ? m : 1)); this.setResolutionScale(this.maxScale); }
 
+  private sizeKey = '';
   resize() {
     const w = window.innerWidth, h = window.innerHeight;
+    // pixel ratio cap per quality (low: 0.85 even on 3x phone screens), times the dynamic-resolution scale
     const pr = (this.q === 'high' ? Math.min(devicePixelRatio, 2) : this.q === 'medium' ? Math.min(devicePixelRatio, 1.25) : Math.min(devicePixelRatio, 0.85)) * this.resScale;
+    // resizing reallocates the drawing buffer (slow on phones): only when something actually changed
+    const key = `${w}x${h}@${pr}`;
+    if (key === this.sizeKey) return;
+    this.sizeKey = key;
     this.renderer.setPixelRatio(pr);
     this.renderer.setSize(w, h, false);
     this.camera.aspect = w / h; this.camera.updateProjectionMatrix();
@@ -1278,8 +1282,11 @@ export class StoreView {
     }
     this.mopsOnRack.forEach((m, i) => { m.visible = i < snap.mopsOnRack; });
     // re-render the shadow map only when something that casts a shadow changed (stock levels, crates, 2nd register)
-    const sig = PRODUCTS.map(p => this.shelfInst.get(p)!.mesh.count + ':' + this.crateStacks.get(p)!.userData.n).join(',') + (snap.upgrades.register2 > 0 ? 'r' : '');
-    if (sig !== this.shadowSig) { this.shadowSig = sig; this.renderer.shadowMap.needsUpdate = true; }
+    // (only with shadows on: 'high'; skipped on low / medium so the string isn't rebuilt every frame for nothing)
+    if (this.renderer.shadowMap.enabled) {
+      const sig = PRODUCTS.map(p => this.shelfInst.get(p)!.mesh.count + ':' + this.crateStacks.get(p)!.userData.n).join(',') + (snap.upgrades.register2 > 0 ? 'r' : '');
+      if (sig !== this.shadowSig) { this.shadowSig = sig; this.renderer.shadowMap.needsUpdate = true; }
+    }
     this.reg2On = snap.upgrades.register2 > 0;
     this.register2.forEach(o => { o.visible = this.reg2On; });
     for (const [k, g] of Object.entries(this.upgProps)) g.visible = (snap.upgrades[k as keyof typeof this.upgProps] ?? 0) > 0;
@@ -1342,7 +1349,7 @@ export class StoreView {
       }
       if (c.kind === 'rager' && !c.resolved && c.state === 'complain') e.h.group.position.x += Math.sin(this.time * 40) * 0.02 * (c.anger / 100);
     }
-    for (const [id, e] of this.customers) if (!seen.has(id)) { this.scene.remove(e.h.group); this.customers.delete(id); }
+    for (const [id, e] of this.customers) if (!seen.has(id)) { this.scene.remove(e.h.group); e.h.dispose(); this.customers.delete(id); }
 
     // players (others)
     const seenP = new Set<string>();
@@ -1374,10 +1381,10 @@ export class StoreView {
       e.h.group.traverse(o => { const m = (o as THREE.Mesh).material as THREE.Material | undefined; if (m && 'opacity' in m && o !== e!.h.label.sprite && o !== e!.h.icon.sprite) { m.transparent = !p.connected; m.opacity = p.connected ? 1 : 0.4; } });
       if (Math.abs(e.s.x - 12) < 2.2 && Math.abs(e.s.z - 16) < 2.2) doorNear = true;
     }
-    for (const [id, e] of this.players) if (!seenP.has(id)) { this.scene.remove(e.h.group); this.players.delete(id); }
+    for (const [id, e] of this.players) if (!seenP.has(id)) { this.scene.remove(e.h.group); e.h.dispose(); this.players.delete(id); }
     // blob shadows: shrink and fade-ish (smaller) while someone is lifted or flying
     let nb = 0;
-    const m4 = new THREE.Matrix4();
+    const m4 = _m4;
     const blob = (x: number, z: number, y: number, s: number) => {
       if (nb >= this.blobs.instanceMatrix.count) return;
       const k = s * Math.max(0.35, 1 - Math.max(0, y) * 0.35);

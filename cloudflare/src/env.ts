@@ -12,6 +12,8 @@ export interface Env {
   GOOGLE_CERTS_URL?: string;
   /** Test-only simulation fast-forward (string from wrangler vars). Keep "1" in production. */
   BK_TIME_SCALE?: string;
+  /** Test only: host-AFK threshold in seconds (default HOST_AFK_S). */
+  BK_HOST_AFK_S?: string;
 }
 
 /** Shared limits (same numbers as server/index.ts). */

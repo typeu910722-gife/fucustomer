@@ -29,6 +29,8 @@ const MAX_MSG_BYTES = 4096;
 const MAX_MSGS_PER_SEC = 80;
 // Test-only fast-forward of simulated time (never set in production).
 const TIME_SCALE = Math.max(0.1, Math.min(20, Number(process.env.BK_TIME_SCALE ?? 1)));
+/** Test only: shorter host-AFK threshold (seconds). */
+const HOST_AFK_MS = Number(process.env.BK_HOST_AFK_S) > 0 ? Number(process.env.BK_HOST_AFK_S) * 1000 : undefined;
 
 const log = (...a: unknown[]) => console.log(new Date().toISOString(), ...a);
 const rooms = new Map<string, Room>();
@@ -56,7 +58,7 @@ async function deleteCheckpoint(code: string) {
 }
 
 function makeRoom(code: string, save: unknown, map?: unknown, difficulty?: unknown) {
-  return new Room(code, save as never, { onCheckpoint: cp => void writeCheckpoint(cp), log: s => log(s), map: typeof map === 'string' ? map.slice(0, 24) : undefined, difficulty: isDifficulty(difficulty) ? difficulty : undefined });
+  return new Room(code, save as never, { onCheckpoint: cp => void writeCheckpoint(cp), log: s => log(s), hostAfkMs: HOST_AFK_MS, map: typeof map === 'string' ? map.slice(0, 24) : undefined, difficulty: isDifficulty(difficulty) ? difficulty : undefined });
 }
 
 async function restoreRooms() {
@@ -66,7 +68,7 @@ async function restoreRooms() {
     try {
       const cp = JSON.parse(await fs.readFile(path.join(DATA_DIR, f), 'utf8')) as RoomCheckpoint;
       if (Date.now() - cp.savedAt > CHECKPOINT_MAX_AGE_MS) { await fs.unlink(path.join(DATA_DIR, f)); continue; }
-      rooms.set(cp.code, Room.restore(cp, { onCheckpoint: c => void writeCheckpoint(c), log: s => log(s) }));
+      rooms.set(cp.code, Room.restore(cp, { onCheckpoint: c => void writeCheckpoint(c), log: s => log(s), hostAfkMs: HOST_AFK_MS }));
     } catch (e) { log('bad checkpoint', f, e); }
   }
 }

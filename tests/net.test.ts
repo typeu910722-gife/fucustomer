@@ -93,7 +93,9 @@ async function start(cs: Client[]) {
 }
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-before(async () => { await startServer(); });
+// host-AFK threshold shortened to 4 s for the vote test (the real game uses HOST_AFK_S = 90)
+const TEST_ENV = { BK_HOST_AFK_S: '4' };
+before(async () => { await startServer(TEST_ENV); });
 after(async () => { await stopServer(); });
 
 test('two real clients: shared world, movement replicates', async () => {
@@ -425,12 +427,88 @@ test('fill-in bots split the work and answer a 「需要支援收銀」 callout'
   h.close(); j.close();
 });
 
+test('mid-shift: pings reach the team list, host kicks / hands over / adds and removes bots (validated + rate limited)', { timeout: 40_000 }, async () => {
+  const [h, j, k] = await room(3);
+  await start([h, j, k]);
+  // pings keep flowing during the shift (lobby updates at most every 2 s)
+  j.send({ type: 'hb', t: Date.now(), rtt: 55 });
+  await h.until(() => h.lobby?.started === true && h.lobby.players.find(p => p.id === j.playerId)?.ping === 55, 5000, 'in-shift ping');
+  j.send({ type: 'hb', t: Date.now(), rtt: 120 });
+  await h.until(() => h.lobby?.players.find(p => p.id === j.playerId)?.ping === 120, 5000, 'in-shift ping update');
+  // only the host; never yourself; bots via the bot message only
+  j.send({ type: 'kick', id: k.playerId }); j.send({ type: 'bot', op: 'add' });
+  await sleep(700);
+  h.send({ type: 'kick', id: h.playerId });
+  await sleep(700);
+  assert.equal(h.snap!.players.length, 3, 'nobody removed / added');
+  // burst of 6 adds: rate limited to 3 host actions per 2 s → 2 bots (cap) + 1 「最多」 hint, the other 3 dropped
+  for (let i = 0; i < 6; i++) h.send({ type: 'bot', op: 'add' });
+  await h.until(() => h.snap!.players.filter(p => p.bot).length === 2, 4000, 'two bots added');
+  await h.until(() => events(h).some(e => e.e === 'hint' && /最多/.test(e.text)), 3000, 'cap hint');
+  await sleep(500);
+  assert.equal(events(h).filter(e => e.e === 'hint' && /最多/.test(e.text)).length, 1, 'only 3 of the 6 requests were handled');
+  assert.equal(h.snap!.players.length, 5);
+  assert.equal(h.lobby!.players.filter(p => p.bot).length, 2);
+  await sleep(2100); // let the rate-limit window pass
+  // remove one bot
+  const bot = h.lobby!.players.find(p => p.bot)!;
+  h.send({ type: 'bot', op: 'remove', id: bot.id });
+  await h.until(() => !h.snap!.players.some(p => p.id === bot.id), 4000, 'bot removed');
+  // kick k mid-shift: k is told, leaves the world; the others keep playing
+  h.send({ type: 'kick', id: k.playerId });
+  await k.until(() => k.errors.some(e => e.code === 'kicked'), 4000, 'kicked notice');
+  await h.until(() => !h.snap!.players.some(p => p.id === k.playerId), 4000, 'kicked player left the world');
+  assert.ok(events(j).some(e => e.e === 'toast' && /請 P2 離開/.test(e.text)), 'others told');
+  // the freed slot does not silently refill beyond what the host asked for (1 bot)
+  await sleep(500);
+  assert.equal(h.snap!.players.filter(p => p.bot).length, 1);
+  // hand over the host role mid-shift; the old host loses the tools
+  h.send({ type: 'host', id: j.playerId });
+  await j.until(() => j.lobby?.hostId === j.playerId, 4000, 'host handed over');
+  await sleep(2100);
+  h.send({ type: 'bot', op: 'add' }); await sleep(500);
+  assert.equal(h.snap!.players.filter(p => p.bot).length, 1, 'ex-host cannot add bots');
+  const t0 = j.snap!.t; await sleep(500); assert.ok(j.snap!.t > t0, 'shift keeps running');
+  h.close(); j.close(); k.close();
+});
+
+test('idle host: the others vote (majority) to hand the host role on; the host moving cancels it', { timeout: 40_000 }, async () => {
+  const [h, a, b] = await room(3);
+  await start([h, a, b]);
+  // too early: the host was active a moment ago
+  a.send({ type: 'voteHost', yes: true });
+  await a.until(() => events(a).some(e => e.e === 'hint' && /不能投票/.test(e.text)), 3000, 'too-early hint');
+  // the host idles (no input) past the threshold (4 s in this test)
+  await h.until(() => h.lobby?.hostAfk === true, 9000, 'host marked idle');
+  assert.equal(h.lobby!.afkNeed, 2, 'majority of the two others');
+  a.send({ type: 'voteHost', yes: true });
+  await h.until(() => h.lobby?.afkVotes === 1, 3000, 'one vote');
+  assert.equal(h.lobby!.hostId, h.playerId, 'one vote is not enough');
+  // the host comes back (moves): votes are cleared
+  h.send({ type: 'input', x: 0, z: 0, yaw: 0, pitch: 0, seq: 1 });
+  h.send({ type: 'input', x: 0, z: 0, yaw: 1, pitch: 0, seq: 2 });
+  await h.until(() => !h.lobby?.hostAfk, 3000, 'idle flag cleared');
+  // idle again → two votes → the earliest-joined voter takes over
+  await h.until(() => h.lobby?.hostAfk === true, 9000, 'idle again');
+  await sleep(1100); // per-voter vote rate limit (1 s)
+  b.send({ type: 'voteHost', yes: true });
+  await h.until(() => h.lobby?.afkVotes === 1, 3000, 'b votes');
+  a.send({ type: 'voteHost', yes: true });
+  await b.until(() => b.lobby?.hostId === a.playerId, 4000, 'host voted over to a');
+  await b.until(() => events(b).some(e => e.e === 'toast' && /投票由 P1 接任房主/.test(e.text)), 3000, 'vote result announced');
+  assert.ok(!b.lobby!.hostAfk, 'new host starts fresh');
+  // the old host cannot vote for themself back while a is active, and has no host tools
+  h.send({ type: 'kick', id: b.playerId }); await sleep(500);
+  assert.ok(b.snap!.players.some(p => p.id === b.playerId));
+  h.close(); a.close(); b.close();
+});
+
 test('server restart: room restored from checkpoint, player rejoins with token', { timeout: 40_000 }, async () => {
   const [a, b] = await room(2);
   await start([a, b]);
   const code = a.code, token = a.token, id = a.playerId, day = a.snap!.day;
   await stopServer();
-  await startServer();
+  await startServer(TEST_ENV);
   const a2 = new Client('a2'); await a2.connect();
   a2.send({ type: 'join', code, name: '', token });
   await a2.until(() => !!a2.me(), 8000, 'restored snapshot');

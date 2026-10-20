@@ -1,7 +1,8 @@
 // Entry point: main menu, solo / create / join flows, reconnect-to-last-room.
 import { audio } from './audio.ts';
-import { Game } from './game.ts';
-import { LocalConnection, GameConnection } from './net.ts';
+// the 3D game (three.js) and the local simulation are loaded on demand: see loadGame()
+import type { Game } from './game.ts';
+import type { LocalConnection, GameConnection } from './net.ts';
 import type { Intent } from './net-ws.ts';
 import {
   clearSoloSave, loadFreeplayHires, saveFreeplayHire, saveSoloSave, defaultServerUrl, detectPlatform, isTouch, loadCoopSave, loadLastSession, loadSettings, loadSoloSave, saveSettings,
@@ -19,7 +20,7 @@ import { CAST, SCENES, sceneAfter, sceneBefore } from '../../shared/story.ts';
 import { courtScreen, playScene } from './story-ui.ts';
 import { WEEKLY_ID, WEEKLY_TWISTS, applyWeekly, buildWeeklyConfig, isoWeek, weekBadge, weeklyPlan, weeklySeed, weeklyUnlocked } from '../../shared/weekly.ts';
 import { type ArcLine, type ArcPick, arcConfig, arcSpeaker, finishArc, pickArc, takePreScene } from '../../shared/regulars.ts';
-import { setShiftRegular, setShiftStory } from './game.ts';
+import { setShiftRegular, setShiftStory, setStoreDecor } from './shift-ctx.ts';
 import { getCosmetic } from '../../shared/shop.ts';
 import { FREEPLAY_STAFF_WAGE, branchConfig, ownStoreConfig, settleStoreDay, staffPace } from '../../shared/ownstore.ts';
 import { dayConfig, defaultSave } from '../../shared/sim.ts';
@@ -34,10 +35,11 @@ import { getStore, sendRaid, syncStore } from './friends.ts';
 import { desktop, initPlatform, isApp, onAppPause, onBack, quitApp, reportAchievements } from './platform.ts';
 import { effectiveLoadout, isSupporter, outfitOf, storeLocked, type Loadout } from '../../shared/shop.ts';
 import { entitlementsFor } from './billing.ts';
-import { setStoreDecor } from './cosmetics.ts';
 import { setPadBack, startPadNav } from './padnav.ts';
+import { applyA11y } from './a11y.ts';
 
 let settings = loadSettings();
+applyA11y(settings); // 色盲友善・字級・音效字幕・減少動態效果
 // 商城: stores from a paid pack are locked in free play / own store / hosting a room (never in the career story)
 UI.setStoreLock(map => storeLocked(map, 'host', entitlementsFor(loadProfile())));
 /** What you equipped in the 商城 (only items you really have). */
@@ -75,6 +77,22 @@ const LOADING_TIPS = [
 let current: Game | null = null;
 let screenDepth = 0; // 0 = main menu; anything else = a sub screen (Android back button returns to the menu)
 
+/**
+ * Code splitting: the main menu needs none of the 3D code, so three.js, the renderer / store models and the local
+ * simulation are fetched on demand (and warmed while the menu is idle, see the end of this file), which makes the
+ * menu show up much sooner on slow phones and networks. The service worker caches the chunks for offline play.
+ */
+type GameMods = { G: typeof import('./game.ts'); N: typeof import('./net.ts') };
+let gameMods: GameMods | null = null;
+let gameLoading: Promise<GameMods> | null = null;
+function loadGame() {
+  return (gameLoading ??= Promise.all([import('./game.ts'), import('./net.ts')])
+    .then(([G, N]) => (gameMods = { G, N }))
+    .catch(e => { gameLoading = null; throw e; }));
+}
+/** Only called from a startGame() `make` callback, i.e. after loadGame() resolved. */
+function localConn(...args: ConstructorParameters<typeof LocalConnection>): LocalConnection { return new gameMods!.N.LocalConnection(...args); }
+
 /** `decor`: 商城 store decorations to build (free play / your own store only). */
 function startGame(make: () => GameConnection, onDone?: (reason?: string, result?: ShiftResult | null) => void, decor: Loadout | null = null) {
   audio.unlock();
@@ -83,12 +101,15 @@ function startGame(make: () => GameConnection, onDone?: (reason?: string, result
   UI.show(`<div class="card loading"><div class="spinner">🛒</div><h2>開店準備中…</h2><p class="tip">💡 ${LOADING_TIPS[Math.floor(Math.random() * LOADING_TIPS.length)]}</p></div>`);
   tryFullscreenLandscape(); // needs the click that started the game
   (window as unknown as { __game: Game | null }).__game = null;
-  // build the store on the next frame so the loading card paints and the click returns right away
-  window.setTimeout(() => {
-    const conn = make();
-    current = new Game(conn, settings, isTouch, (reason, result) => { current = null; if (onDone) onDone(reason, result); else menu(reason); });
-    (window as unknown as { __game: Game }).__game = current; // used by automated browser tests
-  }, 30);
+  const t0 = performance.now();
+  loadGame().then(({ G }) => {
+    // build the store on the next frame so the loading card paints and the click returns right away
+    window.setTimeout(() => {
+      const conn = make();
+      current = new G.Game(conn, settings, isTouch, (reason, result) => { current = null; if (onDone) onDone(reason, result); else menu(reason); });
+      (window as unknown as { __game: Game }).__game = current; // used by automated browser tests
+    }, Math.max(0, 30 - (performance.now() - t0)));
+  }, () => menu('⚠ 遊戲檔案載入失敗，請檢查網路後再試一次。'));
 }
 
 function tryFullscreenLandscape() {
@@ -112,7 +133,7 @@ async function online(url: string, intent: Intent) {
     const { WsConnection, roomMap } = await import('./net-ws.ts');
     // build the 3D store for the room's store type
     if (intent.kind === 'join' && !intent.map) intent = { ...intent, map: await roomMap(url, intent.code) };
-    startGame(() => new WsConnection(url, intent, platform), reason => (reason ? multiplayer(friendlyJoinError(reason)) : menu()));
+    startGame(() => new WsConnection(url, intent, platform), reason => (reason?.startsWith('👋') ? menu(reason) : reason ? multiplayer(friendlyJoinError(reason)) : menu()));
   } catch { multiplayer('無法載入連線模組，請檢查網路'); }
 }
 
@@ -178,7 +199,7 @@ function playStore() {
   showStoreLevel(p.store.prog ?? newProg(), true);
   let conn: LocalConnection | null = null;
   let bankrupt = '';
-  startGame(() => (conn = new LocalConnection(playerName(), p.store!.save, cfg, undefined, {
+  startGame(() => (conn = localConn(playerName(), p.store!.save, cfg, undefined, {
     // your employee wears the store uniform you picked in the 商城 (hat + apron; the name tag is yours)
     staff: st.quit ? undefined : { name: st.name, pace: staffPace(st.mood), outfit: outfitOf({ hat: look.hat, uniform: look.uniform }) },
     outfit: outfitOf(look),
@@ -225,7 +246,7 @@ function playBranch(i: number) {
   let conn: LocalConnection | null = null;
   showStoreLevel(b.prog, false);
   const mine = (prof: CareerProfile) => prof.store?.branches?.find(x => x.map === b.map) ?? null;
-  startGame(() => (conn = new LocalConnection(playerName(), b.save, cfg, undefined, {
+  startGame(() => (conn = localConn(playerName(), b.save, cfg, undefined, {
     staff: { name: `店長${b.manager}`, pace: 1, outfit: outfitOf({ hat: look.hat, uniform: look.uniform }) },
     outfit: outfitOf(look),
     onSave: (save, kind) => {
@@ -285,7 +306,7 @@ async function raidFriend(code: string) {
     return;
   }
   const cfg = buildRaidConfig(v);
-  startGame(() => new LocalConnection(playerName(), null, cfg, undefined, { staff: { name: '店員', pace: 0.9 } }), async (_reason, result) => {
+  startGame(() => localConn(playerName(), null, cfg, undefined, { staff: { name: '店員', pace: 0.9 } }), async (_reason, result) => {
     if (!result) return career('store');
     const score = result.score ?? 0;
     const s = await sendRaid(code, playerName(), score, false);
@@ -335,7 +356,7 @@ function sceneOnce(sceneId: string | null, then: () => void, profile?: ReturnTyp
 function runShift(id: string, cfg: ReturnType<typeof buildShiftConfig>, seed?: number, arc?: ArcPick | null, preCard?: { title: string; lines: { icon: string; name: string; text: string }[] }) {
   const st = arc?.arc.stages[arc.stage];
   setShiftRegular(arc && st ? { kind: arc.arc.kind, name: arc.arc.name, icon: arc.arc.icon, bubbles: st.bubbles, handled: st.handled, pre: preCard } : null);
-  startGame(() => new LocalConnection(playerName(), null, cfg, seed), (reason, result) => {
+  startGame(() => localConn(playerName(), null, cfg, seed), (reason, result) => {
     setShiftRegular(null);
     if (!result) { if (reason) UI.message('提示', reason, '回職涯', career); else career(); return; }
     const prof = loadProfile();
@@ -410,7 +431,7 @@ function freePlay() {
         prev = sv;
         saveSoloSave(sv, map);
       };
-      startGame(() => (conn = new LocalConnection(playerName(), save, undefined, undefined, { map, outfit: outfitOf(look), staff, staffWage: staff ? FREEPLAY_STAFF_WAGE : undefined, onSave })), () => { endStoreLevel(); freePlay(); }, look);
+      startGame(() => (conn = localConn(playerName(), save, undefined, undefined, { map, outfit: outfitOf(look), staff, staffWage: staff ? FREEPLAY_STAFF_WAGE : undefined, onSave })), () => { endStoreLevel(); freePlay(); }, look);
     },
   }, progs);
 }
@@ -501,6 +522,14 @@ else menu(deepJoin !== null ? '邀請連結的房間碼不正確，請朋友再�
 const firstInput = () => { audio.unlock(); if (!current) audio.startMusic(8); };
 window.addEventListener('pointerdown', firstInput, { once: true });
 window.addEventListener('keydown', firstInput, { once: true });
+
+// Warm the 3D game code once the menu is up, so the first shift opens without waiting for the download
+// (this also lets the service worker cache it for offline play).
+{
+  const warm = () => { void loadGame().catch(() => { /* fetched again when a game starts */ }); };
+  const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };
+  if (w.requestIdleCallback) w.requestIdleCallback(warm, { timeout: 2500 }); else window.setTimeout(warm, 1200);
+}
 
 // Offline support: cache the game files so solo play opens without a connection (web only).
 if ('serviceWorker' in navigator && !isApp && (location.protocol === 'https:' || location.hostname === 'localhost')) {

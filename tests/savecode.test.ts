@@ -18,7 +18,7 @@ function sampleStore(): Record<string, string> {
   const cafe = defaultSave(); cafe.day = 3;
   return {
     [K.career]: JSON.stringify(p),
-    [K.settings]: JSON.stringify({ name: '阿明', sensitivity: 1.4, quality: 'medium', volume: 0.3, music: 0.2, serverUrl: 'wss://evil.example/ws', fov: 80, fpsCap: 30, adaptive: false, invertY: true, showFps: true, master: 0.8, padSens: 1.7, padInvertY: true, rumble: false, renderScale: 0.75, fullscreen: false, shake: false, reduceMotion: true }),
+    [K.settings]: JSON.stringify({ name: '阿明', sensitivity: 1.4, quality: 'medium', volume: 0.3, music: 0.2, serverUrl: 'wss://evil.example/ws', fov: 80, fpsCap: 30, adaptive: false, invertY: true, showFps: true, master: 0.8, padSens: 1.7, padInvertY: true, rumble: false, renderScale: 0.75, fullscreen: false, shake: false, reduceMotion: true, colorblind: 'rg', textScale: 1.3, captions: true }),
     [K.flags]: JSON.stringify({ tutorialDone: true, seenKarens: ['loud'], seenMaps: ['cafe'] }),
     [K.avatar]: '🐱',
     [K.soloConv]: JSON.stringify(solo),
@@ -56,6 +56,8 @@ test('round trip: export → parse → apply restores progress on an empty devic
   assert.equal(st.renderScale, 0.75); assert.equal(st.fullscreen, false);
   // 打擊感 accessibility settings (round 24)
   assert.equal(st.shake, false); assert.equal(st.reduceMotion, true);
+  // accessibility (round 26)
+  assert.equal(st.colorblind, 'rg'); assert.equal(st.textScale, 1.3); assert.equal(st.captions, true);
   assert.equal(summarizeStore(set).level, 12);
 });
 

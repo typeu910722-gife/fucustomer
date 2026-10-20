@@ -9,14 +9,15 @@ import {
 import { getMap } from '../../shared/maps/index.ts';
 import { ARC_BY_ID } from '../../shared/regulars.ts';
 import { billing, devShop, entitlementsFor } from './billing.ts';
-import { mountPreview } from './cosmetics.ts';
 import { esc } from './ui.ts';
 
 type Filter = 'all' | 'hat' | 'uniform' | 'tag' | 'decor' | 'packs';
 const FILTERS: [Filter, string][] = [['all', '全部'], ['hat', '🧢 帽子'], ['uniform', '🦺 圍裙'], ['tag', '📛 名牌'], ['decor', '🏪 店面裝飾'], ['packs', '🎁 擴充包']];
 let filter: Filter = 'all';
 let trying: Loadout = {};
-let preview: ReturnType<typeof mountPreview> = null;
+// the 3D try-on preview (three.js) is loaded on demand so the menus don't need the 3D code
+let preview: ReturnType<typeof import('./cosmetics.ts').mountPreview> = null;
+let previewSeq = 0;
 let lastMsg = '';
 
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
@@ -89,7 +90,13 @@ export function wireShop(p: CareerProfile, save: (p: CareerProfile) => void, red
   const wear = () => ({ ...effectiveLoadout(p, ents), ...trying });
   const canvas = document.getElementById('shop-canvas') as HTMLCanvasElement | null;
   preview?.dispose(); preview = null;
-  if (canvas) { const l = wear(); preview = mountPreview(canvas, outfitOf(l), l.mascot); }
+  const seq = ++previewSeq;
+  if (canvas) {
+    void import('./cosmetics.ts').then(({ mountPreview }) => {
+      if (seq !== previewSeq || !canvas.isConnected) return; // the tab was redrawn / left meanwhile
+      const l = wear(); preview = mountPreview(canvas, outfitOf(l), l.mascot);
+    }).catch(() => { /* offline before the 3D code was cached: no preview */ });
+  }
   document.querySelector('.pack.focus')?.scrollIntoView({ block: 'center' });
   document.querySelectorAll<HTMLButtonElement>('[data-shop-filter]').forEach(b => { b.onclick = () => { filter = b.dataset.shopFilter as Filter; redraw(); }; });
   document.querySelectorAll<HTMLElement>('[data-try]').forEach(el => {

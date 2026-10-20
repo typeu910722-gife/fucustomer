@@ -42,7 +42,7 @@ async function startWrangler() {
   if (process.env.CF_URL) return;
   const bin = path.join(CF_DIR, 'node_modules', '.bin', 'wrangler');
   if (!existsSync(bin)) throw new Error('wrangler not installed: run `cd cloudflare && npm install` first');
-  proc = spawn(bin, ['dev', '--local', '--ip', '127.0.0.1', '--port', String(PORT), '--persist-to', PERSIST, '--log-level', 'warn', '--var', 'BK_TIME_SCALE:6', '--var', `GOOGLE_CLIENT_ID:${CLIENT_ID}`, '--var', `GOOGLE_CERTS_URL:${JWKS_URL}`], {
+  proc = spawn(bin, ['dev', '--local', '--ip', '127.0.0.1', '--port', String(PORT), '--persist-to', PERSIST, '--log-level', 'warn', '--var', 'BK_TIME_SCALE:6', '--var', 'BK_HOST_AFK_S:4', '--var', `GOOGLE_CLIENT_ID:${CLIENT_ID}`, '--var', `GOOGLE_CERTS_URL:${JWKS_URL}`], {
     cwd: CF_DIR, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' },
   });
@@ -435,6 +435,43 @@ test('round 25 parity: emote presets + rate limit, lobby ping, kick and host tra
   await h.until(() => h.lobby.players.length === 2, 4000, 'gone');
   h.send({ type: 'host', id: j.playerId });
   await j.until(() => j.lobby?.hostId === j.playerId, 4000, 'host transferred');
+  h.close(); j.close(); k.close();
+});
+
+test('round 26 parity: mid-shift ping, kick, host hand-over, bot add/remove (cap + rate limit) and the idle-host vote in the RoomDO', { timeout: 60_000 }, async () => {
+  const [h, j, k] = await room(3);
+  await start([h, j, k]);
+  j.send({ type: 'hb', t: Date.now(), rtt: 66 });
+  await h.until(() => h.lobby?.started === true && h.lobby.players.find(p => p.id === j.playerId)?.ping === 66, 6000, 'in-shift ping');
+  // not the host / not yourself
+  j.send({ type: 'kick', id: k.playerId }); j.send({ type: 'bot', op: 'add' }); await sleep(700);
+  h.send({ type: 'kick', id: h.playerId }); await sleep(700);
+  assert.equal(h.snap.players.length, 3);
+  // bots: burst of 6 adds → rate limited (3 per 2 s): 2 bots (cap) + 1 「最多」 hint, the rest dropped
+  for (let i = 0; i < 6; i++) h.send({ type: 'bot', op: 'add' });
+  await h.until(() => h.snap.players.filter(p => p.bot).length === 2, 5000, 'two bots');
+  await h.until(() => evs(h).some(e => e.e === 'hint' && /最多/.test(e.text)), 4000, 'cap hint');
+  await sleep(500);
+  assert.equal(evs(h).filter(e => e.e === 'hint' && /最多/.test(e.text)).length, 1, 'rate limited');
+  await sleep(2100);
+  const bot = h.lobby.players.find(p => p.bot);
+  h.send({ type: 'bot', op: 'remove', id: bot.id });
+  await h.until(() => !h.snap.players.some(p => p.id === bot.id), 5000, 'bot removed');
+  // kick mid-shift
+  h.send({ type: 'kick', id: k.playerId });
+  await k.until(() => k.errors.some(e => e.code === 'kicked'), 5000, 'kicked');
+  await h.until(() => !h.snap.players.some(p => p.id === k.playerId), 5000, 'left the world');
+  // idle host (4 s in this test) → j alone is the majority of the others → j takes over
+  await j.until(() => j.lobby?.hostAfk === true, 10000, 'host idle');
+  assert.equal(j.lobby.afkNeed, 1);
+  j.send({ type: 'voteHost', yes: true });
+  await j.until(() => j.lobby?.hostId === j.playerId, 5000, 'voted over');
+  // the ex-host lost the tools
+  h.send({ type: 'bot', op: 'add' }); await sleep(600);
+  assert.equal(h.snap.players.filter(p => p.bot).length, 1);
+  // hand-over back (by the new host) mid-shift
+  j.send({ type: 'host', id: h.playerId });
+  await h.until(() => h.lobby?.hostId === h.playerId, 5000, 'handed back');
   h.close(); j.close(); k.close();
 });
 

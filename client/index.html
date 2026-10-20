@@ -611,6 +611,69 @@
       .c-side { flex-basis: auto; border-right: 0; border-bottom: 4px solid var(--ink); }
       .c-side .tabs { flex-direction: row; flex-wrap: wrap; }
     }
+
+    /* ---------- accessibility (a11y.ts): 字級, 色盲友善, 音效字幕, focus rings ---------- */
+    /* HUD / chart colours that carry state. 色盲友善 swaps them; the stripes / icons / shapes are always there too. */
+    :root { --ui-scale: 1; --hud-ok: #4dabf7; --hud-low: #ff6b6b; --hud-good: #51cf66; --hud-bad: #ff5d5d; --hud-bad-text: #e03131; --hud-mid: #ffc23d;
+      --hud-chaos: #ff6b6b; --hud-stam: #69db7c; --hud-stam-low: #ff6b6b; --ping-good: #d3f9d8; --ping-mid: #fff3bf; --ping-bad: #ffc9c9; }
+    body[data-cb="rg"] { --hud-ok: #0072b2; --hud-low: #e69f00; --hud-good: #56b4e9; --hud-bad: #d55e00; --hud-bad-text: #b04a00; --hud-mid: #f0e442;
+      --hud-chaos: #d55e00; --hud-stam: #56b4e9; --hud-stam-low: #e69f00; --ping-good: #cfe8ff; --ping-mid: #fff6b0; --ping-bad: #ffd59a; }
+    body[data-cb="by"] { --hud-ok: #00a0b0; --hud-low: #e8174a; --hud-good: #1b4f72; --hud-bad: #e8174a; --hud-bad-text: #c2103a; --hud-mid: #ff8fa3;
+      --hud-chaos: #e8174a; --hud-stam: #00a0b0; --hud-stam-low: #e8174a; --ping-good: #c3f0f4; --ping-mid: #ffe0e6; --ping-bad: #ffb3c1; }
+    /* 字級: scales the HUD, menus and captions (zoom keeps every layout rule, like a smaller screen) */
+    #hud, #ui, #captions { zoom: var(--ui-scale); }
+    .bar > i.ok { background-color: var(--hud-ok); }
+    .bar > i.low, #stamina > i.low { background-color: var(--hud-low); }
+    .bar > i.low, #stamina > i.low, #sb-chaosbar.crit, .bar > i.done { background-image: repeating-linear-gradient(135deg, rgba(42,31,61,.42) 0 3px, transparent 3px 7px); }
+    .bar > i.done { background-image: repeating-linear-gradient(90deg, rgba(255,255,255,.55) 0 2px, transparent 2px 9px); }
+    #sb-chaosbar { background-color: var(--hud-chaos); }
+    #sb-moneybar { background-color: var(--hud-ok); } #sb-moneybar.done { background-color: var(--hud-good); }
+    #stamina > i { background-color: var(--hud-stam); }
+    .stockrow .lvl { font-style: normal; margin-right: 3px; }
+    .stockrow.warn { color: var(--hud-bad-text); }
+    .stockrow .shelfwarn { background: var(--hud-bad-text); }
+    .toast.good { border-left-color: var(--hud-good); } .toast.bad { border-left-color: var(--hud-bad); border-left-style: double; }
+    .toast.good::before, .toast.bad::before { display: inline-block; margin-right: 6px; font-weight: 900; }
+    .toast.good::before { content: "✔"; color: var(--good-d); } .toast.bad::before { content: "✖"; color: var(--hud-bad-text); }
+    body[data-cb] .tag.ping.good { background: var(--ping-good); } body[data-cb] .tag.ping.mid { background: var(--ping-mid); } body[data-cb] .tag.ping.bad { background: var(--ping-bad); }
+    /* 音效字幕 */
+    #captions { position: fixed; z-index: 12; right: calc(14px + var(--safe-r)); bottom: calc(26px + var(--safe-b)); display: flex; flex-direction: column; align-items: flex-end; gap: 4px; pointer-events: none; max-width: 40vw; }
+    #captions .cap { background: rgba(20,14,34,.88); color: #fff; font-weight: 900; font-size: 15px; line-height: 1.25; padding: 3px 12px; border-radius: 10px; border: 2px solid rgba(255,255,255,.35); white-space: nowrap; }
+    #captions .cap.far { opacity: .78; font-size: 13px; }
+    #captions .cap small { margin-left: 6px; color: #ffe066; font-size: 12px; }
+    /* phones: under the stamina bar, two lines at most */
+    body.touch #captions { right: auto; left: 50%; transform: translateX(-50%); bottom: calc(4px + var(--safe-b)); gap: 3px; align-items: center; max-width: 34vw; }
+    body.touch #captions .cap { font-size: 12px; padding: 1px 8px; }
+    body.touch #captions .cap:nth-last-child(n+3) { display: none; }
+    /* keyboard focus (mouse clicks don't show it; the controller ring is .padfocus above) */
+    #ui :focus-visible, #touch :focus-visible { outline: 4px solid #ffd43b; outline-offset: 3px; box-shadow: 0 0 0 8px rgba(42,31,61,.55); }
+    #ui input[type=checkbox]:focus-visible, #ui input[type=range]:focus-visible { outline-offset: 2px; }
+    .settings label.chk:has(:focus-visible) { background: rgba(255,212,59,.35); border-radius: 10px; }
+    /* 減少動態效果 (setting; on by default when the OS asks for reduced motion) */
+    body.reduce-motion #alert, body.reduce-motion .bar.warn, body.reduce-motion #burst.full, body.reduce-motion #hintbar.urgent, body.reduce-motion .shiftbtn.next,
+    body.reduce-motion .welcome .first-go, body.reduce-motion .bgfx span, body.reduce-motion .walker, body.reduce-motion .mascots .bob, body.reduce-motion #rotate .phone,
+    body.reduce-motion .notice-text.flip, body.reduce-motion .spinner { animation: none !important; }
+    body.reduce-motion .card, body.reduce-motion .toast, body.reduce-motion #aftermath, body.reduce-motion #introcard, body.reduce-motion #arccard { animation-duration: .01s !important; }
+    /* 字級 > 100%. vw inside a zoomed box grows with the zoom, so widths that must stay a share of the real screen divide it back out.
+       Desktop: toasts stay between the minimap and the stock panel. */
+    /* menus: never centre a screen's content past the top edge (it scrolls instead); the title screen's street gives up its gap */
+    body.big-text .screen { align-items: safe center; }
+    @media (min-height: 521px) { body.big-text .ts { margin-bottom: 36px; } }
+    body.big-text .ts .card { max-height: calc(100vh / var(--ui-scale) - 28px); }
+    @media (max-height: 520px) { body.big-text .ts { align-items: start; } }
+    body.big-text:not(.touch) #toasts { width: min(640px, calc((100vw - 600px) / var(--ui-scale))); }
+    /* Phones (844x390 is ~650x300 at 130%): the stock panel and minimap give up a little of their own zoom, the shift bar and
+       hint keep their real width (the 口碑/現金 line is in the stock panel anyway), the tutorial skip goes to the bottom-left
+       corner and only the two newest toasts show. Checked by tests/e2e/round26b.mjs. */
+    body.touch.big-text #rightinfo { transform: scale(.6); }
+    body.touch.big-text #minimap { width: 128px; height: 87px; }
+    body.touch.big-text #shiftbar { width: calc(430px / var(--ui-scale)); }
+    body.touch.big-text:not(.raid) #sb-extra { display: none; }
+    body.touch.big-text #aftermath { max-width: calc(27vw / var(--ui-scale)); }
+    body.touch.big-text #hintbar { max-width: calc(41vw / var(--ui-scale)); }
+    body.touch.big-text #tutskip { top: auto; left: calc(10px + var(--safe-l)); bottom: calc(8px + var(--safe-b)); transform: none; }
+    body.touch.big-text #toasts { width: calc(46vw / var(--ui-scale)); }
+    body.touch.big-text #toasts .toast:nth-last-child(n+3) { display: none; }
   </style>
 </head>
 <body>
@@ -633,14 +696,14 @@
     <div id="crosshair"></div>
     <div id="prompt"></div>
     <div id="progress" class="hidden"><i></i></div>
-    <div id="toasts"></div>
+    <div id="toasts" role="status" aria-live="polite"></div>
     <div id="alert" class="hidden"></div>
     <div id="netstatus" class="hidden"></div>
     <div id="phasebanner"></div>
     <div id="shiftbar" class="hidden">
       <div class="sb-row"><span id="sb-title"></span><span id="sb-extra" class="muted"></span><b id="sb-time"></b></div>
       <div id="sb-moneywrap"><div class="sb-label"><span>營業額</span><span id="sb-money"></span></div><div class="bar"><i id="sb-moneybar"></i></div></div>
-      <div class="sb-label"><span id="sb-chaoslabel">混亂度</span><span id="sb-chaos"></span></div><div class="bar"><i id="sb-chaosbar" style="background:#ff6b6b"></i></div>
+      <div class="sb-label"><span id="sb-chaoslabel">混亂度</span><span id="sb-chaos"></span></div><div class="bar"><i id="sb-chaosbar"></i></div>
     </div>
     <div id="burst" class="hidden"><div class="sb-label"><b>情緒爆發</b><span id="burst-num">0/100</span></div><div class="bar"><i id="burst-bar" style="background:#ff922b"></i></div><small id="burst-hint"></small></div>
     <div id="stamina"><i></i></div>
@@ -666,9 +729,9 @@
     <button class="tbtn hidden" id="t-alt">次要</button>
     <button class="tbtn" id="t-run">跑</button>
     <button class="tbtn" id="t-ping">標記</button>
-    <button class="tbtn" id="t-chat">💬</button>
-    <button class="tbtn" id="t-menu">☰</button>
-    <button class="tbtn" id="t-shop">🛒</button>
+    <button class="tbtn" id="t-chat" aria-label="快速訊息">💬</button>
+    <button class="tbtn" id="t-menu" aria-label="選單">☰</button>
+    <button class="tbtn" id="t-shop" aria-label="採購">🛒</button>
     <button class="tbtn hidden" id="t-grab">抓／丟</button>
     <button class="tbtn hidden" id="t-spin">旋風</button>
     <button class="tbtn hidden" id="t-ult">退散</button>
@@ -678,6 +741,7 @@
   <div id="flash"></div>
   <div id="vignette"></div>
   <div id="ui"></div>
+  <div id="captions" class="hidden" role="status" aria-live="polite"></div>
   <div id="rotate" class="enabled"><div class="phone">📱</div>請把手機轉成橫向<br />開始上班！</div>
   <script type="module" src="./src/main.ts"></script>
 </body>

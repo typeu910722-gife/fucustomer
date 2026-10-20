@@ -26,19 +26,11 @@ import { EmoteWheel } from './emote-wheel.ts';
 import { JuiceKind, RateLimit, TimeWarp, juiceProfile, stampText, throwStrength } from './juice.ts';
 import { STORE_D } from '../../shared/map.ts';
 
-/** 常客奧客 (shared/regulars.ts): the named regular expected in this shift — set by the career flow before the game starts. */
-export interface ShiftRegular {
-  kind: string; name: string; icon: string; bubbles: string[]; handled: string;
-  /** Pre-shift dialogue card (shown in the store during the short prep, once per stage). */
-  pre?: { title: string; lines: { icon: string; name: string; text: string }[] };
-}
-let shiftRegular: ShiftRegular | null = null;
-export function setShiftRegular(r: ShiftRegular | null) { shiftRegular = r; setNamedRegular(null); }
-/** A story scene played as speech bubbles inside the store (no modal), set by the career flow before the game starts. */
-let shiftStory: { icon: string; name: string; text: string }[] | null = null;
-export function setShiftStory(lines: { icon: string; name: string; text: string }[] | null) { shiftStory = lines; }
+// 常客奧客 / in-store story / 商城 decor for this shift: set by the menu before the game starts (shift-ctx.ts)
+import { shiftCtx } from './shift-ctx.ts';
+export type { ShiftRegular } from './shift-ctx.ts';
 
-type Overlay = 'none' | 'pause' | 'shop' | 'quick' | 'summary' | 'settings' | 'help';
+type Overlay = 'none' | 'pause' | 'shop' | 'quick' | 'summary' | 'settings' | 'help' | 'team';
 
 interface Candidate {
   label: string; target: Target; primary?: ActKind; alt?: ActKind; altLabel?: string; reason?: string;
@@ -92,6 +84,7 @@ export class Game {
   private shelfWatch = new ShelfWatch();
   private shelfGuide: { x: number; z: number } | null = null;
   private stockHtml = '';
+  private teamHtml = '';
   private introTimers: number[] = [];
   /** T / View: the 8-slot quick message wheel (multiplayer). */
   private wheel: EmoteWheel;
@@ -105,6 +98,7 @@ export class Game {
   constructor(private conn: GameConnection, private settings: Settings, private touch: boolean, private onExit: (reason?: string, result?: ShiftResult | null) => void) {
     const canvas = $('view') as HTMLCanvasElement;
     this.view = new StoreView(canvas, settings.quality, settings.fov);
+    setNamedRegular(null); // a new shift: no named regular has walked in yet
     this.view.setQuality(settings.quality); this.view.setMaxScale(settings.renderScale);
     this.input = new Input(canvas, touch);
     this.input.padSens = settings.padSens; this.input.padInvertY = settings.padInvertY; setRumble(settings.rumble);
@@ -129,7 +123,7 @@ export class Game {
 
   /** In-store story bubbles (setShiftStory): one line every few seconds in the speech-bubble slot while the player moves. */
   private playStoryBubbles() {
-    const lines = shiftStory; shiftStory = null;
+    const lines = shiftCtx.story; shiftCtx.story = null;
     if (!lines?.length) return;
     lines.forEach((l, i) => this.introTimers.push(window.setTimeout(() => this.bubble(l.icon, l.name, l.text, false, 0), 700 + i * 3800)));
   }
@@ -208,7 +202,7 @@ export class Game {
   back() {
     if (!this.started) return;
     if (this.overlay === 'none') this.openOverlay('pause');
-    else if (this.overlay === 'settings' || this.overlay === 'help') this.openOverlay('pause');
+    else if (this.overlay === 'settings' || this.overlay === 'help' || this.overlay === 'team') this.openOverlay('pause');
     else if (this.overlay !== 'summary') this.closeOverlay();
   }
   /** App sent to the background: show the pause menu so play doesn't resume by surprise. */
@@ -243,6 +237,7 @@ export class Game {
         // the host switched the store type in the lobby: rebuild the 3D store before the game starts
         if (!m.lobby.started && !this.started && m.lobby.map && m.lobby.map !== CURRENT_MAP.id) this.switchMap(m.lobby.map);
         if (!m.lobby.started) this.showLobby();
+        else if (this.overlay === 'team') this.renderTeam();
         break;
       case 'snap': this.onSnap(m.s); break;
       case 'events': for (const e of m.list) this.onEvent(e); break;
@@ -271,6 +266,26 @@ export class Game {
     else if (s === 'offline') { saveLastSession(null); this.exit(detail ?? '連線中斷'); }
     else if (this.started) { el.classList.remove('hidden'); el.style.whiteSpace = 'pre-line'; el.textContent = detail ?? '連線中…'; }
     else UI.lobbyNet(s === 'reconnecting' ? detail ?? '重新連線中…' : '');
+    if (this.started && this.overlay === 'team') this.renderTeam();
+  }
+
+  /** Mid-shift 「隊友」 panel. Ping-only updates (every ≤ 2 s) patch the ping tags so a half-confirmed button survives. */
+  private teamKey = '';
+  private renderTeam() {
+    const l = this.lobby; if (!l) return;
+    // the idle-host vote fields only matter to the others (a redraw would disarm a half-confirmed host button)
+    const host = l.hostId === this.selfId;
+    const key = JSON.stringify({ ...l, players: l.players.map(p => ({ ...p, ping: undefined, afkVote: host ? undefined : p.afkVote })), ...(host ? { hostAfk: undefined, afkVotes: undefined, afkNeed: undefined } : {}) }) + this.selfId + (this.status === 'reconnecting');
+    if (key === this.teamKey && document.querySelector('.teamcard')) { UI.lobbyPings(l); return; }
+    this.teamKey = key;
+    UI.teamPanel(l, this.selfId, {
+      back: () => this.openOverlay('pause'),
+      kick: id => this.send({ type: 'kick', id }),
+      makeHost: id => this.send({ type: 'host', id }),
+      addBot: () => this.send({ type: 'bot', op: 'add' }),
+      removeBot: id => this.send({ type: 'bot', op: 'remove', id }),
+      vote: yes => this.send({ type: 'voteHost', yes }),
+    }, this.status === 'reconnecting');
   }
 
   private switchMap(id: string) {
@@ -309,6 +324,7 @@ export class Game {
       this.started = true;
       UI.hide();
       $('hud').classList.remove('hidden');
+      UI.ensureLobbyCss(); // team-list ping bars
       if (this.touch) { $('touch').classList.remove('hidden'); document.body.classList.add('touch'); }
       else this.input.lock();
       audio.setMusicVolume(this.settings.music);
@@ -350,7 +366,7 @@ export class Game {
         // chapter 1: every karen handled gets the 退散 stamp (the very first one big)
         if (e.karen && e.ok !== false && this.snap?.shift.mode === 'shift' && this.snap.shift.chapter <= 1) this.stamp(stampText('eject'), this.karenStamps++ === 0 ? 'big' : '');
         if (e.karen) this.karenOutcome(e.ok !== false, e.kid);
-        if (e.karen && this.regularId !== null && e.kid === this.regularId && shiftRegular) this.regularSays(e.ok !== false ? shiftRegular.handled : shiftRegular.bubbles[1] ?? shiftRegular.bubbles[0], e.ok === false);
+        if (e.karen && this.regularId !== null && e.kid === this.regularId && shiftCtx.regular) this.regularSays(e.ok !== false ? shiftCtx.regular.handled : shiftCtx.regular.bubbles[1] ?? shiftCtx.regular.bubbles[0], e.ok === false);
         else if (e.karen) this.aftermath(e.karen, e.ok !== false, e.kid ?? 0);
         break;
       case 'sfx':
@@ -362,8 +378,8 @@ export class Game {
       case 'karen':
         audio.play('karen'); audio.karenSting(e.kind); this.introduceKaren(e.kind);
         // the first karen of the regular's kind is the regular: name tag + speech bubbles
-        if (shiftRegular && this.regularId === null && e.kind === shiftRegular.kind) {
-          const r = shiftRegular; this.regularId = e.id;
+        if (shiftCtx.regular && this.regularId === null && e.kind === shiftCtx.regular.kind) {
+          const r = shiftCtx.regular; this.regularId = e.id;
           setNamedRegular({ id: e.id, label: `${r.icon} ${r.name}` });
           this.regularSays(r.bubbles[0]);
           if (r.bubbles[1]) this.afTimers.push(window.setTimeout(() => { if (this.regularId === e.id && this.snap?.customers.some(c => c.id === e.id && !c.resolved)) this.regularSays(r.bubbles[1]); }, 12000));
@@ -511,14 +527,14 @@ export class Game {
   private regularId: number | null = null;
   /** 常客奧客: today's chapter of their story, as a card at the side of the store while the shift gets ready. */
   private showArcCard() {
-    const pre = shiftRegular?.pre; if (!pre) return;
+    const pre = shiftCtx.regular?.pre; if (!pre) return;
     const el = $('arccard');
     el.innerHTML = `<div class="ac-title">${UI.esc(pre.title)}</div>` + pre.lines.map(l => `<p>${UI.esc(l.icon)} <b>${UI.esc(l.name)}</b>：${UI.esc(l.text)}</p>`).join('');
     el.className = '';
     this.introTimers.push(window.setTimeout(() => el.classList.add('fade'), 14000), window.setTimeout(() => el.classList.add('hidden'), 14600));
   }
   private regularSays(text: string, fail = false) {
-    const r = shiftRegular; if (!r) return;
+    const r = shiftCtx.regular; if (!r) return;
     this.bubble(r.icon, r.name, text, fail, 300);
   }
   /** After-story bubble (錢董 / 阿芬姐 / 記者小林) a moment after a signature karen is dealt with. */
@@ -579,7 +595,7 @@ export class Game {
     this.overlay = o;
     this.input.enabled = false;
     if (o !== 'quick') this.input.unlock(); // the wheel points with the captured mouse
-    if (this.conn.solo && (o === 'pause' || o === 'settings' || o === 'help')) this.send({ type: 'pause', paused: true });
+    if (this.conn.solo && (o === 'pause' || o === 'settings' || o === 'help' || o === 'team')) this.send({ type: 'pause', paused: true });
     this.shopKey = ''; this.summaryKey = '';
     switch (o) {
       case 'pause': UI.pauseMenu(this.conn.solo, this.code, {
@@ -588,7 +604,10 @@ export class Game {
         settings: () => this.openOverlay('settings'),
         help: () => this.openOverlay('help'),
         leave: () => { if (!this.conn.solo) saveLastSession(null); this.exit(); },
+        team: !this.conn.solo && this.lobby ? () => this.openOverlay('team') : undefined,
+        teamNote: this.lobby?.hostAfk && this.lobby.hostId !== this.selfId ? '房主沒動作，可投票' : undefined,
       }); break;
+      case 'team': this.teamKey = ''; this.renderTeam(); break;
       case 'settings': UI.settingsMenu(this.settings, s => { this.applySettings(s); this.openOverlay('pause'); }, true); break;
       case 'help': UI.helpScreen(() => this.openOverlay('pause')); break;
       case 'quick': {
@@ -825,7 +844,7 @@ export class Game {
   }
 
   // ---------------- frame ----------------
-  private perfT = 0; private perfFrames = 0;
+  private perfT = 0; private perfFrames = 0; private lastRaw = 0;
   private frame = (now: number) => {
     if (this.destroyed) return;
     this.raf = requestAnimationFrame(this.frame);
@@ -834,8 +853,11 @@ export class Game {
     if (cap > 0 && now - this.last < 1000 / cap - 2) return;
     const dt = Math.min(0.1, (now - this.last) / 1000);
     this.last = now;
+    const prevRaw = this.lastRaw; this.lastRaw = now;
     // dynamic resolution: drop pixel ratio when the device can't keep up, raise it again when it can
-    if (this.settings.adaptive !== false && this.started) {
+    // (a one-off hitch — shader compile, a customer spawning, GC — is left out so it doesn't drop the resolution)
+    const avgMs = this.perfFrames >= 5 ? this.perfT * 1000 / this.perfFrames : Infinity;
+    if (this.settings.adaptive !== false && this.started && now - prevRaw < Math.max(250, avgMs * 4)) {
       this.perfT += dt; this.perfFrames++;
       if (this.perfT >= 2) {
         const fps = this.perfFrames / this.perfT, target = cap > 0 ? cap : 60;
@@ -1010,15 +1032,25 @@ export class Game {
       const warn = (s.phase === 'open' || s.phase === 'closing') && !s.raid && s.shelves[p] <= NEAR_EMPTY;
       const g = this.shelfWatch.isEmpty(p) ? this.shelfWatch.graceLeft(p, nowMs) : -1;
       const tag = g < 0 ? '' : g > 0 ? `<b class="shelfwarn">空了！${g}s</b>` : '<b class="shelfwarn">空架扣口碑中</b>';
-      return `<div class="stockrow${warn ? ' warn' : ''}"><span>${PRODUCT_INFO[p].name}${tag}</span><span>${s.shelves[p]}/${cap}・倉 ${s.backstock[p]}</span></div><div class="bar${warn ? ' warn' : ''}"><i style="width:${r * 100}%;background:${r < 0.3 ? '#ff6b6b' : '#4dabf7'}"></i></div>`;
+      // low / empty is said with a symbol too, not only the red bar (色盲友善)
+      const lvlMark = s.shelves[p] <= 0 ? '<i class="lvl" title="空了">✖</i>' : r < 0.3 ? '<i class="lvl" title="快空了">▼</i>' : '';
+      return `<div class="stockrow${warn ? ' warn' : ''}"><span>${PRODUCT_INFO[p].name}${tag}</span><span>${lvlMark}${s.shelves[p]}/${cap}・倉 ${s.backstock[p]}</span></div><div class="bar${warn ? ' warn' : ''}"><i class="${r < 0.3 ? 'low' : 'ok'}" style="width:${r * 100}%"></i></div>`;
     }).join('') + `<div class="stockrow"><span>🧹 拖把</span><span>${s.mopsOnRack}/2</span></div><div class="stockrow"><span>💧 髒污</span><span>${s.spills.length}</span></div>`;
     // only touch the DOM when something changed (keeps the empty-shelf flash animation running smoothly)
     if (stockHtml !== this.stockHtml) { this.stockHtml = stockHtml; $('h-stock').innerHTML = stockHtml; }
-    $('h-team').innerHTML = s.players.map(p => {
+    // team list: pings come with the lobby updates (≤ every 2 s); the DOM is only touched when the text changes
+    const lp = new Map((this.lobby?.players ?? []).map(p => [p.id, p]));
+    const teamHtml = s.players.map(p => {
       const held = p.held ? (p.held.kind === 'box' ? '📦' : p.held.kind === 'coffee' ? '☕' : '🧹') : '';
-      const st = !p.connected ? '📶' : p.away ? '💤' : p.busy ? '⏳' : '';
-      return `<div class="stockrow"><span><span class="dot" style="display:inline-block;width:11px;height:11px;vertical-align:-1px;background:#${p.color.toString(16).padStart(6, '0')}"></span> ${UI.esc(p.name)}${p.id === this.selfId ? '（你）' : ''}</span><span>${held}${st}${(s.phase === 'prep' || s.phase === 'summary') ? (p.ready ? '✅' : '') : ''}</span></div>`;
+      const recon = !p.connected || (p.id === this.selfId && this.status === 'reconnecting');
+      const st = recon ? '' : p.away ? '💤' : p.busy ? '🛠' : '';
+      const ping = this.conn.solo || p.bot ? undefined : lp.get(p.id)?.ping;
+      const net = recon ? '<span class="trecon">🔄 重連中…</span>'
+        : ping !== undefined ? `<span class="tping" title="延遲 ${ping} ms・${UI.pingWord(ping)}">📶${ping}ms${UI.pingBars(ping)}</span>` : '';
+      const crown = !this.conn.solo && this.lobby?.hostId === p.id ? '👑' : '';
+      return `<div class="stockrow" data-pid="${UI.esc(p.id)}"><span><span class="dot" style="display:inline-block;width:11px;height:11px;vertical-align:-1px;background:#${p.color.toString(16).padStart(6, '0')}"></span> ${crown}${UI.esc(p.name)}${p.id === this.selfId ? '（你）' : ''}</span><span>${held}${st}${(s.phase === 'prep' || s.phase === 'summary') ? (p.ready ? '✅' : '⏳') : ''}${net}</span></div>`;
     }).join('');
+    if (teamHtml !== this.teamHtml) { this.teamHtml = teamHtml; $('h-team').innerHTML = teamHtml; }
     // prompt
     const pr = $('prompt');
     if (this.overlay !== 'none') pr.innerHTML = '';
@@ -1091,17 +1123,20 @@ export class Game {
       const rev = s.dayStats.revenue;
       $('sb-money').textContent = s.shift.endless ? `$${rev}・分數約 ${rev + s.dayStats.ejected * 10 + s.dayStats.karensResolved * 15 + Math.max(0, elapsed)}` : `$${rev} / $${s.shift.goal}`;
       ($('sb-moneybar') as HTMLElement).style.width = s.shift.endless ? '100%' : `${Math.min(100, rev / s.shift.goal * 100)}%`;
-      ($('sb-moneybar') as HTMLElement).style.background = rev >= s.shift.goal ? '#51cf66' : '#4dabf7';
+      $('sb-moneybar').classList.toggle('done', !s.shift.endless && rev >= s.shift.goal); // goal reached: stripes + ✓ text, not just green
+      if (!s.shift.endless && rev >= s.shift.goal) $('sb-money').textContent += ' ✓達標';
       document.body.classList.toggle('raid', !!s.raid);
       if (s.raid) {
         // raid: the bar shows how close the clerk is to throwing you out
         $('sb-extra').textContent = `😈 搗亂分數 ${s.raid.score}`;
         $('sb-chaoslabel').textContent = '👀 店員注意';
-        $('sb-chaos').textContent = s.raid.watched >= 0.7 ? '快被抓了！' : s.raid.watched > 0 ? '被盯上了' : '安全';
+        $('sb-chaos').textContent = s.raid.watched >= 0.7 ? '🚨 快被抓了！' : s.raid.watched > 0 ? '👀 被盯上了' : '✔ 安全';
+        $('sb-chaosbar').classList.toggle('crit', s.raid.watched >= 0.7);
         ($('sb-chaosbar') as HTMLElement).style.width = `${Math.round(s.raid.watched * 100)}%`;
       } else {
         $('sb-chaoslabel').textContent = '混亂度';
-        $('sb-chaos').textContent = `${s.chaos}%`;
+        $('sb-chaos').textContent = `${s.chaos >= 80 ? '🔥 ' : s.chaos >= 55 ? '⚠ ' : ''}${s.chaos}%`;
+        $('sb-chaosbar').classList.toggle('crit', s.chaos >= 80);
         ($('sb-chaosbar') as HTMLElement).style.width = `${s.chaos}%`;
       }
       $('h-day').textContent = s.shift.endless ? '無限夜班' : `第 ${s.shift.chapter} 章`;
@@ -1115,7 +1150,7 @@ export class Game {
       $('burst-hint').textContent = s.burst >= 100 ? `按 ${this.touch ? '「退散」' : keyOf('ultimate')} 全店奧客退散！` : '請出門 +25・旋風 +12・投擲 +4';
     }
     (($('stamina').firstElementChild) as HTMLElement).style.width = `${this.stamina / s.shift.staminaMax * 100}%`;
-    (($('stamina').firstElementChild) as HTMLElement).style.background = this.stamina < 25 ? '#ff6b6b' : '#69db7c';
+    ($('stamina').firstElementChild as HTMLElement).classList.toggle('low', this.stamina < 25); // colour + stripes (色盲友善)
     const es = $('eventstrip');
     if (s.event) { es.classList.remove('hidden'); es.textContent = s.event.kind === 'outage' ? `⚡ 停電中 ${Math.ceil(s.event.left)}s` : `🚶 尖峰人潮 ${Math.ceil(s.event.left)}s`; } else es.classList.add('hidden');
     if (s.raid && s.phase === 'open') {

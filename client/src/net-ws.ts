@@ -21,6 +21,10 @@ export async function roomMap(wsUrl: string, code: string): Promise<string | und
   } catch { return undefined; }
 }
 
+/** What a player asked to leave sees (they return to the main menu). In co-op the progress is the shared store's, saved to
+ *  this device at every nightly settlement; that stays. Today's unsettled takings stay with the store and its team. */
+export const KICKED_TEXT = '👋 房主請你先離開這個房間（不是你的錯，之後也能用房號再加入）。店的進度已經保存到最近一次日結；今天還沒結算的營收留在店裡，由隊友一起結算。';
+
 export class WsConnection implements GameConnection {
   readonly solo = false;
   onMessage: (msg: ServerMsg) => void = () => {};
@@ -95,7 +99,7 @@ export class WsConnection implements GameConnection {
         this.onStatus('online');
         this.raw({ type: 'hb', t: Date.now(), rtt: this.rtt || undefined }); // first ping right away (the lobby shows it)
       }
-      if (msg.type === 'error' && msg.code === 'kicked') { this.closedByUser = true; this.stopCountdown(); this.onStatus('offline', '👋 房主把你請出了這個房間。'); return; }
+      if (msg.type === 'error' && msg.code === 'kicked') { this.closedByUser = true; this.stopCountdown(); this.onStatus('offline', KICKED_TEXT); return; }
       if (msg.type === 'error' && this.everJoined && (msg.code === 'no_room' || msg.code === 'room_full' || msg.code === 'room_closed')) {
         this.closedByUser = true; this.stopCountdown();
         this.onStatus('offline', msg.code === 'no_room' || msg.code === 'room_closed' ? '🌙 這間店已經打烊了：房間保留時間到了，或大家都離開了。' : msg.message);
@@ -112,7 +116,7 @@ export class WsConnection implements GameConnection {
       this.ws = null;
       if (this.closedByUser) return;
       if (ev.code === 4000 && ev.reason === 'replaced') { this.closedByUser = true; this.onStatus('offline', '此帳號已在其他裝置連線'); return; }
-      if (ev.code === 4000 && ev.reason === 'kicked') { this.closedByUser = true; this.onStatus('offline', '👋 房主把你請出了這個房間。'); return; }
+      if (ev.code === 4000 && ev.reason === 'kicked') { this.closedByUser = true; this.onStatus('offline', KICKED_TEXT); return; }
       if (!this.everJoined && this.attempts >= 2) { this.onStatus('offline', '無法連線到伺服器'); this.closedByUser = true; return; }
       this.scheduleRetry();
     };

@@ -18,6 +18,11 @@ export const EYE_HEIGHT = 1.62;
 
 export const RECONNECT_GRACE_GAME_S = 120;
 export const RECONNECT_GRACE_LOBBY_S = 45;
+/** A host with no input for this long counts as away: the others can vote (majority) to hand the host role on. */
+export const HOST_AFK_S = 90;
+/** Host tools (kick / hand over / add or remove a bot): at most HOST_ACTION_BURST actions per HOST_ACTION_WINDOW_MS. */
+export const HOST_ACTION_BURST = 3;
+export const HOST_ACTION_WINDOW_MS = 2000;
 
 export type Product = 'drinks' | 'snacks' | 'bento' | 'extra';
 /** Every product slot. 'extra' is an optional fourth line that only some maps stock (MapDef.products.extra). */

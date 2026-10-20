@@ -18,6 +18,17 @@ export interface Settings {
   shake: boolean;
   /** 減少動態效果: no shake, hit-stop / slow-mo, or full-screen flashes (sounds and rumble stay). */
   reduceMotion: boolean;
+  /** 色盲友善: swaps the key HUD / minimap colours ('rg' 紅綠 = protan/deutan, 'by' 藍黃 = tritan). Shapes / icons are always on. */
+  colorblind: ColorblindMode;
+  /** 字級: HUD and menu scale (1, 1.15 or 1.3). */
+  textScale: number;
+  /** 音效字幕: short text captions for important sounds. */
+  captions: boolean;
+}
+export type ColorblindMode = 'off' | 'rg' | 'by';
+/** The OS asks for less motion (prefers-reduced-motion): 減少動態效果 then starts on. */
+export function prefersReducedMotion(): boolean {
+  try { return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches; } catch { return false; }
 }
 
 const SETTINGS_KEY = 'fucustomer.settings.v1';
@@ -34,15 +45,16 @@ function write(key: string, v: unknown) {
   try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage full / private mode */ }
 }
 
-export function defaultSettings(touch = isTouch): Settings {
+export function defaultSettings(touch = isTouch, reducedMotion = prefersReducedMotion()): Settings {
   return {
     name: '', sensitivity: 1, invertY: false, quality: touch ? 'low' : 'high', volume: 0.7, music: 0.5, serverUrl: '', showFps: false, fov: 75, fpsCap: touch ? 30 : 0, adaptive: true,
-    master: 1, padSens: 1, padInvertY: false, rumble: true, renderScale: 1, fullscreen: true, shake: true, reduceMotion: false,
+    master: 1, padSens: 1, padInvertY: false, rumble: true, renderScale: 1, fullscreen: true, shake: true, reduceMotion: reducedMotion,
+    colorblind: 'off', textScale: 1, captions: false,
   };
 }
 /** Defaults + whitelisted, range-clamped stored values (a hand-edited or old settings blob can't break the game). */
-export function sanitizeSettings(raw: unknown, touch = isTouch): Settings {
-  const d = defaultSettings(touch);
+export function sanitizeSettings(raw: unknown, touch = isTouch, reducedMotion = prefersReducedMotion()): Settings {
+  const d = defaultSettings(touch, reducedMotion);
   const r = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
   const url = typeof r.serverUrl === 'string' && /^wss?:\/\/[^\s]{1,200}$/.test(r.serverUrl.trim()) ? r.serverUrl.trim() : '';
   return { ...d, ...(cleanSettings(r) as Partial<Settings>), serverUrl: url };

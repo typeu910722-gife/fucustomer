@@ -2,6 +2,7 @@
 import { COFFEE_MACHINE, COUNTER, CRATES, DECOR, MOP_RACK, SHELVES, STORE_D, STORE_W, WALLS, AABB, DOOR_X0, DOOR_X1 } from '../../shared/map.ts';
 import { PRODUCT_INFO } from '../../shared/constants.ts';
 import type { Snapshot } from '../../shared/protocol.ts';
+import { palette } from './a11y.ts';
 
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
 
@@ -37,21 +38,32 @@ export class Minimap {
     const g = this.g;
     g.clearRect(0, 0, this.canvas.width, this.canvas.height);
     g.drawImage(this.bg, 0, 0);
-    // spills
+    // Every state has its own shape, not only a colour (色盲友善 swaps the colours on top of that):
+    // spill = flat blot, dropped box = square, karen = big diamond with「!」, waiting for coffee/food = small square,
+    // at the till = ringed dot, other customers = small dot; teammates = arrows, pings = solid ring, guide = dashed ring.
+    const pal = palette();
     g.fillStyle = '#8a6d3b';
-    for (const sp of s.spills) { g.beginPath(); g.arc(this.X(sp.x), this.Z(sp.z), 3, 0, Math.PI * 2); g.fill(); }
+    for (const sp of s.spills) { g.beginPath(); g.ellipse(this.X(sp.x), this.Z(sp.z), 4, 2.2, 0, 0, Math.PI * 2); g.fill(); }
     for (const it of s.items) { g.fillStyle = '#c49a6c'; g.fillRect(this.X(it.x) - 2, this.Z(it.z) - 2, 4, 4); }
     // customers
     for (const c of s.customers) {
+      const cx = this.X(c.x), cz = this.Z(c.z);
       if (c.kind !== 'normal' && !c.resolved && c.revealed) {
-        const r = 4 + Math.sin(time * 8) * 1.5;
-        g.fillStyle = '#ff2d2d'; g.beginPath(); g.arc(this.X(c.x), this.Z(c.z), r, 0, Math.PI * 2); g.fill();
-        g.fillStyle = '#fff'; g.font = 'bold 9px sans-serif'; g.textAlign = 'center'; g.fillText('!', this.X(c.x), this.Z(c.z) + 3);
+        const r = 5 + Math.sin(time * 8) * 1.2;
+        g.fillStyle = pal.karen; g.beginPath(); g.moveTo(cx, cz - r); g.lineTo(cx + r, cz); g.lineTo(cx, cz + r); g.lineTo(cx - r, cz); g.closePath(); g.fill();
+        g.strokeStyle = '#2a1f3d'; g.lineWidth = 1.2; g.stroke();
+        g.fillStyle = '#fff'; g.font = 'bold 9px sans-serif'; g.textAlign = 'center'; g.fillText('!', cx, cz + 3);
       } else if (c.kind === 'hog' && !c.revealed) {
         continue;
+      } else if (c.state === 'waitCoffee' || c.state === 'waitFood') {
+        g.fillStyle = pal.wait; g.fillRect(cx - 2.4, cz - 2.4, 4.8, 4.8);
+        g.strokeStyle = '#2a1f3d'; g.lineWidth = 0.8; g.strokeRect(cx - 2.4, cz - 2.4, 4.8, 4.8);
+      } else if (c.state === 'atRegister') {
+        g.fillStyle = pal.till; g.beginPath(); g.arc(cx, cz, 2.6, 0, Math.PI * 2); g.fill();
+        g.strokeStyle = '#2a1f3d'; g.lineWidth = 1.2; g.stroke();
       } else {
-        g.fillStyle = c.state === 'waitCoffee' ? '#ffd43b' : c.state === 'atRegister' ? '#ffffff' : '#6c757d';
-        g.beginPath(); g.arc(this.X(c.x), this.Z(c.z), 2.4, 0, Math.PI * 2); g.fill();
+        g.fillStyle = pal.normal;
+        g.beginPath(); g.arc(cx, cz, 2.2, 0, Math.PI * 2); g.fill();
       }
     }
     // pings
@@ -68,8 +80,9 @@ export class Minimap {
       g.globalAlpha = 1;
     }
     if (guide) {
-      g.strokeStyle = '#ffd43b'; g.lineWidth = 2.5;
+      g.strokeStyle = '#ffd43b'; g.lineWidth = 2.5; g.setLineDash([3, 2]);
       g.beginPath(); g.arc(this.X(guide.x), this.Z(guide.z), 5 + Math.abs(Math.sin(time * 4)) * 4, 0, Math.PI * 2); g.stroke();
+      g.setLineDash([]);
     }
     this.arrow(self.x, self.z, self.yaw, '#ffffff', 6, true);
   }

@@ -85,7 +85,8 @@ export class RoomDO extends DurableObject<Env> {
   }
 
   private roomOpts() {
-    return { onCheckpoint: (cp: RoomCheckpoint) => this.saveCheckpoint(cp), log: (s: string) => this.log(s) };
+    const afk = Number(this.env.BK_HOST_AFK_S); // test only: a shorter host-AFK threshold
+    return { onCheckpoint: (cp: RoomCheckpoint) => this.saveCheckpoint(cp), log: (s: string) => this.log(s), hostAfkMs: afk > 0 ? afk * 1000 : undefined };
   }
 
   private saveCheckpoint(cp: RoomCheckpoint) {
