@@ -71,16 +71,21 @@ export function checksum(s: string): string {
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const idList = (v: unknown) => (Array.isArray(v) ? [...new Set(v.filter((k): k is string => typeof k === 'string' && /^[A-Za-z0-9_-]{1,32}$/.test(k)))].slice(0, 64) : []);
 
-function cleanSettings(v: unknown): Record<string, string | number | boolean> {
+/** Allowed 幀率上限 values (0 = no cap: the browser syncs to the display's refresh rate). */
+export const FPS_CAPS = [0, 30, 40, 60, 120, 144] as const;
+
+/** Settings whitelist with range clamps. Shared by save codes and by loading settings from localStorage. */
+export function cleanSettings(v: unknown): Record<string, string | number | boolean> {
   const out: Record<string, string | number | boolean> = {};
   if (!isObj(v)) return out;
   const num = (k: string, lo: number, hi: number) => { const x = v[k]; if (typeof x === 'number' && Number.isFinite(x)) out[k] = Math.max(lo, Math.min(hi, x)); };
   const bool = (k: string) => { if (typeof v[k] === 'boolean') out[k] = v[k] as boolean; };
   if (typeof v.name === 'string') out.name = v.name.slice(0, 16);
   num('sensitivity', 0.2, 3); num('fov', 60, 100); num('volume', 0, 1); num('music', 0, 1);
+  num('master', 0, 1); num('padSens', 0.2, 3); num('renderScale', 0.5, 1);
   if (v.quality === 'low' || v.quality === 'medium' || v.quality === 'high') out.quality = v.quality;
-  if (v.fpsCap === 0 || v.fpsCap === 30 || v.fpsCap === 60) out.fpsCap = v.fpsCap;
-  bool('invertY'); bool('showFps'); bool('adaptive');
+  if ((FPS_CAPS as readonly unknown[]).includes(v.fpsCap)) out.fpsCap = v.fpsCap as number;
+  bool('invertY'); bool('showFps'); bool('adaptive'); bool('padInvertY'); bool('rumble'); bool('fullscreen');
   return out; // serverUrl is deliberately dropped
 }
 

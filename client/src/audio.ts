@@ -1,8 +1,12 @@
 // Procedural sound effects (WebAudio, no asset downloads) with simple distance attenuation.
 export class Audio {
   ctx: AudioContext | null = null;
+  /** Sound-effects bus (音效音量). Music and store ambience bypass it and go straight to `out`. */
   master: GainNode | null = null;
+  /** Master output (主音量) → limiter → speakers. */
+  out: GainNode | null = null;
   volume = 0.7;
+  masterVolume = 1;
   listener = { x: 0, z: 0 };
   private noiseBuf: AudioBuffer | null = null;
   private ambient: { stop(): void } | null = null;
@@ -14,10 +18,13 @@ export class Audio {
     this.ctx = new AC();
     this.master = this.ctx.createGain();
     this.master.gain.value = this.volume;
+    this.out = this.ctx.createGain();
+    this.out.gain.value = this.masterVolume;
+    this.master.connect(this.out);
     // gentle limiter so stacked effects (ultimate + crash + eject) never clip
     const comp = this.ctx.createDynamicsCompressor();
     comp.threshold.value = -14; comp.knee.value = 10; comp.ratio.value = 6; comp.attack.value = 0.003; comp.release.value = 0.2;
-    this.master.connect(comp); comp.connect(this.ctx.destination);
+    this.out.connect(comp); comp.connect(this.ctx.destination);
     const len = this.ctx.sampleRate * 0.6;
     this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
     const d = this.noiseBuf.getChannelData(0);
@@ -25,6 +32,7 @@ export class Audio {
   }
 
   setVolume(v: number) { this.volume = v; if (this.master) this.master.gain.value = v; }
+  setMaster(v: number) { this.masterVolume = v; if (this.out) this.out.gain.value = v; }
   suspend() { void this.ctx?.suspend(); }
   resume() { void this.ctx?.resume(); }
 
@@ -123,7 +131,7 @@ export class Audio {
     if (this.musicMood === mood && this.musicTimer) return;
     this.stopMusic();
     this.musicMood = mood;
-    this.musicGain = c.createGain(); this.musicGain.gain.value = this.musicVolume * 0.35; this.musicGain.connect(this.master);
+    this.musicGain = c.createGain(); this.musicGain.gain.value = this.musicVolume * 0.35; this.musicGain.connect(this.out ?? this.master);
     this.nextBeat = c.currentTime + 0.1; this.beat = 0;
     this.musicTimer = window.setInterval(() => this.schedule(), 90);
   }
@@ -184,7 +192,7 @@ export class Audio {
     this.stopStoreAmbience();
     const c = this.ctx; if (!c || !this.master || !this.noiseBuf) return;
     const p = STORE_AMBIENCE[mapId] ?? STORE_AMBIENCE.convenience;
-    const gain = c.createGain(); gain.gain.value = 0.6 * this.musicVolume; gain.connect(this.master);
+    const gain = c.createGain(); gain.gain.value = 0.6 * this.musicVolume; gain.connect(this.out ?? this.master);
     const nodes: AudioScheduledSourceNode[] = [];
     if (p.bed) { // looping filtered noise (fridge hum, fryer sizzle, crowd murmur…)
       const s = c.createBufferSource(); s.buffer = this.noiseBuf; s.loop = true;

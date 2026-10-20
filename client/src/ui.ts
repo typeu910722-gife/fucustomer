@@ -8,7 +8,10 @@ import { getLicense, renderGoogleButton, signOut } from './account.ts';
 import { NOTICES, randomQuote } from './quotes.ts';
 import { getCosmetic } from '../../shared/shop.ts';
 import { backupScreen } from './backup-ui.ts';
-import { isApp } from './platform.ts';
+import { desktop, isApp, isFullscreen, setFullscreen } from './platform.ts';
+import { BTN, buttonGlyph, controlsLine } from './padmap.ts';
+import { padStyle } from './pad.ts';
+import { isTouch } from './storage.ts';
 
 // ---------- 打工人的號角: invite links ----------
 /** Public address for invite links from the native apps (their own origin isn't reachable by friends). */
@@ -218,36 +221,60 @@ export function friendLicenseScreen(onBack: () => void) {
 }
 
 export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay = false) {
+  const fsNow = isFullscreen();
+  const pct = (v: number) => `${Math.round(v * 100)}%`;
   show(`
-    <div class="card">
-      <h2>⚙ 設定</h2>
-      <label class="field">畫質（手機建議「低」，玩法完全相同）
-        <select id="s-q"><option value="low">低（省電）</option><option value="medium">中</option><option value="high">高（陰影）</option></select></label>
-      <label class="field">視角靈敏度 <span id="s-sens-v"></span><input type="range" id="s-sens" min="0.2" max="3" step="0.1" value="${s.sensitivity}"></label>
-      <label class="field">視野 FOV <span id="s-fov-v"></span><input type="range" id="s-fov" min="60" max="100" step="1" value="${s.fov}"></label>
-      <label class="field">音效音量<input type="range" id="s-vol" min="0" max="1" step="0.05" value="${s.volume}"></label>
-      <label class="field">音樂音量<input type="range" id="s-music" min="0" max="1" step="0.05" value="${s.music}"></label>
-      <label class="field">幀率上限（手機建議 30，較省電）
-        <select id="s-fps-cap"><option value="0">不限制</option><option value="60">60 FPS</option><option value="30">30 FPS</option></select></label>
-      <label class="muted"><input type="checkbox" id="s-adapt" ${s.adaptive ? 'checked' : ''}> 自動調整解析度（卡頓時自動降低）</label><br>
-      <label class="muted"><input type="checkbox" id="s-inv" ${s.invertY ? 'checked' : ''}> 反轉 Y 軸</label><br>
-      <label class="muted"><input type="checkbox" id="s-fps" ${s.showFps ? 'checked' : ''}> 顯示 FPS</label>
+    <div class="card wide settings">
+      <div class="row" style="align-items:center"><h2>⚙ 設定</h2><button class="btn small" id="s-ok2" style="flex:0" data-back>← 完成</button></div>
+      <div class="setgrid">
+        <section><h3>🖥 畫面</h3>
+          ${isTouch ? '' : `<label class="chk"><input type="checkbox" id="s-full" ${fsNow ? 'checked' : ''}> 全螢幕${desktop ? '（F11 也可切換）' : ''}</label>`}
+          <label class="field">畫質（手機建議「低」，玩法完全相同）
+            <select id="s-q"><option value="low">低（省電）</option><option value="medium">中</option><option value="high">高（陰影）</option></select></label>
+          <label class="field">解析度比例 <span id="s-scale-v"></span><input type="range" id="s-scale" min="0.5" max="1" step="0.05" value="${s.renderScale}"></label>
+          <label class="chk"><input type="checkbox" id="s-adapt" ${s.adaptive ? 'checked' : ''}> 自動調整解析度（卡頓時自動降低）</label>
+          <label class="field">幀率上限
+            <select id="s-fps-cap"><option value="0">不限制（跟隨螢幕更新率／垂直同步）</option><option value="144">144 FPS</option><option value="120">120 FPS</option><option value="60">60 FPS</option><option value="40">40 FPS（Steam Deck 省電）</option><option value="30">30 FPS（手機省電）</option></select></label>
+          <label class="field">視野 FOV <span id="s-fov-v"></span><input type="range" id="s-fov" min="60" max="100" step="1" value="${s.fov}"></label>
+          <label class="chk"><input type="checkbox" id="s-fps" ${s.showFps ? 'checked' : ''}> 顯示 FPS</label>
+        </section>
+        <section><h3>🔊 聲音</h3>
+          <label class="field">主音量 <span id="s-master-v"></span><input type="range" id="s-master" min="0" max="1" step="0.05" value="${s.master}"></label>
+          <label class="field">音樂音量 <span id="s-music-v"></span><input type="range" id="s-music" min="0" max="1" step="0.05" value="${s.music}"></label>
+          <label class="field">音效音量 <span id="s-vol-v"></span><input type="range" id="s-vol" min="0" max="1" step="0.05" value="${s.volume}"></label>
+          <h3>🎮 操作</h3>
+          <label class="field">滑鼠靈敏度 <span id="s-sens-v"></span><input type="range" id="s-sens" min="0.2" max="3" step="0.1" value="${s.sensitivity}"></label>
+          <label class="chk"><input type="checkbox" id="s-inv" ${s.invertY ? 'checked' : ''}> 滑鼠反轉 Y 軸</label>
+          <label class="field">手把視角靈敏度 <span id="s-pad-v"></span><input type="range" id="s-pad" min="0.2" max="3" step="0.1" value="${s.padSens}"></label>
+          <label class="chk"><input type="checkbox" id="s-pinv" ${s.padInvertY ? 'checked' : ''}> 手把反轉 Y 軸</label>
+          <label class="chk"><input type="checkbox" id="s-rumble" ${s.rumble ? 'checked' : ''}> 手把震動（被推、送走奧客、全店退散）</label>
+        </section>
+      </div>
       <label class="field">自訂伺服器（留空使用預設）<input type="text" id="s-url" placeholder="wss://example.com/ws" value="${esc(s.serverUrl)}"></label>
       ${overlay ? '' : '<button class="btn info" id="s-backup">💾 存檔備份（換裝置）<span class="sub">匯出／匯入存檔碼，網頁、Android、Windows 互通</span></button>'}
       <button class="btn primary" id="s-ok">完成</button>
     </div>`, overlay ? 'screen overlay' : 'screen');
   (document.getElementById('s-q') as HTMLSelectElement).value = s.quality;
   (document.getElementById('s-fps-cap') as HTMLSelectElement).value = String(s.fpsCap ?? 0);
-  const upd = () => { document.getElementById('s-sens-v')!.textContent = val('s-sens'); document.getElementById('s-fov-v')!.textContent = val('s-fov'); };
-  upd(); on('s-sens', 'input', upd); on('s-fov', 'input', upd);
-  on('s-backup', 'click', () => backupScreen(() => settingsMenu(s, onDone, overlay)));
-  on('s-ok', 'click', () => {
-    onDone({
-      ...s, quality: val('s-q') as Settings['quality'], sensitivity: Number(val('s-sens')), fov: Number(val('s-fov')), volume: Number(val('s-vol')), music: Number(val('s-music')), fpsCap: Number(val('s-fps-cap')), adaptive: (document.getElementById('s-adapt') as HTMLInputElement).checked,
-      invertY: (document.getElementById('s-inv') as HTMLInputElement).checked, showFps: (document.getElementById('s-fps') as HTMLInputElement).checked,
-      serverUrl: val('s-url').trim(),
-    });
+  const upd = () => {
+    const t = (id: string, v: string) => { document.getElementById(id)!.textContent = v; };
+    t('s-sens-v', val('s-sens')); t('s-fov-v', val('s-fov')); t('s-pad-v', val('s-pad'));
+    t('s-scale-v', pct(Number(val('s-scale')))); t('s-master-v', pct(Number(val('s-master')))); t('s-music-v', pct(Number(val('s-music')))); t('s-vol-v', pct(Number(val('s-vol'))));
+  };
+  upd();
+  for (const id of ['s-sens', 's-fov', 's-pad', 's-scale', 's-master', 's-music', 's-vol']) on(id, 'input', upd);
+  const chk = (id: string) => (document.getElementById(id) as HTMLInputElement | null)?.checked ?? false;
+  let fullscreen = s.fullscreen;
+  on('s-full', 'change', () => { const want = chk('s-full'); void setFullscreen(want).then(st => { fullscreen = want; const el = document.getElementById('s-full') as HTMLInputElement | null; if (el) el.checked = st; }); });
+  const collect = (): Settings => ({
+    ...s, quality: val('s-q') as Settings['quality'], sensitivity: Number(val('s-sens')), fov: Number(val('s-fov')), volume: Number(val('s-vol')), music: Number(val('s-music')),
+    master: Number(val('s-master')), fpsCap: Number(val('s-fps-cap')), adaptive: chk('s-adapt'), renderScale: Number(val('s-scale')),
+    invertY: chk('s-inv'), showFps: chk('s-fps'), padSens: Number(val('s-pad')), padInvertY: chk('s-pinv'), rumble: chk('s-rumble'), fullscreen,
+    serverUrl: val('s-url').trim(),
   });
+  on('s-backup', 'click', () => backupScreen(() => settingsMenu(collect(), onDone, overlay)));
+  on('s-ok', 'click', () => onDone(collect()));
+  on('s-ok2', 'click', () => onDone(collect()));
 }
 
 /** Lobby share/copy feedback survives lobby redraws (someone readying up re-renders the screen) for ~2 s. */
@@ -355,8 +382,8 @@ export function helpScreen(onBack: () => void) {
         ${Object.values(KAREN_INFO).map(k => `<div class="shopitem"><b>${k.name}</b>${k.hint}<br><span class="muted">處理：${k.how}</span></div>`).join('')}
       </div>
       <h3>操作</h3>
-      <p class="muted">電腦：WASD 移動、Shift 跑（耗體力）、滑鼠視角、左鍵/E 互動、右鍵/F 次要、G 放下、空白鍵 抓起/丟出、Q 拖把旋風、R 全店退散、V 標記、T 快捷訊息、B 採購、Enter 準備、Esc/P 選單。<br>
-      手把：左搖桿移動、右搖桿視角、A 互動、X 次要、B 放下、Y 抓/丟、RB 旋風、LB 全店退散、L3/LT 跑、十字上 標記、十字下 採購、十字右 準備、Start 選單。<br>
+      <p class="muted">電腦：WASD 移動、Shift 跑（耗體力）、滑鼠視角、左鍵/E 互動、右鍵/F 次要、G 放下、空白鍵 抓起/丟出、X 出手、Q 拖把旋風、R 全店退散、V 標記、T 快捷訊息、B 採購、Enter 準備、Esc/P 選單。<br>
+      手把：${esc(controlsLine('pad', padStyle()))}・十字← 跳過教學。選單裡：十字鍵／左搖桿 移動、${buttonGlyph(BTN.A, padStyle())} 確定、${buttonGlyph(BTN.B, padStyle())} 返回、${buttonGlyph(BTN.LB, padStyle())}/${buttonGlyph(BTN.RB, padStyle())} 切換分頁、左右 調整滑桿。<br>
       手機：左半邊拖曳＝搖桿、右半邊拖曳＝視角，右側按鈕互動／放下／抓丟／旋風／退散。</p>
       <p class="muted">抓起奧客後轉向發光出口丟出去，飛過門線才算送走；誤丟一般顧客會大扣分。混亂度滿 100% 或口碑歸零就提早下班。</p>
       <button class="btn primary" id="h-back">返回</button>

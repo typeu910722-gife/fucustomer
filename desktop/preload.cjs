@@ -9,5 +9,6 @@ contextBridge.exposeInMainWorld('fuDesktop', {
   setPresence: code => ipcRenderer.send('presence', code),
   onJoinRequest: cb => ipcRenderer.on('join-request', (_e, code) => cb(code)),
   setFullscreen: on => ipcRenderer.send('fullscreen', on),
+  isFullscreen: () => { try { return !!ipcRenderer.sendSync('is-fullscreen'); } catch { return false; } },
   quit: () => ipcRenderer.send('quit'),
 });

@@ -19,6 +19,8 @@ import { StoreView } from './render.ts';
 import { Settings, loadFlags, saveCoopSave, saveFlags, saveLastSession, saveSettings, saveSoloSave } from './storage.ts';
 import * as UI from './ui.ts';
 import { desktop } from './platform.ts';
+import { inputMode, keyOf, padStyle, rumble, setRumble } from './pad.ts';
+import { controlsLine } from './padmap.ts';
 
 type Overlay = 'none' | 'pause' | 'shop' | 'quick' | 'summary' | 'settings' | 'help';
 
@@ -76,8 +78,10 @@ export class Game {
   constructor(private conn: GameConnection, private settings: Settings, private touch: boolean, private onExit: (reason?: string, result?: ShiftResult | null) => void) {
     const canvas = $('view') as HTMLCanvasElement;
     this.view = new StoreView(canvas, settings.quality, settings.fov);
-    this.view.setQuality(settings.quality);
+    this.view.setQuality(settings.quality); this.view.setMaxScale(settings.renderScale);
     this.input = new Input(canvas, touch);
+    this.input.padSens = settings.padSens; this.input.padInvertY = settings.padInvertY; setRumble(settings.rumble);
+    $('helpkeys').textContent = controlsLine(inputMode(), padStyle());
     this.minimap = new Minimap($('minimap') as HTMLCanvasElement);
     conn.onMessage = m => this.onMessage(m);
     conn.onStatus = (s, d) => this.onStatus(s, d);
@@ -205,7 +209,7 @@ export class Game {
     const canvas = $('view') as HTMLCanvasElement;
     this.view.renderer.dispose();
     this.view = new StoreView(canvas, this.settings.quality, this.settings.fov);
-    this.view.setQuality(this.settings.quality);
+    this.view.setQuality(this.settings.quality); this.view.setMaxScale(this.settings.renderScale);
   }
 
   private showLobby() {
@@ -261,10 +265,11 @@ export class Game {
       case 'karen': audio.play('karen'); audio.karenSting(e.kind); this.introduceKaren(e.kind); break;
       case 'quick': this.addFeed(`💬 ${e.from}：${e.text}`); audio.play('quick'); break;
       case 'phase':
-        if (e.phase === 'prep' && this.snap && this.snap.shift.mode !== 'shift') this.toast(`☀ 第 ${e.day} 天・開店準備：採購(B)、補貨、升級，按 Enter 準備開店`, 'info', 5000);
+        if (e.phase === 'prep' && this.snap && this.snap.shift.mode !== 'shift') this.toast(`☀ 第 ${e.day} 天・開店準備：採購(${keyOf('shop')})、補貨、升級，按 ${keyOf('ready')} 準備開店`, 'info', 5000);
         break;
       case 'hint': this.showHint(e.text); break;
       case 'fx':
+        if (e.name === 'eject' || e.name === 'ultimate' || e.name === 'mistake' || e.name === 'hit' || (e.name === 'shove' && e.by === this.myName()) || (e.name === 'spin' && this.nearMe(e.x, e.z))) this.padRumble(e.name);
         if (e.name === 'eject') { this.view.shockwave(e.x, e.z - 0.3, 0xff922b, 2.5); this.view.floatText(e.combo && e.combo > 1 ? `${e.combo} 連送！` : '退散！', e.x, e.z - 0.6, '#ffa94d'); this.view.burst(e.x, e.z - 0.4, 0xff922b, 26); this.view.shake = 0.25; if (e.combo && e.combo > 1) this.showCombo(e.combo); }
         else if (e.name === 'ultimate') { this.flash(false); this.view.shake = 0.65; this.view.burst(e.x, e.z, 0xffd43b, 40); this.view.shockwave(e.x, e.z, 0xffd43b, 6); }
         else if (e.name === 'spin') { this.view.burst(e.x, e.z, 0x63e6be, 30); this.view.shake = 0.2; this.view.shockwave(e.x, e.z, 0x63e6be, 3.2); }
@@ -275,6 +280,13 @@ export class Game {
         else if (e.name === 'shove' && e.by === this.myName()) { this.flash(true); this.view.shake = 0.45; this.stamina = Math.max(0, this.stamina - 25); }
         break;
     }
+  }
+
+  private nearMe(x: number, z: number) { return Math.hypot(x - this.pos.x, z - this.pos.z) < 2.5; }
+  /** Controller rumble for big moments (setting 手把震動; no-op on keyboard or pads without rumble). */
+  private padRumble(kind: string) {
+    const r: Record<string, [number, number, number]> = { shove: [0.9, 0.6, 260], mistake: [0.7, 0.5, 220], ultimate: [1, 1, 450], eject: [0.4, 0.7, 160], hit: [0.6, 0.4, 120], spin: [0.3, 0.6, 200] };
+    const v = r[kind]; if (v) rumble(v[0], v[1], v[2]);
   }
 
   // ---------------- UI helpers ----------------
@@ -359,7 +371,9 @@ export class Game {
     this.settings = s; saveSettings(s);
     this.view.setQuality(s.quality);
     this.view.camera.fov = s.fov; this.view.camera.updateProjectionMatrix();
-    audio.setVolume(s.volume); audio.setMusicVolume(s.music);
+    audio.setMaster(s.master); audio.setVolume(s.volume); audio.setMusicVolume(s.music);
+    this.view.setMaxScale(s.renderScale);
+    this.input.padSens = s.padSens; this.input.padInvertY = s.padInvertY; setRumble(s.rumble);
   }
 
   private wireShopButtons(container: HTMLElement) {
@@ -573,7 +587,7 @@ export class Game {
       if (this.perfT >= 2) {
         const fps = this.perfFrames / this.perfT, target = cap > 0 ? cap : 60;
         if (fps < target * 0.75 && this.view.resScale > 0.5) this.view.setResolutionScale(this.view.resScale - 0.1);
-        else if (fps > target * 0.95 && this.view.resScale < 1) this.view.setResolutionScale(this.view.resScale + 0.05);
+        else if (fps > target * 0.95 && this.view.resScale < this.view.maxScale) this.view.setResolutionScale(this.view.resScale + 0.05);
         this.perfT = 0; this.perfFrames = 0;
       }
     }
@@ -591,8 +605,8 @@ export class Game {
     if (this.overlay === 'none') {
       const look = this.input.takeLook();
       const sens = 0.0024 * this.settings.sensitivity;
-      this.yaw -= look.dx * sens;
-      this.pitch += (this.settings.invertY ? look.dy : -look.dy) * sens;
+      this.yaw -= look.dx * sens + look.pdx * 0.0024;
+      this.pitch += (this.settings.invertY ? look.dy : -look.dy) * sens - look.pdy * 0.0024;
       this.pitch = Math.max(-1.35, Math.min(1.35, this.pitch));
       // movement relative to view
       const mv = this.input.move;
@@ -644,6 +658,7 @@ export class Game {
       }
       if (this.input.consume('ultimate')) this.send({ type: 'ultimate', rid: newRid() });
       if (this.input.consume('ping')) this.doPing();
+      if (this.input.consume('skip')) { if (this.tut) this.skipTutorial(); else this.openOverlay('quick'); }
       if (this.input.consume('ready') && (s.phase === 'prep' || s.phase === 'summary')) this.send({ type: 'ready', ready: !me.ready });
       for (let i = 1; i <= 6; i++) if (this.input.consume(`q${i}` as 'q1')) this.send({ type: 'quick', msg: i - 1 });
     } else {
@@ -666,7 +681,7 @@ export class Game {
     const tb = this.target?.box ? new THREE.Box3(new THREE.Vector3(this.target.box.x0, 0, this.target.box.z0), new THREE.Vector3(this.target.box.x1, this.target.box.h ?? 1.5, this.target.box.z1))
       : this.target?.point ? new THREE.Box3(new THREE.Vector3(this.target.point.x - 0.35, 0, this.target.point.z - 0.35), new THREE.Vector3(this.target.point.x + 0.35, Math.max(0.15, this.target.point.h), this.target.point.z + 0.35)) : null;
     this.view.setHighlight(tb);
-    if (!this.tutorial && s.shift.id === '1-1' && !this.flags.tutorialDone) this.tutorial = new Tutorial(this.touch);
+    if (!this.tutorial && s.shift.id === '1-1' && !this.flags.tutorialDone) this.tutorial = new Tutorial(this.touch, () => keyOf('interact'));
     this.tut = this.tutorial ? this.tutorial.update(s, me, this.pos, now) : null;
     this.view.setGuide(this.tut?.target ?? null);
     this.view.render();
@@ -713,12 +728,12 @@ export class Game {
     if (this.overlay !== 'none') pr.innerHTML = '';
     else if (me.busy) pr.innerHTML = '';
     else if (this.target) {
-      const key = this.touch ? '互動' : this.input.usingGamepad ? 'A' : 'E';
-      const altKey = this.touch ? '次要' : this.input.usingGamepad ? 'X' : 'F';
+      const key = this.touch ? '互動' : keyOf('interact');
+      const altKey = this.touch ? '次要' : keyOf('alt');
       pr.innerHTML = (this.target.primary ? `<span class="key">${key}</span>${UI.esc(this.target.label)}` : UI.esc(this.target.label))
         + (this.target.reason ? `<div class="sub">${UI.esc(this.target.reason)}</div>` : '')
         + (this.target.altLabel ? `<div class="sub"><span class="key">${altKey}</span>${UI.esc(this.target.altLabel)}</div>` : '');
-    } else pr.innerHTML = me.held ? `<div class="sub">${this.touch ? '「放下」' : this.input.usingGamepad ? 'B' : 'Q'} 放下手上物品</div>` : '';
+    } else pr.innerHTML = me.held ? `<div class="sub">${this.touch ? '「放下」' : keyOf('drop')} 放下手上物品</div>` : '';
     const prog = $('progress');
     if (me.busy) { prog.classList.remove('hidden'); (prog.firstElementChild as HTMLElement).style.width = `${me.busy.p * 100}%`; } else prog.classList.add('hidden');
     // touch contextual buttons
@@ -745,7 +760,7 @@ export class Game {
     // phase banner
     const pb = $('phasebanner');
     if (s.phase === 'prep' && s.shift.mode === 'shift') {
-      const html = `<button class="btn small good" id="pb-ready">▶ 開始上班${this.touch ? '' : ' [Enter]'}（<span id="pb-left"></span>）</button>`;
+      const html = `<button class="btn small good" id="pb-ready">▶ 開始上班${this.touch ? '' : ` [${keyOf('ready')}]`}（<span id="pb-left"></span>）</button>`;
       if (pb.dataset.k !== html) {
         pb.dataset.k = html; pb.innerHTML = html;
         document.getElementById('pb-ready')!.addEventListener('click', () => this.send({ type: 'ready', ready: true }));
@@ -753,7 +768,7 @@ export class Game {
       $('pb-left').textContent = String(Math.ceil(s.phaseLeft));
     } else if (s.phase === 'prep') {
       const ready = s.players.filter(p => p.ready).length, total = s.players.filter(p => p.connected).length;
-      const html = `<button class="btn small ${me.ready ? '' : 'good'}" id="pb-ready">${me.ready ? '取消準備' : '準備開店'}（${ready}/${total}）${this.touch ? '' : ' [Enter]'}</button><button class="btn small" id="pb-shop">🛒 採購/升級${this.touch ? '' : ' [B]'}</button>`;
+      const html = `<button class="btn small ${me.ready ? '' : 'good'}" id="pb-ready">${me.ready ? '取消準備' : '準備開店'}（${ready}/${total}）${this.touch ? '' : ` [${keyOf('ready')}]`}</button><button class="btn small" id="pb-shop">🛒 採購/升級${this.touch ? '' : ` [${keyOf('shop')}]`}</button>`;
       if (pb.dataset.k !== html) {
         pb.dataset.k = html; pb.innerHTML = html;
         document.getElementById('pb-ready')!.addEventListener('click', () => this.send({ type: 'ready', ready: !this.snap?.players.find(p => p.id === this.selfId)?.ready }));
@@ -798,7 +813,7 @@ export class Game {
       $('burst-num').textContent = `${s.burst}/100`;
       ($('burst-bar') as HTMLElement).style.width = `${s.burst}%`;
       $('burst').classList.toggle('full', s.burst >= 100);
-      $('burst-hint').textContent = s.burst >= 100 ? `按 ${this.touch ? '「退散」' : 'R'} 全店奧客退散！` : '請出門 +25・旋風 +12・投擲 +4';
+      $('burst-hint').textContent = s.burst >= 100 ? `按 ${this.touch ? '「退散」' : keyOf('ultimate')} 全店奧客退散！` : '請出門 +25・旋風 +12・投擲 +4';
     }
     (($('stamina').firstElementChild) as HTMLElement).style.width = `${this.stamina / s.shift.staminaMax * 100}%`;
     (($('stamina').firstElementChild) as HTMLElement).style.background = this.stamina < 25 ? '#ff6b6b' : '#69db7c';
@@ -806,12 +821,13 @@ export class Game {
     if (s.event) { es.classList.remove('hidden'); es.textContent = s.event.kind === 'outage' ? `⚡ 停電中 ${Math.ceil(s.event.left)}s` : `🚶 尖峰人潮 ${Math.ceil(s.event.left)}s`; } else es.classList.add('hidden');
     if (s.raid && s.phase === 'open') {
       const hb = $('hintbar'); hb.classList.remove('hidden');
-      hb.textContent = this.touch ? '😈「互動」打翻商品／嗆客人、「丟垃圾」亂丟垃圾，別讓店員靠近太久' : '😈 E 打翻商品／嗆客人、G 亂丟垃圾，別讓店員靠近太久';
+      hb.textContent = this.touch ? '😈「互動」打翻商品／嗆客人、「丟垃圾」亂丟垃圾，別讓店員靠近太久' : `😈 ${keyOf('interact')} 打翻商品／嗆客人、${keyOf('drop')} 亂丟垃圾，別讓店員靠近太久`;
     } else if (this.tut) {
       const hb = $('hintbar'); hb.classList.remove('hidden');
       hb.textContent = `📘 教學 ${Math.min(this.tut.step, this.tut.total)}/${this.tut.total}：${this.tut.text}`;
       const finished = this.tut.step >= this.tut.total;
       $('tutskip').classList.toggle('hidden', finished);
+      if (!this.touch) $('tutskip').textContent = `跳過教學（${keyOf('skip')}）`;
       if (finished && !this.flags.tutorialDone) { this.flags.tutorialDone = true; saveFlags(this.flags); }
     } else { $('tutskip').classList.add('hidden'); if (performance.now() > this.hintUntil) $('hintbar').classList.add('hidden'); }
     if (this.touch) {
@@ -826,7 +842,7 @@ export class Game {
       $('t-item').classList.toggle('hidden', !me.held && !me.held2 && me.grabbing == null && !me.raider);
       $('t-item').textContent = me.raider && !me.held ? '丟垃圾' : '放下';
     }
-    if (me.grabbing != null) pr.innerHTML = `<span class="key">${this.touch ? '丟出' : this.input.usingGamepad ? 'Y' : '空白'}</span>對準發光的出口丟出去！<div class="sub">${this.touch ? '「放下」' : 'G'} 放開</div>`;
+    if (me.grabbing != null) pr.innerHTML = `<span class="key">${this.touch ? '丟出' : keyOf('grab')}</span>對準發光的出口丟出去！<div class="sub">${this.touch ? '「放下」' : keyOf('drop')} 放開</div>`;
     // feed
     const t = performance.now();
     this.feed = this.feed.filter(f => f.until > t);

@@ -26,8 +26,9 @@ await pg.waitForTimeout(1500);
 const tut1 = await pg.evaluate(() => window.__game.tut);
 await pg.screenshot({ path: `${OUT}/tutorial-1.png` });
 // walk the player behind the counter → step 2
-await pg.evaluate(() => { const g = window.__game; g.pos = { x: 16.5, z: 10.2 }; g.yaw = 0; });
-await pg.waitForFunction(() => window.__game.tut?.step === 2, null, { timeout: 20000 });
+// Keep re-applying the teleport until the tutorial sees it: a single write can be undone by the
+// server position correction before the tutorial checks, which made this step flaky.
+await pg.waitForFunction(() => { const g = window.__game; if (g.tut?.step === 2) return true; g.pos = { x: 16.5, z: 10.2 }; g.yaw = 0; return false; }, null, { timeout: 20000, polling: 100 });
 await pg.screenshot({ path: `${OUT}/tutorial-2.png` });
 await pg.close();
 // 2) boss

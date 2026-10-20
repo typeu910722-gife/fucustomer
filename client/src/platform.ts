@@ -8,6 +8,8 @@ export interface DesktopBridge {
   setPresence(roomCode: string | null): void;
   onJoinRequest(cb: (code: string) => void): void;
   setFullscreen(on: boolean): void;
+  /** Added with the settings screen; older desktop builds may not have it. */
+  isFullscreen?(): boolean;
   quit(): void;
 }
 
@@ -47,4 +49,22 @@ export const canQuit = () => isApp;
 /** Report achievements to the platform (Steam via Electron today; Game Center / Play Games later). */
 export function reportAchievements(ids: string[]) {
   if (desktop) for (const id of ids) desktop.achieve(id);
+}
+
+/** Full screen state: the Electron window on desktop, the Fullscreen API in a browser. */
+export function isFullscreen(): boolean {
+  if (desktop?.isFullscreen) { try { return !!desktop.isFullscreen(); } catch { /* old bridge */ } }
+  return !!document.fullscreenElement;
+}
+/**
+ * Enter / leave full screen. Desktop: always works (window call). Browser: only from a mouse click / key press
+ * (browsers refuse full screen without a user gesture; controller buttons don't count). Resolves to the new state.
+ */
+export async function setFullscreen(on: boolean): Promise<boolean> {
+  if (desktop) { desktop.setFullscreen(on); return on; }
+  try {
+    if (on && !document.fullscreenElement) await document.documentElement.requestFullscreen?.();
+    else if (!on && document.fullscreenElement) await document.exitFullscreen?.();
+  } catch { /* refused (no user gesture / iframe / iOS) */ }
+  return !!document.fullscreenElement;
 }

@@ -392,7 +392,10 @@ export class StoreView {
 
   /** Dynamic resolution: 0.5–1 multiplier on the quality's pixel ratio. */
   resScale = 1;
-  setResolutionScale(f: number) { this.resScale = Math.max(0.5, Math.min(1, f)); this.resize(); }
+  /** Player's 解析度比例 setting: the dynamic scale never goes above it. */
+  maxScale = 1;
+  setResolutionScale(f: number) { this.resScale = Math.max(Math.min(0.5, this.maxScale), Math.min(this.maxScale, f)); this.resize(); }
+  setMaxScale(m: number) { this.maxScale = Math.max(0.5, Math.min(1, Number.isFinite(m) ? m : 1)); this.setResolutionScale(this.maxScale); }
 
   resize() {
     const w = window.innerWidth, h = window.innerHeight;

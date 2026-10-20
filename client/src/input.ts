@@ -1,13 +1,22 @@
 // Unified input: keyboard + mouse (pointer lock), gamepad, and multi-touch virtual controls.
+import { GAME_BINDINGS, isDown, radialDeadzone, stickLook } from './padmap.ts';
+import { currentPad, inputMode, padActive, setMode } from './pad.ts';
+
 export type Action = 'interact' | 'alt' | 'drop' | 'ping' | 'menu' | 'quick' | 'shop' | 'ready' | 'tab' | 'grab' | 'spin' | 'ultimate' | 'hit'
-  | 'q1' | 'q2' | 'q3' | 'q4' | 'q5' | 'q6';
+  | 'skip' | 'q1' | 'q2' | 'q3' | 'q4' | 'q5' | 'q6';
 
 export class Input {
   move = { x: 0, y: 0 };
   run = false;
   lookDX = 0; lookDY = 0;
+  /** Right-stick look this frame, already scaled by pad sensitivity / pad invert-Y (mouse "pixels"). */
+  padDX = 0; padDY = 0;
+  padSens = 1; padInvertY = false;
   enabled = true;
-  usingGamepad = false;
+  get usingGamepad() { return inputMode() === 'pad'; }
+  /** Buttons still held from a menu press: ignored until released, so "A = Resume" doesn't also interact. */
+  private padHeldOver = new Set<number>();
+  private wasEnabled = true;
   private keys = new Set<string>();
   private pressed = new Set<Action>();
   private touchRunToggle = false;
@@ -52,7 +61,9 @@ export class Input {
   }
 
   get locked() { return document.pointerLockElement === this.canvas; }
-  lock() { if (!this.touch && !this.lockBlocked) { try { const r = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined; r?.catch?.(() => { this.lockBlocked = true; }); } catch { this.lockBlocked = true; } } }
+  /** Capture the mouse. Skipped while playing with a controller: browsers refuse pointer lock without a mouse/key gesture,
+   *  and a refusal would switch mouse look to drag mode for the rest of the shift. The next mouse click locks as usual. */
+  lock() { if (!this.touch && !this.lockBlocked && inputMode() !== 'pad') { try { const r = this.canvas.requestPointerLock() as unknown as Promise<void> | undefined; r?.catch?.(() => { this.lockBlocked = true; }); } catch { this.lockBlocked = true; } } }
   unlock() { if (this.locked) document.exitPointerLock(); }
 
   private onKey(e: KeyboardEvent, down: boolean) {
@@ -71,7 +82,6 @@ export class Input {
         if (k === 'KeyE') this.holdInteract = true;
       }
       this.keys.add(k);
-      this.usingGamepad = false;
     } else {
       this.keys.delete(k);
       if (k === 'KeyE') this.holdInteract = false;
@@ -143,23 +153,28 @@ export class Input {
     if (this.keys.has('KeyA') || this.keys.has('ArrowLeft')) x -= 1;
     let run = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
     if (this.touch) { x += this.stickVec.x; y += this.stickVec.y; run = run || this.touchRunToggle || Math.hypot(this.stickVec.x, this.stickVec.y) > 0.97 && false; }
-    // gamepad (standard mapping)
-    const pads = navigator.getGamepads?.() ?? [];
-    const gp = [...pads].find(p => p && p.connected);
+    // gamepad (standard mapping; bindings in padmap.ts)
+    const gp = currentPad();
     if (gp) {
-      const dz = (v: number) => (Math.abs(v) < 0.15 ? 0 : v);
-      const lx = dz(gp.axes[0] ?? 0), ly = dz(gp.axes[1] ?? 0), rx = dz(gp.axes[2] ?? 0), ry = dz(gp.axes[3] ?? 0);
-      if (lx || ly || rx || ry) this.usingGamepad = true;
-      x += lx; y -= ly;
-      this.lookDX += rx * 900 * dt; this.lookDY += ry * 700 * dt;
-      const b = gp.buttons.map(bt => bt.pressed);
-      const edge = (i: number, a: Action) => { if (b[i] && !this.padPrev[i]) { this.pressed.add(a); this.usingGamepad = true; } };
-      edge(0, 'interact'); edge(1, 'drop'); edge(2, 'alt'); edge(3, 'grab'); edge(5, 'spin'); edge(4, 'ultimate'); edge(7, 'hit'); edge(9, 'menu'); edge(8, 'quick');
-      edge(12, 'ping'); edge(13, 'shop'); edge(15, 'ready');
-      if (b[0]) this.holdInteract = true; else if (this.padPrev[0]) this.holdInteract = false;
-      run = run || !!b[10] || !!b[6];
+      if (padActive(gp)) setMode('pad', gp.id);
+      const b = gp.buttons.map(isDown);
+      if (this.enabled && !this.wasEnabled) { this.padHeldOver = new Set(b.flatMap((d, i) => (d ? [i] : []))); this.holdInteract = false; }
+      for (const i of [...this.padHeldOver]) if (!b[i]) this.padHeldOver.delete(i);
+      const live = (i: number) => !!b[i] && !this.padHeldOver.has(i);
+      const l = radialDeadzone(gp.axes[0] ?? 0, gp.axes[1] ?? 0, 0.18);
+      x += l.x; y -= l.y;
+      if (this.enabled) {
+        const lk = stickLook(gp.axes[2] ?? 0, gp.axes[3] ?? 0, dt, this.padSens, this.padInvertY);
+        this.padDX += lk.dx; this.padDY += lk.dy;
+      }
+      for (const [i, a] of GAME_BINDINGS) {
+        if (a === 'run') { if (live(i)) run = true; continue; }
+        if (live(i) && !this.padPrev[i]) this.pressed.add(a);
+      }
+      if (live(0)) this.holdInteract = true; else if (this.padPrev[0]) this.holdInteract = false;
       this.padPrev = b;
     }
+    this.wasEnabled = this.enabled;
     const len = Math.hypot(x, y);
     if (len > 1) { x /= len; y /= len; }
     this.move = this.enabled ? { x, y } : { x: 0, y: 0 };
@@ -167,6 +182,7 @@ export class Input {
   }
 
   consume(a: Action) { const had = this.pressed.has(a); this.pressed.delete(a); return had; }
-  clearPresses() { this.pressed.clear(); this.lookDX = 0; this.lookDY = 0; }
-  takeLook() { const r = { dx: this.lookDX, dy: this.lookDY }; this.lookDX = 0; this.lookDY = 0; return r; }
+  clearPresses() { this.pressed.clear(); this.lookDX = 0; this.lookDY = 0; this.padDX = 0; this.padDY = 0; }
+  /** Mouse/touch look (dx, dy: raw pixels) and right-stick look (pdx, pdy: already sensitivity- and invert-adjusted). */
+  takeLook() { const r = { dx: this.lookDX, dy: this.lookDY, pdx: this.padDX, pdy: this.padDY }; this.lookDX = 0; this.lookDY = 0; this.padDX = 0; this.padDY = 0; return r; }
 }

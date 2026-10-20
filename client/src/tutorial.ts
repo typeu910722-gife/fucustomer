@@ -17,9 +17,9 @@ export class Tutorial {
   private i = 0;
   private finishedAt = 0;
   private startServed = -1;
-  constructor(private touch: boolean) {}
+  constructor(private touch: boolean, private interactKey: () => string = () => 'E') {}
 
-  private key(k: string) { return this.touch ? `「${k}」按鈕` : k === '互動' ? 'E' : k; }
+  private key(k: string) { return this.touch ? `「${k}」按鈕` : k === '互動' ? this.interactKey() : k; }
 
   private steps: Step[] = [
     {

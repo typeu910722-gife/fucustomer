@@ -25,6 +25,7 @@ import { desktop, initPlatform, isApp, onAppPause, onBack, quitApp, reportAchiev
 import { effectiveLoadout, isSupporter, outfitOf, storeLocked, type Loadout } from '../../shared/shop.ts';
 import { entitlementsFor } from './billing.ts';
 import { setStoreDecor } from './cosmetics.ts';
+import { setPadBack, startPadNav } from './padnav.ts';
 
 let settings = loadSettings();
 // 商城: stores from a paid pack are locked in free play / own store / hosting a room (never in the career story)
@@ -33,8 +34,11 @@ UI.setStoreLock(map => storeLocked(map, 'host', entitlementsFor(loadProfile())))
 function myLoadout(): Loadout { const p = loadProfile(); return effectiveLoadout(p, entitlementsFor(p)); }
 const myOutfit = () => outfitOf(myLoadout());
 const platform = detectPlatform();
+audio.setMaster(settings.master);
 audio.setVolume(settings.volume);
 audio.setMusicVolume(settings.music);
+// desktop app opens full screen; honour 設定 → 全螢幕 off
+if (desktop && settings.fullscreen === false) desktop.setFullscreen(false);
 if (!isTouch) document.getElementById('rotate')!.classList.remove('enabled');
 
 function serverUrl() { return settings.serverUrl || defaultServerUrl(); }
@@ -301,7 +305,7 @@ function menu(error?: string) {
     refresh: () => menu(),
     quit: isApp ? () => quitApp() : undefined,
     firstDay: loadProfile().stats.shifts === 0 ? () => playShift('1-1') : undefined,
-    settings: () => { screenDepth = 1; return UI.settingsMenu(settings, s => { settings = s; saveSettings(s); audio.setVolume(s.volume); audio.setMusicVolume(s.music); menu(); }); },
+    settings: () => { screenDepth = 1; return UI.settingsMenu(settings, s => { settings = s; saveSettings(s); audio.setMaster(s.master); audio.setVolume(s.volume); audio.setMusicVolume(s.music); menu(); }); },
   }, { coopSave: loadCoopSave(), canRejoin, server: serverUrl(), platform, error, badge: b, account, next, daily });
 }
 
@@ -362,6 +366,9 @@ onBack(() => {
   if (screenDepth === 0) quitApp(); else menu();
 });
 onAppPause(() => current?.appPaused());
+// Controller: D-pad / stick + A/B in every menu; B with no back button on screen = Android back (never quits).
+setPadBack(() => { if (current) current.back(); else if (screenDepth !== 0) menu(); });
+startPadNav();
 desktop?.onJoinRequest(code => {
   const c = UI.parseRoomCode(code);
   if (current || !c) return;

@@ -18,7 +18,7 @@ function sampleStore(): Record<string, string> {
   const cafe = defaultSave(); cafe.day = 3;
   return {
     [K.career]: JSON.stringify(p),
-    [K.settings]: JSON.stringify({ name: '阿明', sensitivity: 1.4, quality: 'medium', volume: 0.3, music: 0.2, serverUrl: 'wss://evil.example/ws', fov: 80, fpsCap: 30, adaptive: false, invertY: true, showFps: true }),
+    [K.settings]: JSON.stringify({ name: '阿明', sensitivity: 1.4, quality: 'medium', volume: 0.3, music: 0.2, serverUrl: 'wss://evil.example/ws', fov: 80, fpsCap: 30, adaptive: false, invertY: true, showFps: true, master: 0.8, padSens: 1.7, padInvertY: true, rumble: false, renderScale: 0.75, fullscreen: false }),
     [K.flags]: JSON.stringify({ tutorialDone: true, seenKarens: ['loud'], seenMaps: ['cafe'] }),
     [K.avatar]: '🐱',
     [K.soloConv]: JSON.stringify(solo),
@@ -51,6 +51,9 @@ test('round trip: export → parse → apply restores progress on an empty devic
   assert.deepEqual(JSON.parse(set[K.flags]), { tutorialDone: true, seenKarens: ['loud'], seenMaps: ['cafe'] });
   const st = JSON.parse(set[K.settings]);
   assert.equal(st.name, '阿明'); assert.equal(st.quality, 'medium'); assert.equal(st.fpsCap, 30);
+  // controller / PC settings (round 21) travel too
+  assert.equal(st.master, 0.8); assert.equal(st.padSens, 1.7); assert.equal(st.padInvertY, true); assert.equal(st.rumble, false);
+  assert.equal(st.renderScale, 0.75); assert.equal(st.fullscreen, false);
   assert.equal(summarizeStore(set).level, 12);
 });
 
@@ -124,6 +127,11 @@ test('tampering, garbage and wrong types are rejected', () => {
   assert.ok(big.ok); if (!big.ok) return;
   assert.equal(big.payload.career.level, 30); assert.equal(big.payload.career.wallet, 1e8);
   assert.deepEqual(big.payload.settings, { volume: 1 });
+  const odd = parseSaveCode(mk({ ...ok, settings: { master: 9, padSens: 0, renderScale: 3, fpsCap: 75, rumble: 'on', padInvertY: 1, fullscreen: true } }));
+  assert.ok(odd.ok); if (!odd.ok) return;
+  assert.deepEqual(odd.payload.settings, { master: 1, padSens: 0.2, renderScale: 1, fullscreen: true });
+  const deck = parseSaveCode(mk({ ...ok, settings: { fpsCap: 40 } }));
+  assert.ok(deck.ok && deck.payload.settings.fpsCap === 40);
 });
 
 test('size limit: input over ~200KB is rejected before decoding', () => {

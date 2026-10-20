@@ -60,6 +60,7 @@ ipcMain.on('steam-status', e => { e.returnValue = steam.ready(); });
 ipcMain.on('achieve', (_e, id) => steam.achieve(String(id)));
 ipcMain.on('presence', (_e, code) => steam.setPresence(code ? String(code) : null));
 ipcMain.on('fullscreen', (_e, on) => win?.setFullScreen(!!on));
+ipcMain.on('is-fullscreen', e => { e.returnValue = !!win?.isFullScreen(); });
 ipcMain.on('quit', () => app.quit());
 
 // Saves live in localStorage; make sure they are flushed to disk when the window closes.

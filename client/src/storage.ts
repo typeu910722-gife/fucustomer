@@ -1,10 +1,19 @@
 // Local persistence. Store progress and player settings are kept under separate keys.
 import type { StoreSave } from '../../shared/protocol.ts';
+import { cleanSettings } from '../../shared/savecode.ts';
 
 export type Quality = 'low' | 'medium' | 'high';
 export interface Settings {
   name: string; sensitivity: number; invertY: boolean; quality: Quality; volume: number; music: number; serverUrl: string; showFps: boolean; fov: number;
   fpsCap: number; adaptive: boolean;
+  /** 主音量 (master); `volume` is the sound-effects volume and `music` the music volume. */
+  master: number;
+  /** Controller: right-stick look sensitivity, its own invert-Y, rumble. */
+  padSens: number; padInvertY: boolean; rumble: boolean;
+  /** 解析度比例 0.5–1 (the dynamic-resolution option never goes above it). */
+  renderScale: number;
+  /** Desktop app: start in full screen (the browser can only enter full screen from a click). */
+  fullscreen: boolean;
 }
 
 const SETTINGS_KEY = 'fucustomer.settings.v1';
@@ -21,12 +30,20 @@ function write(key: string, v: unknown) {
   try { localStorage.setItem(key, JSON.stringify(v)); } catch { /* storage full / private mode */ }
 }
 
-export function loadSettings(): Settings {
-  const d: Settings = {
-    name: '', sensitivity: 1, invertY: false, quality: isTouch ? 'low' : 'high', volume: 0.7, music: 0.5, serverUrl: '', showFps: false, fov: 75, fpsCap: isTouch ? 30 : 0, adaptive: true,
+export function defaultSettings(touch = isTouch): Settings {
+  return {
+    name: '', sensitivity: 1, invertY: false, quality: touch ? 'low' : 'high', volume: 0.7, music: 0.5, serverUrl: '', showFps: false, fov: 75, fpsCap: touch ? 30 : 0, adaptive: true,
+    master: 1, padSens: 1, padInvertY: false, rumble: true, renderScale: 1, fullscreen: true,
   };
-  return { ...d, ...(read<Partial<Settings>>(SETTINGS_KEY) ?? {}) };
 }
+/** Defaults + whitelisted, range-clamped stored values (a hand-edited or old settings blob can't break the game). */
+export function sanitizeSettings(raw: unknown, touch = isTouch): Settings {
+  const d = defaultSettings(touch);
+  const r = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
+  const url = typeof r.serverUrl === 'string' && /^wss?:\/\/[^\s]{1,200}$/.test(r.serverUrl.trim()) ? r.serverUrl.trim() : '';
+  return { ...d, ...(cleanSettings(r) as Partial<Settings>), serverUrl: url };
+}
+export function loadSettings(): Settings { return sanitizeSettings(read<unknown>(SETTINGS_KEY)); }
 export function saveSettings(s: Settings) { write(SETTINGS_KEY, s); }
 
 /** Free-play saves: one per map (the 便利商店 keeps the original key so old saves still load). */
