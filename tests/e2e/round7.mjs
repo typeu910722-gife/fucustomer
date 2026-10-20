@@ -42,7 +42,10 @@ await pg.screenshot({ path: `${OUT}/r7-charger.png` });
 const prompt = await pg.evaluate(() => document.getElementById('prompt')?.innerText ?? '');
 // unplug twice with the real interact key
 for (let i = 0; i < 2; i++) {
-  await pg.keyboard.down('e'); await pg.waitForTimeout(1500); await pg.keyboard.up('e');
+  const before = await pg.evaluate(() => window.__game.conn.room.world.customers.find(c => c.id === 7777)?.phase ?? 0);
+  await pg.keyboard.down('e');
+  await pg.waitForFunction(b => { const c = window.__game.conn.room.world.customers.find(c => c.id === 7777); return !c || c.resolved || c.phase > b; }, before, { timeout: 6000 }).catch(() => {});
+  await pg.keyboard.up('e');
   await pg.waitForTimeout(400);
 }
 const charger = await pg.evaluate(() => window.__game.conn.room.world.customers.find(c => c.id === 7777) ?? null);

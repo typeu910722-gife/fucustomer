@@ -4,7 +4,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import {
   B, CAP, CONE, CYL, DOME, Human, ICON_Y, Label, Pose, RB, SIT_Y, SKIN, HAIR, SPH, TOR, basic, buildRegister, customerLook, geo, heldModel, hex,
-  karenAccessory, mat, mergeInto, poleTexture, posScreenTexture, put, textCanvas,
+  karenAccessory, mat, mergeInto, paint, vertexColorMat, poleTexture, posScreenTexture, put, textCanvas,
 } from './models.ts';
 import { FOOD_INFO, PRODUCT_INFO, PRODUCTS, Product, shelfCapacity, EYE_HEIGHT } from '../../shared/constants.ts';
 import {
@@ -432,7 +432,7 @@ export class StoreView {
     // posters
     const poster = new THREE.Mesh(new THREE.PlaneGeometry(2.2, 1.1), new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(textCanvas([{ text: CURRENT_MAP.poster[0], size: 72, color: '#ffd43b' }, { text: CURRENT_MAP.poster[1], size: 54 }], 512, 256, CURRENT_MAP.sign.bg)) }));
     poster.position.set(12, 2.0, 0.02); S.add(poster);
-    put(S, RB(2.32, 1.22, 0.03, 0.012), mat(0xf8f9fa, q), 12, 2.0, 0.005);
+    put(S, RB(2.32, 1.22, 0.02, 0.008), mat(0xf8f9fa, q), 12, 2.0, 0.0);
     this.buildDetails();
   }
 
@@ -698,6 +698,7 @@ export class StoreView {
   private mergeStatic(before: Set<THREE.Object3D>) {
     const groups = new Map<THREE.Material, THREE.BufferGeometry[]>();
     const remove: THREE.Mesh[] = [];
+    const glowSet = new Set<THREE.Material>(this.glow.map(g => g.m));
     for (const o of this.scene.children) {
       if (before.has(o) || !(o instanceof THREE.Mesh) || o instanceof THREE.InstancedMesh || o.userData.dynamic) continue;
       const m = o.material as THREE.Material;
@@ -706,12 +707,16 @@ export class StoreView {
       const g = o.geometry.index ? o.geometry.clone() : o.geometry.clone();
       g.applyMatrix4(o.matrixWorld);
       for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
-      if (!g.index) continue;
-      (groups.get(m) ?? groups.set(m, []).get(m)!).push(g);
+      // plain colours share one vertex-coloured material (glow materials keep theirs: they dim with the power)
+      const vc = glowSet.has(m) ? null : vertexColorMat(m);
+      if (vc) paint(g, (m as THREE.MeshBasicMaterial).color);
+      const key = vc ?? m;
+      (groups.get(key) ?? groups.set(key, []).get(key)!).push(g);
       remove.push(o);
     }
     for (const o of remove) this.scene.remove(o);
-    for (const [m, list] of groups) {
+    for (const [m, raw] of groups) {
+      const list = raw.some(g => !g.index) ? raw.map(g => g.index ? g.toNonIndexed() : g) : raw;
       const merged = mergeGeometries(list, false);
       if (!merged) continue;
       const mesh = new THREE.Mesh(merged, m);
@@ -805,7 +810,9 @@ export class StoreView {
       si.mesh.count = Math.min(si.slots.length, Math.round(ratio * si.slots.length + (snap.shelves[p] > 0 ? 0.5 : 0)));
       const stack = this.crateStacks.get(p)!;
       const boxes = Math.min(10, Math.ceil(snap.backstock[p] / 6));
-      if (stack.children.length !== boxes) {
+      if (stack.userData.n !== boxes) {
+        stack.userData.n = boxes;
+        for (const o of stack.children) (o as THREE.Mesh).geometry?.dispose();
         stack.clear();
         const c = CRATES.find(c => c.product === p)!.box;
         for (let i = 0; i < boxes; i++) {
@@ -813,6 +820,7 @@ export class StoreView {
           b.position.set((c.x0 + c.x1) / 2 + ((i % 2) - 0.5) * 0.5, 0.27 + Math.floor(i / 2) * 0.31, (c.z0 + c.z1) / 2);
           stack.add(b);
         }
+        mergeInto(stack, new Set(), q === 'high');
       }
     }
     this.mopsOnRack.forEach((m, i) => { m.visible = i < snap.mopsOnRack; });

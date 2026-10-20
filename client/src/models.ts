@@ -121,7 +121,10 @@ export function mergeInto(root: THREE.Object3D, skip: Set<THREE.Object3D> = new 
         const g = m.geometry.clone().applyMatrix4(m4.multiplyMatrices(inv, m.matrixWorld));
         for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
         if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
-        const key = m.material as THREE.Material;
+        // plain coloured materials collapse into one shared vertex-coloured material (one draw call for many colours)
+        let key = m.material as THREE.Material;
+        const vc = vertexColorMat(key);
+        if (vc) { paint(g, (key as THREE.MeshBasicMaterial).color); key = vc; }
         (groups.get(key) ?? groups.set(key, []).get(key)!).push(g);
         parts.push(m);
       }
@@ -137,6 +140,31 @@ export function mergeInto(root: THREE.Object3D, skip: Set<THREE.Object3D> = new 
     if (!merged) continue;
     const mesh = new THREE.Mesh(merged, m); mesh.castShadow = shadow; mesh.receiveShadow = shadow; root.add(mesh);
   }
+}
+
+/** Bakes a flat colour into a geometry's vertex colours. */
+export function paint(g: THREE.BufferGeometry, col: THREE.Color) {
+  const n = g.attributes.position.count, arr = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) { arr[i * 3] = col.r; arr[i * 3 + 1] = col.g; arr[i * 3 + 2] = col.b; }
+  g.setAttribute('color', new THREE.BufferAttribute(arr, 3));
+}
+const vcCache = new Map<string, THREE.Material>();
+/** The shared vertex-colour twin of a plain (untextured, opaque, non-emissive) material, or null. */
+export function vertexColorMat(m: THREE.Material): THREE.Material | null {
+  if (m.transparent || (m as THREE.MeshBasicMaterial).map || m.vertexColors) return null;
+  let key: string, make: () => THREE.Material;
+  if (m instanceof THREE.MeshBasicMaterial) { key = 'basic'; make = () => new THREE.MeshBasicMaterial({ vertexColors: true }); }
+  else if (m instanceof THREE.MeshLambertMaterial) {
+    if (m.emissive.getHex()) return null;
+    key = 'lambert'; make = () => new THREE.MeshLambertMaterial({ vertexColors: true });
+  } else if (m instanceof THREE.MeshStandardMaterial) {
+    if (m.emissive.getHex()) return null;
+    const r = Math.round(m.roughness * 10) / 10, mt = Math.round(m.metalness * 10) / 10;
+    key = `std${r}|${mt}`; make = () => new THREE.MeshStandardMaterial({ vertexColors: true, roughness: r, metalness: mt });
+  } else return null;
+  let v = vcCache.get(key);
+  if (!v) { v = make(); vcCache.set(key, v); }
+  return v;
 }
 
 // ---------- characters (chibi) ----------
