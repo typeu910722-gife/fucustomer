@@ -15,11 +15,11 @@ import type { ShiftResult } from '../../shared/career.ts';
 import { updateAchievements } from '../../shared/achievements.ts';
 import { CHAPTERS } from '../../shared/career.ts';
 import { needsCourt, payFine } from '../../shared/court.ts';
-import { SCENES, sceneAfter, sceneBefore } from '../../shared/story.ts';
+import { CAST, SCENES, sceneAfter, sceneBefore } from '../../shared/story.ts';
 import { courtScreen, playScene } from './story-ui.ts';
 import { WEEKLY_ID, WEEKLY_TWISTS, applyWeekly, buildWeeklyConfig, isoWeek, weekBadge, weeklyPlan, weeklySeed, weeklyUnlocked } from '../../shared/weekly.ts';
 import { type ArcLine, type ArcPick, arcConfig, arcSpeaker, finishArc, pickArc, takePreScene } from '../../shared/regulars.ts';
-import { setShiftRegular } from './game.ts';
+import { setShiftRegular, setShiftStory } from './game.ts';
 import { getCosmetic } from '../../shared/shop.ts';
 import { FREEPLAY_STAFF_WAGE, branchConfig, ownStoreConfig, settleStoreDay, staffPace } from '../../shared/ownstore.ts';
 import { dayConfig, defaultSave } from '../../shared/sim.ts';
@@ -314,6 +314,9 @@ function playShift(id: string) {
   // the regular's pre-shift card is shown in the store during the prep seconds (never blocks starting the shift)
   const preCard = pre && arc ? { title: `${arc.arc.icon} 常客奧客・${arc.arc.name}（${arc.stage + 1}/${arc.arc.stages.length}）「${arc.arc.stages[arc.stage].title}」`, lines: arcLines(arc, pre) } : undefined;
   const go = () => runShift(id, cfg, seed, arc, preCard);
+  // the first chapter's opening plays inside the store (speech bubbles), so a new player is moving within seconds
+  if (showIntro && SCENES[intro!].inStore) { setShiftStory(SCENES[intro!].lines.map(l => ({ ...CAST[l.who], text: l.text }))); return go(); }
+  setShiftStory(null);
   if (showIntro) return playScene(intro!, go);
   go();
 }

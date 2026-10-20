@@ -1,7 +1,7 @@
 // Simulated player ("模擬玩家") used by automated tests and load tests. It only sees the same
 // snapshot a real client sees and sends the same messages, so it exercises the real protocol.
 import { BOX_SIZE, PRODUCTS, Product, SERVER_INTERACT_RANGE, WALK_SPEED, loungePace, shelfCapacity } from './constants.ts';
-import { COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, findPath, shelfBrowseSpots } from './map.ts';
+import { COFFEE_MACHINE, CRATES, ENTRANCE, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, findPath, shelfBrowseSpots } from './map.ts';
 import type { ActKind, ClientMsg, CustomerSnap, PlayerSnap, Snapshot, Target } from './protocol.ts';
 import { SIG_KARENS, SigNeed, isSig, sigWaitReason } from './sigkarens.ts';
 
@@ -29,8 +29,30 @@ export function botMessages(o: BotOutput, rid: () => string): ClientMsg[] {
 }
 
 const THROW_SPOT = { x: 12, z: 13.1 };
+/** Where an idle fill-in bot waits: inside the stockroom (the same fixed shell on every map), next to the crates. */
+const STANDBY = { x: 3.4, z: 3.4 };
 
 interface Goal { pos: { x: number; z: number }; kind: ActKind; target: Target; key: string }
+
+/**
+ * What the other fill-in bots in the room are doing, so they split the work instead of chasing the same task
+ * (built by shared/room.ts every tick; optional — a lone bot / the test players run without it).
+ */
+export interface BotTeam {
+  /** Task key → id of the bot that owns it (a bot's current goal and what it is fetching things for). */
+  claims: Map<string, string>;
+  /** Seconds left of a person's 「我去補貨」 callout: bots leave restocking to them (except for an empty shelf). */
+  humanRestock?: number;
+  /** Seconds left of a 「需要支援收銀」 callout this bot answered: the till / food orders come before everything else. */
+  assist?: number;
+}
+
+/** Task keys only one bot works on at a time (carrying, throwing, returning things are personal). */
+export function exclusiveKey(k: string) { return !!k && !/^(throw|watch|rm|rb|stock|deliver)/.test(k); }
+/** A person standing this close to a karen / dropped box is taking care of it: bots look for something else. */
+const YIELD_R = 1.4;
+/** Bots keep this far from people when they walk (players pass through each other, but a bot inside your view is a wall). */
+const PERSONAL_SPACE = 0.75;
 
 export class Bot {
   private path: { x: number; z: number }[] = [];
@@ -44,9 +66,19 @@ export class Bot {
   pace = 1;
   /** 員工休息室 upgrade of the store this bot works in (read from each snapshot). */
   private rested = 1;
+  /** The karen / customer this bot is fetching something for (a mop, a drink…): claimed while it fetches. */
+  private intent = '';
+  private team: BotTeam | null = null;
+  /** Seconds spent shuffling past a person before starting a task (capped: then it just works). */
+  private crowdT = 0;
+  private meId = '';
+  /** The task keys this bot currently holds (see BotTeam.claims). */
+  claimKeys(): string[] { return [this.goalKey, this.intent].filter(exclusiveKey); }
+  get currentGoal() { return this.goalKey; }
   constructor(public role: 'any' | 'cashier' | 'stocker' | 'cleaner' = 'any', private seed = Math.random()) {}
 
-  update(s: Snapshot, me: PlayerSnap, dt: number): BotOutput {
+  update(s: Snapshot, me: PlayerSnap, dt: number, team: BotTeam | null = null): BotOutput {
+    this.team = team; this.meId = me.id; this.clock += dt;
     const out: BotOutput = { x: me.x, z: me.z, yaw: me.yaw };
     this.cooldown -= dt;
     this.rested = loungePace(s.upgrades?.lounge ?? 0);
@@ -94,17 +126,62 @@ export class Bot {
     }
     const goal = this.pickGoal(s, me);
     if (!goal) {
+      this.intent = '';
       if (me.held && me.held.kind !== 'mop' && this.cooldown <= 0) { out.drop = true; this.cooldown = 1; }
+      // nothing to do: don't loiter in the doorway or next to a person (e.g. at their till) — wait by the stock crates instead
+      const inWay = this.goalKey === 'standby' ? Math.hypot(me.x - STANDBY.x, me.z - STANDBY.z) > 0.4
+        : s.players.some(p => p.id !== me.id && !p.bot && p.connected && Math.hypot(p.x - me.x, p.z - me.z) < 1.3)
+          || (Math.abs(me.x - ENTRANCE.x) < 1.8 && me.z > ENTRANCE.z - 2.6);
+      if (inWay && !me.held) {
+        if (this.goalKey !== 'standby') { this.goalKey = 'standby'; this.path = findPath(me, STANDBY); }
+        return this.giveWay(s, me, this.walk(me, out, dt, STANDBY));
+      }
+      this.goalKey = '';
       return out;
     }
-    if (goal.key !== this.goalKey) { this.goalKey = goal.key; this.path = findPath(me, goal.pos); this.stuck = 0; }
+    if (goal.key !== this.goalKey) { this.goalKey = goal.key; this.path = findPath(me, goal.pos); this.stuck = 0; this.crowdT = 0; }
     const dist = goalDistance(s, me, goal);
     if (dist < SERVER_INTERACT_RANGE - 0.9) {
+      const yaw = Math.atan2(goal.pos.x - me.x, goal.pos.z - me.z);
+      // in range but standing in someone's face (the till is right next to the coffee machine / microwave):
+      // walk on to the proper spot first, then start working (a busy bot stands still for seconds)
+      if (this.crowdT < 1.5 && this.crowding(s, me) && Math.hypot(goal.pos.x - me.x, goal.pos.z - me.z) > 0.3 && goal.target.t !== 'customer') { this.crowdT += dt; const o = this.giveWay(s, me, this.walk(me, out, dt, goal.pos)); o.yaw = yaw; return o; }
       if (this.cooldown <= 0) { out.act = { kind: goal.kind, target: goal.target }; this.cooldown = 0.35; }
-      out.yaw = Math.atan2(goal.pos.x - me.x, goal.pos.z - me.z);
+      out.yaw = yaw;
       return out;
     }
-    return this.walk(me, out, dt, goal.pos);
+    return this.giveWay(s, me, this.walk(me, out, dt, goal.pos));
+  }
+
+  /** Karen id → bot clock when a person was first seen next to it (bots leave it to them for a while). */
+  private yieldSince = new Map<number, number>();
+  private clock = 0;
+  private yielding(id: number) {
+    const t0 = this.yieldSince.get(id);
+    if (t0 === undefined) { this.yieldSince.set(id, this.clock); if (this.yieldSince.size > 40) this.yieldSince.delete(this.yieldSince.keys().next().value!); return true; }
+    return this.clock - t0 < 6;
+  }
+
+  /** Free task? (not held by another bot in this room) */
+  private free(key: string) { const o = this.team?.claims.get(key); return !o || o === this.meId; }
+
+  private crowding(s: Snapshot, me: PlayerSnap) { return s.players.some(p => p.id !== me.id && !p.bot && p.connected && !p.raider && Math.hypot(p.x - me.x, p.z - me.z) < PERSONAL_SPACE); }
+
+  /** Personal space: step around a person instead of walking through them / parking in their face. */
+  private giveWay(s: Snapshot, me: PlayerSnap, out: BotOutput): BotOutput {
+    for (const p of s.players) {
+      if (p.id === me.id || p.bot || !p.connected || p.raider) continue;
+      const dx = out.x - p.x, dz = out.z - p.z, d = Math.hypot(dx, dz);
+      if (d >= PERSONAL_SPACE) continue;
+      // push sideways (relative to the bot's heading) and slightly away, so it slides past instead of stopping
+      const hx = out.x - me.x, hz = out.z - me.z, hl = Math.hypot(hx, hz);
+      let nx: number, nz: number;
+      if (d > 0.05) { nx = dx / d; nz = dz / d; } else if (hl > 1e-3) { nx = -hz / hl; nz = hx / hl; } else { nx = 1; nz = 0; }
+      if (hl > 1e-3) { const sx = -hz / hl, sz = hx / hl, side = sx * nx + sz * nz >= 0 ? 1 : -1; nx = nx * 0.5 + sx * side * 0.8; nz = nz * 0.5 + sz * side * 0.8; }
+      const nl = Math.hypot(nx, nz) || 1, push = Math.min(0.12, PERSONAL_SPACE - d);
+      out.x += (nx / nl) * push; out.z += (nz / nl) * push;
+    }
+    return out;
   }
 
   private walk(me: PlayerSnap, out: BotOutput, dt: number, pos: { x: number; z: number }): BotOutput {
@@ -141,20 +218,30 @@ export class Bot {
     const C = s.customers;
     const cust = (c: CustomerSnap, kind: ActKind): Goal => ({ pos: { x: c.x, z: c.z }, kind, target: { t: 'customer', id: c.id }, key: kind + c.id });
     const held = me.held;
+    // people (not bots, not a raider) — bots yield to them: a person next to a karen / holding that box is on it
+    const people = s.players.filter(p => p.id !== me.id && !p.bot && p.connected && !p.raider);
+    // (only when that person is at least as close as this bot: two simulated players never both back off)
+    const personNear = (x: number, z: number, r = YIELD_R) => { const mine = Math.hypot(me.x - x, me.z - z); return people.some(p => { const d = Math.hypot(p.x - x, p.z - z); return d < r && d <= mine; }); };
+    const take = (g: Goal | null, intent = '') => (g && this.free(g.key) && (!intent || this.free(intent)) ? ((this.intent = intent), g) : null);
     // store-signature karens: fetch what they need (mop, a drink, a hot meal, a box of stock), then do the action
     const canGrabNow = !!s.shift?.abilities.includes('grab') && !me.held && !me.held2;
-    const sig = C.find(c => isSig(c.kind) && !c.resolved && c.revealed && c.state !== 'leaving' && !c.flying && !c.held && !sigWaitReason(c.kind, c.state));
-    if (sig && !(canGrabNow && (!sig.heavy || sig.stun > 0))) {
+    const sigs = C.filter(c => isSig(c.kind) && !c.resolved && c.revealed && c.state !== 'leaving' && !c.flying && !c.held && !sigWaitReason(c.kind, c.state)
+      && this.free('sigAct' + c.id) && !personNear(c.x, c.z));
+    for (const sig of sigs) {
+      if (canGrabNow && (!sig.heavy || sig.stun > 0)) break;
       const d = SIG_KARENS[sig.kind as keyof typeof SIG_KARENS];
       const has = (n: SigNeed) => n === 'box' || n === 'mop' ? held?.kind === n : held?.kind === n || me.held2?.kind === n;
-      if (!d.need || has(d.need)) return cust(sig, 'sigAct');
-      if (d.need === 'mop' && !held && s.mopsOnRack > 0) return { pos: { x: MOP_RACK.x1 + 0.6, z: (MOP_RACK.z0 + MOP_RACK.z1) / 2 }, kind: 'takeMop', target: { t: 'mop' }, key: 'tm' };
+      const intent = 'sigAct' + sig.id;
+      if (!d.need || has(d.need)) { const g = take(cust(sig, 'sigAct'), intent); if (g) return g; continue; }
+      if (d.need === 'mop' && !held && s.mopsOnRack > 0) { const g = take({ pos: { x: MOP_RACK.x1 + 0.6, z: (MOP_RACK.z0 + MOP_RACK.z1) / 2 }, kind: 'takeMop', target: { t: 'mop' }, key: 'tm' }, intent); if (g) return g; }
       if (d.need === 'box' && !held) {
         const p = PRODUCTS.find(x => s.backstock[x] > 0);
-        if (p) { const cr = CRATES.find(c => c.product === p)!; return { pos: { x: (cr.box.x0 + cr.box.x1) / 2, z: cr.box.z1 + 0.7 }, kind: 'takeBox', target: { t: 'crate', product: p }, key: 'tb' + p }; }
+        if (p) { const cr = CRATES.find(c => c.product === p)!; const g = take({ pos: { x: (cr.box.x0 + cr.box.x1) / 2, z: cr.box.z1 + 0.7 }, kind: 'takeBox', target: { t: 'crate', product: p }, key: 'tb' + p }, intent); if (g) return g; }
       }
-      if ((d.need === 'coffee' || d.need === 'meal') && (!held || ((held.kind === 'coffee' || held.kind === 'meal') && !me.held2)) && (d.need === 'coffee' || s.backstock.bento > 0)) return foodGoal(d.need);
+      if ((d.need === 'coffee' || d.need === 'meal') && (!held || ((held.kind === 'coffee' || held.kind === 'meal') && !me.held2)) && (d.need === 'coffee' || s.backstock.bento > 0)) { const g = take(foodGoal(d.need), intent); if (g) return g; }
+      break;
     }
+    this.intent = '';
     if (held?.kind === 'box') {
       const p = held.product;
       if (s.shelves[p] < shelfCapacity(s.upgrades.shelves)) return shelfGoal(me, p, 'stock');
@@ -163,42 +250,22 @@ export class Bot {
     }
     if (held?.kind === 'coffee' || held?.kind === 'meal') {
       const kinds = [held.kind, me.held2?.kind];
-      const w = C.find(c => c.state === 'waitFood' && c.want && kinds.includes(c.want));
+      // deliver to a waiting customer nobody else is bringing it to (fall back to anyone waiting for it)
+      const waiting = C.filter(c => c.state === 'waitFood' && c.want && kinds.includes(c.want));
+      const w = waiting.find(c => this.free('deliver' + c.id)) ?? waiting[0];
       if (w) return cust(w, 'deliver');
       const more = C.find(c => c.state === 'waitFood' && c.want && !kinds.includes(c.want));
       if (more && !me.held2) return foodGoal(more.want!);
       return null;
     }
     if (held?.kind === 'mop') {
-      const sp = nearest(me, s.spills);
+      // a spill another mop (a bot's claim, or a person standing on it with a mop) is already on goes to them
+      const mopper = people.filter(p => p.held?.kind === 'mop');
+      const sp = nearest(me, s.spills.filter(x => this.free('cl' + x.id) && !mopper.some(p => Math.hypot(p.x - x.x, p.z - x.z) <= Math.min(YIELD_R, Math.hypot(me.x - x.x, me.z - x.z)))));
       if (sp) return { pos: sp, kind: 'clean', target: { t: 'spill', id: sp.id }, key: 'cl' + sp.id };
       return { pos: { x: 1.3, z: 12.7 }, kind: 'returnMop', target: { t: 'mop' }, key: 'rm' };
     }
     if (s.phase === 'summary') return null;
-    // karens first
-    const canGrab = !!s.shift?.abilities.includes('grab') && !me.held && !me.held2;
-    const karens = C.filter(c => c.kind !== 'normal' && !c.resolved && c.revealed && c.state !== 'leaving' && !c.flying && !c.held);
-    for (const k of karens) {
-      if (k.kind === 'boss') {
-        if (k.phase === 1 && ['queue', 'toRegister', 'atRegister'].includes(k.state)) return cust(k, 'askQueue');
-        if (k.phase === 4) continue; // deal with the minions first
-        if (canGrab && k.phase !== 1) return cust(k, 'grab'); // walks up; the self-defence hit above stuns him first (he is too heavy otherwise)
-        if (k.phase === 2 && k.state === 'complain') return cust(k, 'calm');
-        if (k.phase === 3) return cust(k, 'stopFilm');
-        continue;
-      }
-      if (k.kind === 'cutter' && ['queue', 'toRegister', 'atRegister'].includes(k.state)) return cust(k, 'askQueue');
-      if (canGrab && k.kind !== 'cutter' && (!k.heavy || k.stun > 0)) return cust(k, 'grab');
-      if (k.kind === 'rager' && k.state === 'complain') return cust(k, 'calm');
-      if (k.kind === 'cutter' && ['queue', 'toRegister', 'atRegister'].includes(k.state)) return cust(k, 'askQueue');
-      if (k.kind === 'streamer' && this.role !== 'cashier') return cust(k, 'stopFilm');
-      if (k.kind === 'hog') return cust(k, 'checkBag');
-      if (k.kind === 'litterer') return cust(k, 'stopLitter');
-      if (k.kind === 'charger' && k.state === 'charge') return cust(k, 'unplug');
-      if (k.kind === 'custom' && k.state === 'atRegister') return cust(k, 'repeatOrder');
-      if (k.kind === 'fickle' && k.state === 'waitFood') return cust(k, 'recommend');
-      if (k.kind === 'tryhard' && k.state === 'tryon') return cust(k, 'limitTry');
-    }
     const regs = s.upgrades.register2 > 0 ? REGISTERS : [REGISTERS[0]];
     // someone else (a person or another bot) is already standing at that till
     const others = s.players.filter(p => p.id !== me.id && p.connected && !p.raider);
@@ -206,26 +273,40 @@ export class Bot {
     const tasks: Goal[] = [];
     for (const r of regs) {
       const waiting = C.find(c => c.state === 'atRegister' && Math.abs(c.x - r.customer.x) < 0.6 && Math.abs(c.z - r.customer.z) < 0.6);
-      if (waiting && (this.role === 'cashier' || !manned(r))) tasks.push({ pos: r.cashier, kind: 'checkout', target: { t: 'register', idx: r.idx }, key: 'co' + r.idx });
+      if (waiting && (this.role === 'cashier' || !manned(r)) && this.free('co' + r.idx)) tasks.push({ pos: r.cashier, kind: 'checkout', target: { t: 'register', idx: r.idx }, key: 'co' + r.idx });
     }
     const waitingFood = C.find(c => c.state === 'waitFood' && c.want);
-    const coffeeWaiting = !!waitingFood;
     const coffeeGoal: Goal = waitingFood ? foodGoal(waitingFood.want!) : foodGoal('coffee');
-    // restocking covers every product line of the current map (including a fourth 'extra' line), emptiest shelf first
+    // a waiting food order, unless a teammate is already making or carrying it
+    const foodCovered = !!waitingFood && others.some(p => p.held?.kind === waitingFood.want || p.held2?.kind === waitingFood.want
+      || p.busy?.kind === coffeeGoal.kind);
+    const food = waitingFood && (this.role !== 'any' || !foodCovered) && this.free(coffeeGoal.key) ? [coffeeGoal] : [];
+    // answering a 「需要支援收銀」: the till / the food order first
+    if ((this.team?.assist ?? 0) > 0) { const g = tasks[0] ?? food[0]; if (g) return g; }
+    // karens first
+    const canGrab = !!s.shift?.abilities.includes('grab') && !me.held && !me.held2;
+    const karens = C.filter(c => c.kind !== 'normal' && !c.resolved && c.revealed && c.state !== 'leaving' && !c.flying && !c.held
+      // a person dealing with it (standing next to it) keeps it — unless it turned violent or they've been at it for 6 s
+      && (c.violent || !personNear(c.x, c.z) || !this.yielding(c.id)));
+    for (const k of karens) {
+      const g = this.karenGoal(k, canGrab, cust);
+      if (g && this.free(g.key)) return g;
+    }
+    // restocking covers every product line of the current map (including a fourth 'extra' line), emptiest shelf first;
+    // skip a product a person is already carrying a box of, and leave it all to them after their 「我去補貨」 (unless a shelf is bare)
     const cap = shelfCapacity(s.upgrades.shelves);
+    const personRestock = (this.team?.humanRestock ?? 0) > 0;
     const restockBelow = (frac: number): Goal[] => PRODUCTS
-      .filter(p => s.shelves[p] < cap * frac && s.backstock[p] > 0)
+      .filter(p => s.shelves[p] < cap * frac && s.backstock[p] > 0 && (!personRestock || s.shelves[p] === 0)
+        && !people.some(x => x.held?.kind === 'box' && x.held.product === p) && this.free('tb' + p))
       .sort((a, b) => s.shelves[a] - s.shelves[b])
       .map(p => { const cr = CRATES.find(c => c.product === p)!; return { pos: { x: (cr.box.x0 + cr.box.x1) / 2, z: cr.box.z1 + 0.7 }, kind: 'takeBox' as ActKind, target: { t: 'crate', product: p } as Target, key: 'tb' + p }; });
     const restock = restockBelow(0.4);
     /** Nothing urgent: top up any shelf that has room for a whole box. */
     const topUp = restockBelow((cap - BOX_SIZE + 1) / cap);
-    const item = nearest(me, s.items.filter(i => i.held.kind === 'box'));
-    const clean: Goal[] = s.spills.length >= 2 && s.mopsOnRack > 0 ? [{ pos: { x: (MOP_RACK.x1) + 0.6, z: (MOP_RACK.z0 + MOP_RACK.z1) / 2 }, kind: 'takeMop', target: { t: 'mop' }, key: 'tm' }] : [];
-    // a waiting food order, unless a teammate is already making or carrying it
-    const foodCovered = !!waitingFood && others.some(p => p.held?.kind === waitingFood.want || p.held2?.kind === waitingFood.want
-      || p.busy?.kind === coffeeGoal.kind);
-    const food = coffeeWaiting && (this.role !== 'any' || !foodCovered) ? [coffeeGoal] : [];
+    const item = nearest(me, s.items.filter(i => i.held.kind === 'box' && this.free('pk' + i.id) && !personNear(i.x, i.z, 1)));
+    const personMopping = people.some(p => p.held?.kind === 'mop');
+    const clean: Goal[] = s.spills.length >= (personMopping ? 4 : 2) && s.mopsOnRack > 0 && this.free('tm') ? [{ pos: { x: (MOP_RACK.x1) + 0.6, z: (MOP_RACK.z0 + MOP_RACK.z1) / 2 }, kind: 'takeMop', target: { t: 'mop' }, key: 'tm' }] : [];
     const order: Goal[][] =
       this.role === 'stocker' ? [restock, tasks, food, topUp, clean]
         : this.role === 'cleaner' ? [clean, tasks, restock, food]
@@ -235,6 +316,29 @@ export class Bot {
             : [tasks, food, restock, topUp, clean];
     for (const list of order) if (list.length) return list === tasks || list === clean ? list[Math.floor(this.seed * list.length) % list.length] : list[0];
     if (item) return { pos: item, kind: 'pickup', target: { t: 'item', id: item.id }, key: 'pk' + item.id };
+    return null;
+  }
+
+  /** How this bot would deal with a karen right now (null: nothing to do about it yet). */
+  private karenGoal(k: CustomerSnap, canGrab: boolean, cust: (c: CustomerSnap, kind: ActKind) => Goal): Goal | null {
+    if (k.kind === 'boss') {
+      if (k.phase === 1 && ['queue', 'toRegister', 'atRegister'].includes(k.state)) return cust(k, 'askQueue');
+      if (k.phase === 4) return null; // deal with the minions first
+      if (canGrab && k.phase !== 1) return cust(k, 'grab'); // walks up; the self-defence hit above stuns him first (he is too heavy otherwise)
+      if (k.phase === 2 && k.state === 'complain') return cust(k, 'calm');
+      if (k.phase === 3) return cust(k, 'stopFilm');
+      return null;
+    }
+    if (k.kind === 'cutter' && ['queue', 'toRegister', 'atRegister'].includes(k.state)) return cust(k, 'askQueue');
+    if (canGrab && k.kind !== 'cutter' && (!k.heavy || k.stun > 0)) return cust(k, 'grab');
+    if (k.kind === 'rager' && k.state === 'complain') return cust(k, 'calm');
+    if (k.kind === 'streamer' && this.role !== 'cashier') return cust(k, 'stopFilm');
+    if (k.kind === 'hog') return cust(k, 'checkBag');
+    if (k.kind === 'litterer') return cust(k, 'stopLitter');
+    if (k.kind === 'charger' && k.state === 'charge') return cust(k, 'unplug');
+    if (k.kind === 'custom' && k.state === 'atRegister') return cust(k, 'repeatOrder');
+    if (k.kind === 'fickle' && k.state === 'waitFood') return cust(k, 'recommend');
+    if (k.kind === 'tryhard' && k.state === 'tryon') return cust(k, 'limitTry');
     return null;
   }
 }

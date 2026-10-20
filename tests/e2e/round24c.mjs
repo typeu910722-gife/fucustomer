@@ -66,7 +66,8 @@ if (!/里長來巡店/.test(sum)) fail('no unlock line'); else ok('unlock shown:
 if (!/分店入帳 \+\$24/.test(sum)) fail('no branch income line: ' + sum); else ok('branch income +$24 from 阿明咖啡分店');
 const toasts = await pg.evaluate(() => document.getElementById('toasts')?.innerText ?? '');
 if (!/店面升級/.test(toasts)) fail('no level-up toast'); else ok('level-up toast');
-await pg.locator('#sum-prog').scrollIntoViewIfNeeded();
+// The summary redraws itself when money/stock change (it keeps the scroll position), so look the panel up fresh.
+await pg.evaluate(() => document.getElementById('sum-prog')?.scrollIntoView({ block: 'center' }));
 await pg.screenshot({ path: `${OUT}/r24c-summary-levelup.png` });
 const prof = await pg.evaluate(() => JSON.parse(localStorage.getItem('fucustomer.career.v1')));
 const fp = prof.freeProg?.convenience;

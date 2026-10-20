@@ -7,6 +7,7 @@ import {
 } from '../../shared/court.ts';
 import { esc, show } from './ui.ts';
 import { audio } from './audio.ts';
+import { isTouch as touch } from './storage.ts';
 
 /** Plays a dialogue scene line by line (click / Enter / Space to continue, or skip). */
 export function playScene(id: string, done: () => void) {
@@ -32,11 +33,13 @@ export function playLines(title: string, lines: DialogLine[], done: () => void, 
           <div class="portrait">${esc(l.icon)}</div>
           <div class="bubble"><b>${esc(l.name)}</b><p>${esc(l.text)}</p></div>
         </div>
-        <div class="row"><button class="btn small" id="sc-skip">跳過</button><button class="btn primary" id="sc-next">${i + 1 < lines.length ? '繼續 ▶' : '好'}</button></div>
-        <div class="muted" style="text-align:center">${i + 1} / ${lines.length}</div>
+        <div class="row"><button class="btn small" id="sc-skip">跳過全部${touch ? '' : '（Esc）'}</button><button class="btn primary" id="sc-next">${i + 1 < lines.length ? '繼續 ▶' : '好'}${touch ? '' : '（Enter）'}</button></div>
+        <div class="muted" style="text-align:center">${i + 1} / ${lines.length}${touch ? '・點對話框任何地方繼續' : ''}</div>
       </div>`);
-    document.getElementById('sc-next')!.onclick = next;
-    document.getElementById('sc-skip')!.onclick = finish;
+    document.getElementById('sc-next')!.onclick = e => { e.stopPropagation(); next(); };
+    document.getElementById('sc-skip')!.onclick = e => { e.stopPropagation(); finish(); };
+    // one tap / click anywhere on the dialogue moves on (the buttons are not the only target)
+    const dlg = document.querySelector<HTMLElement>('.scene .dialog'); if (dlg) { dlg.style.cursor = 'pointer'; dlg.onclick = next; }
   };
   window.addEventListener('keydown', onKey);
   render();

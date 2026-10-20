@@ -395,6 +395,49 @@ test('link via browser (app sign-in) over HTTP: start → complete → poll once
   assert.ok(codes.includes(429), `start limited: ${codes}`);
 });
 
+// ---- round 25 parity: the same shared/room.ts co-op features through the RoomDO (relay and direct mode) ----
+const evs = c => c.msgs.flatMap(m => (m.type === 'events' ? m.list : []));
+
+test('round 25 parity: reconnect with an outfit comes back connected, same spot, box in hand (direct mode)', async () => {
+  const [a, b] = await room(2, { direct: true });
+  await start([a, b]);
+  for (let k = 0; k < 25; k++) { b.send({ type: 'input', x: 3.2, z: 2.2, yaw: 0, pitch: 0, seq: k }); await sleep(100); }
+  b.send({ type: 'act', rid: 'bx', kind: 'takeBox', target: { t: 'crate', product: 'snacks' } });
+  await b.until(() => b.me()?.held?.kind === 'box', 5000, 'box');
+  const pos = { x: b.me().x, z: b.me().z }, token = b.token, id = b.playerId;
+  b.kill();
+  await a.until(() => a.snap.players.find(p => p.id === id)?.connected === false, 40000, 'B marked disconnected');
+  const b2 = new Client('b2', `?room=${a.code}`); await b2.connect();
+  b2.send({ type: 'join', code: a.code, name: 'P1', token, outfit: { hat: 'hat_cap' } });
+  await b2.until(() => !!b2.me(), 8000, 'resync');
+  assert.equal(b2.playerId, id);
+  assert.equal(b2.me().connected, true);
+  assert.equal(b2.me().held?.kind, 'box');
+  assert.ok(Math.hypot(b2.me().x - pos.x, b2.me().z - pos.z) < 0.6);
+  a.close(); b2.close();
+});
+
+test('round 25 parity: emote presets + rate limit, lobby ping, kick and host transfer in the RoomDO', async () => {
+  const [h, j, k] = await room(3);
+  j.send({ type: 'hb', t: Date.now(), rtt: 37 });
+  await h.until(() => h.lobby?.players.find(p => p.id === j.playerId)?.ping === 37, 6000, 'ping in lobby');
+  j.send({ type: 'quick', msg: 42 });
+  for (let i = 0; i < 8; i++) { j.send({ type: 'quick', msg: 2 }); await sleep(150); }
+  await h.until(() => evs(h).some(e => e.e === 'quick'), 4000, 'emote');
+  await sleep(400);
+  const q = evs(h).filter(e => e.e === 'quick');
+  assert.ok(q.length >= 2 && q.length <= 3, `rate limited: ${q.length}`);
+  assert.equal(q[0].id, j.playerId); assert.equal(q[0].msg, 2);
+  j.send({ type: 'kick', id: k.playerId }); await sleep(300);
+  assert.equal(h.lobby.players.length, 3, 'only the host kicks');
+  h.send({ type: 'kick', id: k.playerId });
+  await k.until(() => k.errors.some(e => e.code === 'kicked'), 4000, 'kicked');
+  await h.until(() => h.lobby.players.length === 2, 4000, 'gone');
+  h.send({ type: 'host', id: j.playerId });
+  await j.until(() => j.lobby?.hostId === j.playerId, 4000, 'host transferred');
+  h.close(); j.close(); k.close();
+});
+
 test('restart: room restored from the SQLite checkpoint, player rejoins with token', { timeout: 120_000, skip: !!process.env.CF_URL }, async () => {
   const up = await api('POST', '/api/stores', { name: '持久店', money: 100 });
   const lic = await api('POST', '/api/auth/google', { credential: idToken({ ...goodClaims(), sub: 'persist-1' }) });

@@ -89,7 +89,11 @@ export interface Snapshot {
   result: ShiftResult | null;
 }
 
-export interface LobbyPlayer { id: string; name: string; ready: boolean; connected: boolean; color: number; platform: string; outfit?: Outfit; bot?: boolean }
+export interface LobbyPlayer {
+  id: string; name: string; ready: boolean; connected: boolean; color: number; platform: string; outfit?: Outfit; bot?: boolean;
+  /** Round-trip time the player's client last reported (ms); omitted for bots and before the first measurement. */
+  ping?: number;
+}
 export interface LobbyState {
   code: string; hostId: string; started: boolean; players: LobbyPlayer[]; max: number; day: number;
   /** Store type and difficulty of a multiplayer room (the host can change them in the lobby). */
@@ -120,7 +124,12 @@ export type ClientMsg =
   | { type: 'bg'; away: boolean }
   | { type: 'leave' }
   | { type: 'pause'; paused: boolean }
-  | { type: 'hb'; t: number };
+  /** Host only: remove a person from the room (lobby or game). */
+  | { type: 'kick'; id: string }
+  /** Host only: hand the host role to another connected person. */
+  | { type: 'host'; id: string }
+  /** rtt: the client's last measured round trip (ms), shown next to its name in the lobby. */
+  | { type: 'hb'; t: number; rtt?: number };
 
 export type GameEvent =
   /** karen/kid/ok: set when the toast reports a karen being dealt with (kind, customer id, success) — older clients ignore them. */
@@ -128,7 +137,8 @@ export type GameEvent =
   | { e: 'sfx'; name: string; x?: number; z?: number }
   | { e: 'money'; amount: number; x: number; z: number }
   | { e: 'karen'; kind: KarenKind; id: number }
-  | { e: 'quick'; from: string; text: string }
+  /** id / msg: sender and preset index (speech bubble over the sender); older clients only read from + text. */
+  | { e: 'quick'; from: string; text: string; id?: string; msg?: number }
   | { e: 'phase'; phase: Phase; day: number }
   | { e: 'hint'; text: string }
   /** report (hit only): this smack will bring the police (client plays a siren sting) — older clients ignore it. */

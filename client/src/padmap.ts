@@ -22,7 +22,7 @@ export const GAME_BINDINGS: ReadonlyArray<[number, PadAction]> = [
 /** Keyboard / mouse labels for the same actions (matches the key map in input.ts). */
 export const KEY_LABEL: Record<PadAction, string> = {
   interact: 'E', alt: 'F', drop: 'G', grab: '空白', spin: 'Q', ultimate: 'R', hit: 'X', ping: 'V', quick: 'T', shop: 'B',
-  ready: 'Enter', menu: 'Esc', tab: 'Tab', run: 'Shift', skip: 'K', q1: '1', q2: '2', q3: '3', q4: '4', q5: '5', q6: '6',
+  ready: 'Enter', menu: 'Esc', tab: 'Tab', run: 'Shift', skip: 'K', q1: '1', q2: '2', q3: '3', q4: '4', q5: '5', q6: '6', q7: '7', q8: '8',
 };
 
 const XBOX = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'View', 'Menu', 'LS', 'RS', '十字↑', '十字↓', '十字←', '十字→', 'Home'];
@@ -49,7 +49,21 @@ export function actionLabel(a: PadAction, mode: 'kb' | 'pad', style: PadStyle): 
 }
 
 /** One-line control summary for the HUD. */
-export function controlsLine(mode: 'kb' | 'pad', style: PadStyle): string {
+/** In-game controls hint shows only what the current shift can use (null = everything, e.g. outside a game). */
+export interface ControlsContext { abilities: string[]; alt: boolean; social: boolean; shop: boolean; ready: boolean }
+let controlsCtx: ControlsContext | null = null;
+export function setControlsContext(c: ControlsContext | null) { controlsCtx = c; }
+/** Drops the segments of a controls line that the context says are not usable yet. */
+export function filterControls(line: string, c: ControlsContext | null): string {
+  if (!c) return line;
+  const off: [RegExp, boolean][] = [
+    [/次要$/, !c.alt], [/抓\/丟$/, !c.abilities.includes('grab')], [/出手$/, !c.abilities.includes('hit')], [/旋風$/, !c.abilities.includes('spin')],
+    [/全店退散$/, !c.abilities.includes('ultimate')], [/(標記|訊息)$/, !c.social], [/採購$/, !c.shop], [/準備$/, !c.ready],
+  ];
+  return line.split('・').filter(seg => !off.some(([re, hide]) => hide && re.test(seg))).join('・');
+}
+export function controlsLine(mode: 'kb' | 'pad', style: PadStyle): string { return filterControls(fullControlsLine(mode, style), controlsCtx); }
+function fullControlsLine(mode: 'kb' | 'pad', style: PadStyle): string {
   if (mode === 'kb') return 'WASD 移動・Shift 跑・滑鼠 視角・E 互動・F 次要・G 放下・空白 抓/丟・X 出手・Q 旋風・R 全店退散・V 標記・T 訊息・B 採購・Esc 選單';
   const g = (a: PadAction) => actionGlyph(a, style);
   const ls = style === 'ps' ? 'L 搖桿' : '左搖桿', rs = style === 'ps' ? 'R 搖桿' : '右搖桿';

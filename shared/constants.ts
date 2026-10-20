@@ -113,7 +113,12 @@ export const BOSS_HOW = ['', '靠近按互動「請排隊」（或丟出門）',
 
 export const PLAYER_COLORS = [0xff6b6b, 0x4dabf7, 0x51cf66, 0xfcc419, 0xcc5de8];
 
-export const QUICK_MESSAGES = ['需要支援收銀！', '我去補貨', '奧客出現！', '我去清潔', '收到！', '幫我顧櫃台'];
+/** Preset callouts / emotes (no free text): keys 1–8, the T / View wheel. Index = the wire value of a 'quick' message. */
+export const QUICK_MESSAGES = ['需要支援收銀！', '我去補貨', '奧客在門口！', '幫我開門', '謝啦！', '讚！', '哭啊…', '下班囉～'];
+/** Icon shown in the wheel and in the bubble over the sender (same order as QUICK_MESSAGES). */
+export const QUICK_ICONS = ['🧾', '📦', '🚨', '🚪', '🙏', '👍', '😭', '🌙'];
+/** Server-side emote limit per player: at most QUICK_BURST messages in QUICK_WINDOW_MS, and QUICK_MIN_GAP_MS apart. */
+export const QUICK_BURST = 3, QUICK_WINDOW_MS = 6000, QUICK_MIN_GAP_MS = 600;
 
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const ROOM_CODE_LENGTH = 5;

@@ -1,6 +1,6 @@
 // DOM menus: main menu, lobby, settings, in-game overlays (pause, shop, summary, quick messages).
 import { MAPS } from '../../shared/maps/index.ts';
-import { KAREN_INFO, MAX_FILL_BOTS, MAX_PLAYERS, PRODUCT_INFO, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, PRODUCTS, QUICK_MESSAGES, UPGRADES, UPGRADE_IDS, shelfCapacity } from '../../shared/constants.ts';
+import { KAREN_INFO, MAX_FILL_BOTS, MAX_PLAYERS, PRODUCT_INFO, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, PRODUCTS, UPGRADES, UPGRADE_IDS, shelfCapacity } from '../../shared/constants.ts';
 import type { LobbyState, Snapshot, StoreSave } from '../../shared/protocol.ts';
 import type { Settings } from './storage.ts';
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from '../../shared/difficulty.ts';
@@ -129,9 +129,9 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
       </div>
       <div class="card">
         ${info.canRejoin ? `<button class="btn good" id="m-rejoin">🔌 重新連線到房間 ${esc(info.canRejoin)}</button>` : ''}
-        ${h.firstDay ? `<div class="welcome"><b>👋 第一次來上班？</b><span>從第一天開始，會一步一步教你。</span><button class="btn good" id="m-first">▶ 開始第一天上班</button></div>` : ''}
+        ${h.firstDay ? `<div class="welcome"><b>👋 第一次來上班？</b><span>按下去就開店，邊做邊教，不用先看說明。</span><button class="btn good hero first-go" id="m-first">▶ 開始第一天上班</button></div>` : ''}
         ${info.next ? `<button class="btn good continue" id="m-next"><span class="cont-tag">繼續上班</span>▶ ${esc(info.next.id)}・${esc(info.next.title)} <span class="cont-map">${esc(info.next.map)}</span></button>` : ''}
-        <button class="btn primary hero" id="m-career">🧑‍💼 開工<span class="sub">主線：從工讀生一路升到開自己的店</span></button>
+        <button class="btn primary ${h.firstDay ? '' : 'hero'}" id="m-career">🧑‍💼 開工${h.firstDay ? '' : '<span class="sub">主線：從工讀生一路升到開自己的店</span>'}</button>
         <button class="btn warn hero" id="m-mp">📯 打工人的號角<span class="sub">多人遊玩・選地圖、選難度</span></button>
         ${info.daily || info.weekly ? `<div class="chal-row">
           ${info.daily ? `<button class="daily-mini" id="m-daily"><span class="dm-icon">📅</span><span class="dm-text"><b>今日挑戰</b><small>${esc(info.daily.map)}・${esc(info.daily.mods)}</small></span><span class="tag ${info.daily.done ? 'ok' : ''}">${info.daily.done ? '✅ 已領' : '🎁 未領'}</span></button>` : ''}
@@ -295,11 +295,45 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
 let lobbyNote: { text: string; until: number } | null = null;
 const LOBBY_NOTE_DEFAULT = '朋友點連結就會直接進這個房間。';
 
-export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean): void; start(): void; leave(): void; copy(): void; config?(map: string, difficulty: string, bots: boolean): void }) {
+/** Shows a short note in the lobby (the share-message line), e.g. 「你現在是房主」. */
+export function lobbyFlash(text: string) {
+  lobbyNote = { text, until: Date.now() + 4000 };
+  const el = document.getElementById('l-sharemsg'); if (el) el.textContent = text;
+}
+/** Connection line in the lobby (「重新連線中…」 with the countdown; empty hides it). */
+export function lobbyNet(text: string) {
+  const el = document.getElementById('l-net'); if (!el) return;
+  el.textContent = text; el.classList.toggle('hidden', !text);
+}
+const LOBBY_CSS = `
+.players .lp { flex-wrap: wrap; row-gap: 4px; }
+.players .lp.off { opacity: .6; }
+.tag.ping { font-variant-numeric: tabular-nums; }
+.tag.ping.good { background: #d3f9d8; } .tag.ping.mid { background: #fff3bf; } .tag.ping.bad { background: #ffc9c9; }
+.tag.rdy { font-size: 14px; padding: 3px 10px; } .tag.rdy.ok { background: #8ce99a; } .tag.rdy.wait { background: #ffe066; }
+.lp-ctl { display: flex; gap: 4px; flex-basis: 100%; justify-content: flex-end; }
+.lp-ctl .btn { width: auto; flex: 0 0 auto; margin: 0; padding: 4px 10px; font-size: 13px; min-height: 0; }
+.lp-ctl .btn.armed { background: #ff8787; }
+#l-net { background: #ffe066; border: 3px solid var(--ink); border-radius: 12px; padding: 6px 10px; font-weight: 900; white-space: pre-line; text-align: center; }
+.readysum { font-weight: 900; }
+`;
+/** Lobby update where only the pings changed: patch the ping tags in place (a full redraw would reset a half-confirmed kick). */
+export function lobbyPings(l: LobbyState) {
+  for (const p of l.players) {
+    const el = document.querySelector<HTMLElement>(`.lp[data-pid="${CSS.escape(p.id)}"] .tag.ping`); if (!el) continue;
+    el.className = `tag ping ${p.ping === undefined ? '' : pingClass(p.ping)}`;
+    el.textContent = `📶 ${p.ping === undefined ? '…' : `${p.ping} ms`}`;
+  }
+}
+const pingClass = (ms: number) => (ms < 90 ? 'good' : ms < 200 ? 'mid' : 'bad');
+
+export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean): void; start(): void; leave(): void; copy(): void; config?(map: string, difficulty: string, bots: boolean): void; kick?(id: string): void; makeHost?(id: string): void }, reconnecting = false) {
+  if (!document.getElementById('lobby-css')) { const st = document.createElement('style'); st.id = 'lobby-css'; st.textContent = LOBBY_CSS; document.head.appendChild(st); }
   const me = l.players.find(p => p.id === selfId);
   const isHost = l.hostId === selfId;
   const others = l.players.filter(p => p.id !== l.hostId && p.connected);
   const canStart = others.every(p => p.ready);
+  const waitingFor = others.filter(p => !p.ready).map(p => p.name);
   const link = inviteLink(l.code);
   const lineUrl = `https://line.me/R/share?text=${encodeURIComponent(`${inviteText(l.code)}\n${link}`)}`;
   const canShare = typeof navigator.share === 'function';
@@ -329,10 +363,14 @@ export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean
              <div class="muted">換店面或難度後，其他人要重新按「準備」。</div>`
           : `<div class="lobbycfg ro"><span class="tag">${m.icon} ${esc(m.name)}</span><span class="tag">${d.icon} ${d.name}・${esc(d.desc)}</span>${l.bots ? '<span class="tag">🤖 電腦店員補位</span>' : ''}</div>`;
       })() : ''}
+      <div id="l-net" class="${reconnecting ? '' : 'hidden'}">${reconnecting ? '重新連線中…' : ''}</div>
+      <div class="muted readysum" id="l-readysum">${others.length ? (waitingFor.length ? `⏳ 等待準備：${esc(waitingFor.join('、'))}（${others.length - waitingFor.length}/${others.length} 已準備）` : `✅ 全員準備好了（${others.length}/${others.length}）`) : '只有你一個人：可以直接開始，或等朋友加入'}</div>
       <ul class="players">
-        ${l.players.map(p => `<li><span class="dot" style="background:${hex(p.color)}"></span><b style="flex:1">${esc(p.name)}${p.id === selfId ? '（你）' : ''}</b>
+        ${l.players.map(p => `<li class="lp ${p.connected ? '' : 'off'}" data-pid="${esc(p.id)}"><span class="dot" style="background:${hex(p.color)}"></span><b style="flex:1">${esc(p.name)}${p.id === selfId ? '（你）' : ''}</b>
           ${p.id === l.hostId ? '<span class="tag">👑 房主</span>' : ''}<span class="tag">${p.bot ? '電腦店員' : PLATFORM_ICON[p.platform] ?? esc(p.platform)}</span>
-          ${!p.connected ? '<span class="tag off">斷線</span>' : p.id === l.hostId ? '' : p.ready ? '<span class="tag ok">已準備</span>' : '<span class="tag">未準備</span>'}</li>`).join('')}
+          ${p.bot || !p.connected ? '' : `<span class="tag ping ${p.ping === undefined ? '' : pingClass(p.ping)}" title="延遲">📶 ${p.ping === undefined ? '…' : `${p.ping} ms`}</span>`}
+          ${!p.connected ? '<span class="tag off">斷線中</span>' : p.id === l.hostId ? '<span class="tag rdy ok">房主</span>' : p.ready ? '<span class="tag rdy ok">✅ 已準備</span>' : '<span class="tag rdy wait">⏳ 未準備</span>'}
+          ${isHost && h.kick && p.id !== selfId && !p.bot ? `<span class="lp-ctl">${p.connected ? `<button class="btn small" data-mkhost="${esc(p.id)}">👑 交給他</button>` : ''}<button class="btn small" data-kick="${esc(p.id)}">🚪 請他離開</button></span>` : ''}</li>`).join('')}
       </ul>
       ${isHost
         ? `<button class="btn primary" id="l-start" ${canStart ? '' : 'disabled'}>${canStart ? '開始營業' : '等待所有人準備…'}</button>`
@@ -353,6 +391,9 @@ export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean
   on('l-ready', 'click', () => h.ready(!me?.ready));
   on('l-leave', 'click', () => h.leave());
   on('l-copy', 'click', () => { void copyText(l.code).then(ok => shareMsg(ok ? `✅ 已複製房間碼 ${l.code}` : `複製失敗：房間碼是 ${l.code}`)); });
+  // host controls: both need a second press (in-page confirm, works where dialogs are blocked)
+  document.querySelectorAll<HTMLButtonElement>('[data-kick]').forEach(b => { b.onclick = () => confirmTwice(b, '再按一次：確定請他離開', () => h.kick?.(b.dataset.kick!)); });
+  document.querySelectorAll<HTMLButtonElement>('[data-mkhost]').forEach(b => { b.onclick = () => confirmTwice(b, '再按一次：交出房主', () => h.makeHost?.(b.dataset.mkhost!)); });
   const cfg = () => h.config?.(val('l-map'), val('l-diff'), (document.getElementById('l-bots') as HTMLInputElement | null)?.checked ?? false);
   on('l-map', 'change', cfg); on('l-diff', 'change', cfg); on('l-bots', 'change', cfg);
 }
@@ -396,21 +437,13 @@ export function helpScreen(onBack: () => void) {
         ${Object.values(KAREN_INFO).map(k => `<div class="shopitem"><b>${k.name}</b>${k.hint}<br><span class="muted">處理：${k.how}</span></div>`).join('')}
       </div>
       <h3>操作</h3>
-      <p class="muted">電腦：WASD 移動、Shift 跑（耗體力）、滑鼠視角、左鍵/E 互動、右鍵/F 次要、G 放下、空白鍵 抓起/丟出、X 出手、Q 拖把旋風、R 全店退散、V 標記、T 快捷訊息、B 採購、Enter 準備、Esc/P 選單。<br>
+      <p class="muted">電腦：WASD 移動、Shift 跑（耗體力）、滑鼠視角、左鍵/E 互動、右鍵/F 次要、G 放下、空白鍵 抓起/丟出、X 出手、Q 拖把旋風、R 全店退散、V 標記、T 快捷訊息輪盤（1–8 直接喊話）、B 採購、Enter 準備、Esc/P 選單。<br>
       手把：${esc(controlsLine('pad', padStyle()))}・十字← 跳過教學。選單裡：十字鍵／左搖桿 移動、${buttonGlyph(BTN.A, padStyle())} 確定、${buttonGlyph(BTN.B, padStyle())} 返回、${buttonGlyph(BTN.LB, padStyle())}/${buttonGlyph(BTN.RB, padStyle())} 切換分頁、左右 調整滑桿。<br>
       手機：左半邊拖曳＝搖桿、右半邊拖曳＝視角，右側按鈕互動／放下／抓丟／旋風／退散。</p>
       <p class="muted">抓起奧客後轉向發光出口丟出去，飛過門線才算送走；誤丟一般顧客會大扣分。混亂度滿 100% 或口碑歸零就提早下班。</p>
       <button class="btn primary" id="h-back">返回</button>
     </div>`, 'screen overlay');
   on('h-back', 'click', onBack);
-}
-
-export function quickMenu(onPick: (i: number) => void, onClose: () => void) {
-  show(`<div class="card" id="quickmenu"><h2>快捷訊息</h2>
-    ${QUICK_MESSAGES.map((m, i) => `<button class="btn" data-q="${i}">${i + 1}. ${esc(m)}</button>`).join('')}
-    <button class="btn small" id="qm-close">關閉</button></div>`, 'screen overlay');
-  root().querySelectorAll<HTMLButtonElement>('[data-q]').forEach(b => b.addEventListener('click', () => onPick(Number(b.dataset.q))));
-  on('qm-close', 'click', onClose);
 }
 
 /** Shop: stock purchases any time; upgrades only during prep/summary. Re-rendered on snapshot changes. */

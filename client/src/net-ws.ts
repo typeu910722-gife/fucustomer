@@ -1,7 +1,7 @@
 // WebSocket connection to the dedicated server (with automatic reconnect).
 // Kept in its own module so single-player never downloads it.
 import { applyMap } from '../../shared/map.ts';
-import { PROTOCOL_VERSION } from '../../shared/constants.ts';
+import { PROTOCOL_VERSION, RECONNECT_GRACE_GAME_S } from '../../shared/constants.ts';
 import type { ClientMsg, ServerMsg, StoreSave } from '../../shared/protocol.ts';
 import type { GameConnection, NetStatus } from './net.ts';
 import type { Outfit } from '../../shared/shop.ts';
@@ -35,6 +35,13 @@ export class WsConnection implements GameConnection {
   private retryTimer = 0;
   private everJoined = false;
   private giveUpAt = 0;
+  /** When the connection dropped (performance.now()), 0 while connected: drives the 「位置保留 N 秒」 countdown. */
+  private downSince = 0;
+  private countdownTimer = 0;
+  /** Smoothed round trip to the server (ms), from the heartbeat echo; 0 = not measured yet. */
+  rtt = 0;
+  /** How long the last reconnect took (ms), for tests / the HUD. */
+  lastOutageMs = 0;
 
   constructor(public url: string, private intent: Intent, private platform: string) {
     applyMap(intent.map); // the room's store type (defaults to the 便利商店)
@@ -63,29 +70,41 @@ export class WsConnection implements GameConnection {
 
   private connect() {
     clearTimeout(this.retryTimer);
-    this.onStatus(this.everJoined ? 'reconnecting' : 'connecting');
+    if (this.everJoined) this.startCountdown(); else this.onStatus('connecting');
     let ws: WebSocket;
     try { ws = new WebSocket(this.socketUrl()); } catch (e) { this.scheduleRetry(); return; }
     this.ws = ws;
     ws.onopen = () => {
       this.attempts = 0; this.lastRx = performance.now();
       this.raw({ type: 'hello', v: PROTOCOL_VERSION, platform: this.platform });
-      if (this.everJoined && this.token) this.raw({ type: 'join', code: this.code, name: '', token: this.token, outfit: this.intent.outfit });
+      // the name goes along: if the slot was already given up, the server lets you back in as a new clerk with the same name
+      if (this.everJoined && this.token) this.raw({ type: 'join', code: this.code, name: this.intent.name, token: this.token, outfit: this.intent.outfit });
       else if (this.intent.kind === 'create') this.raw({ type: 'create', name: this.intent.name, save: this.intent.save, map: this.intent.map, difficulty: this.intent.difficulty, outfit: this.intent.outfit });
       else this.raw({ type: 'join', code: this.intent.code, name: this.intent.name, token: this.intent.token, outfit: this.intent.outfit });
     };
     ws.onmessage = (ev) => {
       this.lastRx = performance.now();
+      // data flows again on the same socket after a quiet spell: back to normal
+      if (this.downSince && this.ws === ws && this.everJoined && ws.readyState === WebSocket.OPEN && this.attempts === 0) { this.lastOutageMs = Math.round(performance.now() - this.downSince); this.downSince = 0; this.stopCountdown(); this.onStatus('online'); }
       let msg: ServerMsg;
       try { msg = JSON.parse(ev.data); } catch { return; }
       if (msg.type === 'welcome') {
         this.everJoined = true; this.code = msg.code; this.token = msg.token; this.giveUpAt = 0;
+        if (this.downSince) this.lastOutageMs = Math.round(performance.now() - this.downSince);
+        this.downSince = 0; clearInterval(this.countdownTimer); this.countdownTimer = 0;
         this.onStatus('online');
+        this.raw({ type: 'hb', t: Date.now(), rtt: this.rtt || undefined }); // first ping right away (the lobby shows it)
       }
+      if (msg.type === 'error' && msg.code === 'kicked') { this.closedByUser = true; this.stopCountdown(); this.onStatus('offline', '👋 房主把你請出了這個房間。'); return; }
       if (msg.type === 'error' && this.everJoined && (msg.code === 'no_room' || msg.code === 'room_full' || msg.code === 'room_closed')) {
-        this.closedByUser = true; this.onStatus('offline', msg.message);
+        this.closedByUser = true; this.stopCountdown();
+        this.onStatus('offline', msg.code === 'no_room' || msg.code === 'room_closed' ? '🌙 這間店已經打烊了：房間保留時間到了，或大家都離開了。' : msg.message);
       }
-      if (msg.type === 'hb') return;
+      if (msg.type === 'hb') {
+        const r = Date.now() - msg.t;
+        if (r >= 0 && r < 30_000) this.rtt = this.rtt ? Math.round(this.rtt * 0.6 + r * 0.4) : r;
+        return;
+      }
       this.onMessage(msg);
     };
     ws.onclose = (ev) => {
@@ -93,6 +112,7 @@ export class WsConnection implements GameConnection {
       this.ws = null;
       if (this.closedByUser) return;
       if (ev.code === 4000 && ev.reason === 'replaced') { this.closedByUser = true; this.onStatus('offline', '此帳號已在其他裝置連線'); return; }
+      if (ev.code === 4000 && ev.reason === 'kicked') { this.closedByUser = true; this.onStatus('offline', '👋 房主把你請出了這個房間。'); return; }
       if (!this.everJoined && this.attempts >= 2) { this.onStatus('offline', '無法連線到伺服器'); this.closedByUser = true; return; }
       this.scheduleRetry();
     };
@@ -101,13 +121,26 @@ export class WsConnection implements GameConnection {
 
   private scheduleRetry() {
     if (this.closedByUser) return;
-    if (!this.giveUpAt) this.giveUpAt = performance.now() + 125_000;
-    if (performance.now() > this.giveUpAt) { this.closedByUser = true; this.onStatus('offline', '重新連線逾時'); return; }
-    this.onStatus('reconnecting', `連線中斷，重新連線中…（第 ${this.attempts + 1} 次）`);
-    const delay = Math.min(8000, 400 * 2 ** this.attempts);
+    if (!this.giveUpAt) this.giveUpAt = performance.now() + (RECONNECT_GRACE_GAME_S + 5) * 1000;
+    if (performance.now() > this.giveUpAt) { this.closedByUser = true; this.stopCountdown(); this.onStatus('offline', `⌛ 重新連線逾時：超過 ${RECONNECT_GRACE_GAME_S} 秒沒連上，店裡的位置已經讓出來了。`); return; }
+    this.startCountdown();
+    // short waits: once the network is back you're in again within ~2 s (the 'online' event retries at once)
+    const delay = Math.min(2500, 300 * 2 ** this.attempts);
     this.attempts++;
     this.retryTimer = window.setTimeout(() => this.connect(), delay);
   }
+
+  /** 「重新連線中… 位置保留 N 秒」, updated every second while the connection is down. */
+  private startCountdown() {
+    if (!this.downSince) this.downSince = performance.now();
+    const show = () => {
+      const left = Math.max(0, Math.ceil(RECONNECT_GRACE_GAME_S - (performance.now() - this.downSince) / 1000));
+      this.onStatus('reconnecting', `📶 連線中斷，重新連線中…\n你的位置和手上的東西會保留 ${left} 秒`);
+    };
+    show();
+    if (!this.countdownTimer) this.countdownTimer = window.setInterval(() => { if (this.downSince && !this.closedByUser) show(); }, 1000);
+  }
+  private stopCountdown() { clearInterval(this.countdownTimer); this.countdownTimer = 0; }
 
   private reconnectNow() {
     if (this.closedByUser) return;
@@ -118,9 +151,12 @@ export class WsConnection implements GameConnection {
 
   private heartbeat() {
     if (!this.isOpen()) return;
-    // A socket that silently died (e.g. network switch) receives nothing: force a reconnect.
-    if (performance.now() - this.lastRx > 9000) { this.reconnectNow(); return; }
-    this.raw({ type: 'hb', t: Date.now() });
+    // A socket that silently died (e.g. network switch) receives nothing: tell the player after ~4 s of silence
+    // (snapshots normally arrive 12×/s), force a reconnect after 9 s.
+    const quiet = performance.now() - this.lastRx;
+    if (quiet > 9000) { this.startCountdown(); this.reconnectNow(); return; }
+    if (quiet > 4000 && this.everJoined && !this.downSince) { this.downSince = this.lastRx; this.startCountdown(); }
+    this.raw({ type: 'hb', t: Date.now(), rtt: this.rtt || undefined });
   }
 
   private raw(msg: ClientMsg) { if (this.isOpen()) this.ws!.send(JSON.stringify(msg)); }
@@ -128,7 +164,7 @@ export class WsConnection implements GameConnection {
 
   close() {
     this.closedByUser = true;
-    clearInterval(this.hbTimer); clearTimeout(this.retryTimer);
+    clearInterval(this.hbTimer); clearTimeout(this.retryTimer); this.stopCountdown();
     window.removeEventListener('online', this.onOnline);
     document.removeEventListener('visibilitychange', this.onVis);
     try { this.raw({ type: 'leave' }); this.ws?.close(); } catch { /* ignore */ }

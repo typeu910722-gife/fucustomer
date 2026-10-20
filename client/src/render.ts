@@ -324,6 +324,12 @@ export class StoreView {
   /** sq: grab squash-stretch timer; spinY: extra tumble yaw; bx/by: the model's own scale (kids, tall…). */
   private customers = new Map<number, { h: Human; s: Smoothed; kind: string; tag: Tag | null; compactT: number; sq: number; spinY: number; bx: number; by: number }>();
   private players = new Map<string, { h: Human; s: Smoothed }>();
+  /** Quick-message speech bubbles over teammates: player id → text and when it disappears (this.time). */
+  private sayings = new Map<string, { text: string; until: number }>();
+  /** A teammate's quick message / emote, shown as a speech bubble over their head for a few seconds. */
+  say(id: string, text: string, secs = 4) { this.sayings.set(id, { text, until: this.time + secs }); }
+  /** The bubble currently shown over a player (for tests), or ''. */
+  sayingOf(id: string) { const b = this.sayings.get(id); return b && b.until > this.time ? b.text : ''; }
   private spills = new Map<number, THREE.Mesh>();
   private items = new Map<number, THREE.Object3D>();
   private pings = new Map<number, THREE.Group>();
@@ -1361,7 +1367,11 @@ export class StoreView {
       const tagged = tagPrefix(p.outfit) + p.name; // 商城 name tag shows as an emoji before the name
       const lkey = tagged + status + (p.busy ? '…' : '');
       e.h.label.set(lkey, () => pillCanvas({ text: tagged + status, dot: hex(p.color), size: 42 }));
-      e.h.group.traverse(o => { const m = (o as THREE.Mesh).material as THREE.Material | undefined; if (m && 'opacity' in m && o !== e!.h.label.sprite) { m.transparent = !p.connected; m.opacity = p.connected ? 1 : 0.4; } });
+      const say = this.sayings.get(p.id);
+      if (say && say.until <= this.time) this.sayings.delete(p.id);
+      const sayText = say && say.until > this.time ? say.text : '';
+      e.h.icon.set(sayText ? 'say|' + sayText : '', () => pillCanvas({ text: sayText, bg: '#ffffff', size: 50 }));
+      e.h.group.traverse(o => { const m = (o as THREE.Mesh).material as THREE.Material | undefined; if (m && 'opacity' in m && o !== e!.h.label.sprite && o !== e!.h.icon.sprite) { m.transparent = !p.connected; m.opacity = p.connected ? 1 : 0.4; } });
       if (Math.abs(e.s.x - 12) < 2.2 && Math.abs(e.s.z - 16) < 2.2) doorNear = true;
     }
     for (const [id, e] of this.players) if (!seenP.has(id)) { this.scene.remove(e.h.group); this.players.delete(id); }

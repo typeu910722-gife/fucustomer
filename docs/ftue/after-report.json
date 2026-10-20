@@ -1,0 +1,432 @@
+{
+ "desktop": {
+  "mode": "desktop",
+  "timeline": [
+   {
+    "t": 0.2,
+    "sim": null,
+    "what": "click 開始第一天"
+   },
+   {
+    "t": 4.6,
+    "sim": 0.4,
+    "what": "game started (player can move)"
+   },
+   {
+    "t": 35.5,
+    "sim": 7.7,
+    "what": "walked to the till (tutorial step 1, during prep)"
+   },
+   {
+    "t": 45.5,
+    "sim": 17.7,
+    "what": "store open"
+   },
+   {
+    "t": 45.9,
+    "sim": 18,
+    "what": "tutorial step 2/6",
+    "text": "客人來了！看著收銀機按 E 結帳"
+   },
+   {
+    "t": 78.9,
+    "sim": 24.1,
+    "what": "first customer served"
+   },
+   {
+    "t": 79,
+    "sim": 24.2,
+    "what": "tutorial step 3/6",
+    "text": "貨架快空了：去倉庫對「飲料貨箱」按 E 拿一箱"
+   },
+   {
+    "t": 112.8,
+    "sim": 41.1,
+    "what": "tutorial step 4/6",
+    "text": "⚠ 有人插隊！走到他旁邊按 E「請重新排隊」"
+   },
+   {
+    "t": 143.4,
+    "sim": 50.7,
+    "what": "tutorial over"
+   },
+   {
+    "t": 223.6,
+    "sim": 130.4,
+    "what": "result screen"
+   },
+   {
+    "t": 226.7,
+    "sim": 130.4,
+    "what": "career screen"
+   },
+   {
+    "t": 230.2,
+    "sim": 0.5,
+    "what": "1-2 started"
+   },
+   {
+    "t": 259.1,
+    "sim": 5.3,
+    "what": "1-2 open"
+   },
+   {
+    "t": 291,
+    "sim": 39.8,
+    "what": "1-2 first karen"
+   },
+   {
+    "t": 333.4,
+    "sim": 59.6,
+    "what": "asked the cutter to queue"
+   },
+   {
+    "t": 400.7,
+    "sim": 123.7,
+    "what": "1-2 result"
+   }
+  ],
+  "cards": [],
+  "hudText": [
+   {
+    "at": "start",
+    "texts": {
+     "hintbar": "📘 教學 1/6：走到櫃台後面的收銀機（跟著黃色箭頭）",
+     "helpkeys": "WASD 移動・Shift 跑・滑鼠 視角・E 互動・G 放下・Esc 選單",
+     "aftermath": "🧑\n你\n存款 $87，房租下週到期。打工存錢，總有一天開自己的店！",
+     "tutskip": "跳過教學（K）"
+    },
+    "chars": 96,
+    "instructionChars": 26
+   }
+  ],
+  "tutorial": [
+   {
+    "step": 2,
+    "total": 6,
+    "text": "客人來了！看著收銀機按 E 結帳",
+    "at": 45.8,
+    "hudChars": 68
+   },
+   {
+    "step": 3,
+    "total": 6,
+    "text": "貨架快空了：去倉庫對「飲料貨箱」按 E 拿一箱",
+    "at": 79,
+    "hudChars": 117
+   },
+   {
+    "step": 4,
+    "total": 6,
+    "text": "⚠ 有人插隊！走到他旁邊按 E「請重新排隊」",
+    "at": 112.7,
+    "hudChars": 66
+   }
+  ],
+  "confusions": [],
+  "shots": [
+   "/tmp/claude-0/ftue/after-desktop-01-menu.png",
+   "/tmp/claude-0/ftue/after-desktop-02-start.png",
+   "/tmp/claude-0/ftue/after-desktop-03-tut2.png",
+   "/tmp/claude-0/ftue/after-desktop-04-tut3.png",
+   "/tmp/claude-0/ftue/after-desktop-05-tut4.png",
+   "/tmp/claude-0/ftue/after-desktop-06-result11.png",
+   "/tmp/claude-0/ftue/after-desktop-07-career.png",
+   "/tmp/claude-0/ftue/after-desktop-08-start12.png",
+   "/tmp/claude-0/ftue/after-desktop-09-karen12.png",
+   "/tmp/claude-0/ftue/after-desktop-10-result12.png"
+  ],
+  "menuChars": 322,
+  "clicksToControl": 1,
+  "tControl": 4.3,
+  "simControl": 0.4,
+  "firstMoveAt": 7.7,
+  "tOpen": 45.5,
+  "simOpen": 17.7,
+  "simFirstServe": 24.1,
+  "tTutorialDone": 143.1,
+  "stamps11": [
+   "退散！"
+  ],
+  "tResult": 223.6,
+  "firstServeAt": 78.9,
+  "result11": {
+   "text": "1-1・第一天上班\n這班辛苦了\n★★★\n\n營業額未達目標 $85\n\n營業額 / 目標\n$56 / $85\n口碑\n★ 2.98\n混亂度\n6%\n服務顧客\n5\n奧客處理 成功/失敗\n1 / 0\n請出門 / 最高連送\n0 / 0\n生氣離開\n0\n清潔\n0\n時薪\n+$36\n營業獎金\n+$6\n🤑 錢董硬凹：「年輕人要學習，不要計較」\n−$18\n💵 小費（自己的）\n+$4\nEXP +42　💰 存款 +28\n\n★1 達成營業額・★2 口碑 2.8 以上且混亂低於 60%・★3 營業額達 115% 且奧客零失誤、生氣離開不超過 1 人\n\n🔁 再挑戰\n回職涯",
+   "chars": 210,
+   "won": false,
+   "stars": 0,
+   "overflow": true
+  },
+  "hook11": "",
+  "careerChars": 703,
+  "unlocked12ByHarness": true,
+  "hud12": {
+   "arccard": "🧓 常客奧客・集點王阿姨（1/4）「老客人」\n\n🧓 集點王阿姨：少年欸，我是這裡的老客人，讓我先結一下啦，我只有一瓶養樂多。\n\n👩‍🦱 阿芬姐：那是王阿姨。每天這個時間來，每天都說她只有一瓶。\n\n🧑 你：……她手上有六瓶。",
+   "phasebanner": "▶ 開始上班 [Enter]（10）",
+   "helpkeys": "WASD 移動・Shift 跑・滑鼠 視角・E 互動・G 放下・Esc 選單"
+  },
+  "pressedStart": true,
+  "firstKaren12": 34.5,
+  "karenCard12": [],
+  "stamps12": [
+   "退散！"
+  ],
+  "result12": {
+   "text": "1-2・插隊阿伯\n這班辛苦了\n★★★\n\n營業額未達目標 $125\n\n營業額 / 目標\n$31 / $125\n口碑\n★ 2.52\n混亂度\n25%\n服務顧客\n2\n奧客處理 成功/失敗\n1 / 0\n請出門 / 最高連送\n0 / 0\n生氣離開\n2\n清潔\n0\n時薪\n+$36\n營業獎金\n+$4\n🤑 錢董硬凹：「年輕人要學習，不要計較」\n−$17\n💵 小費（自己的）\n+$1\nEXP +42　💰 存款 +24\n🎉 升級！Lv.2「試用期工讀生」・技能點 +1\n\n★1 達成營業額・★2 口碑 2.8 以上且混亂低於 60%・★3 營業額達 115% 且奧客零失誤、生氣離開不超過 1 人\n\n🔁 再挑戰\n回職涯",
+   "won": false,
+   "stars": 0
+  },
+  "hook12": "",
+  "errors": []
+ },
+ "phone": {
+  "mode": "phone",
+  "timeline": [
+   {
+    "t": 0.1,
+    "sim": null,
+    "what": "click 開始第一天"
+   },
+   {
+    "t": 0.7,
+    "sim": 0.2,
+    "what": "game started (player can move)"
+   },
+   {
+    "t": 7.3,
+    "sim": 4.8,
+    "what": "walked to the till (tutorial step 1, during prep)"
+   },
+   {
+    "t": 7.8,
+    "sim": 5.3,
+    "what": "store open"
+   },
+   {
+    "t": 7.8,
+    "sim": 5.3,
+    "what": "tutorial step 2/6",
+    "text": "站好，第一位客人馬上來……"
+   },
+   {
+    "t": 13.9,
+    "sim": 10.2,
+    "what": "first customer served"
+   },
+   {
+    "t": 13.9,
+    "sim": 10.2,
+    "what": "tutorial step 3/6",
+    "text": "貨架快空了：去倉庫對「飲料貨箱」按 「互動」 拿一箱"
+   },
+   {
+    "t": 21.1,
+    "sim": 16.5,
+    "what": "tutorial step 4/6",
+    "text": "搬到「便當」貨架，按 「互動」 上架"
+   },
+   {
+    "t": 44.8,
+    "sim": 39.7,
+    "what": "tutorial step 5/6",
+    "text": "客人在等結帳！先回收銀機按 「互動」"
+   },
+   {
+    "t": 54.4,
+    "sim": 49,
+    "what": "tutorial step 6/6",
+    "text": "對準髒污按 「互動」 拖乾淨"
+   },
+   {
+    "t": 59.5,
+    "sim": 53.7,
+    "what": "tutorial over"
+   },
+   {
+    "t": 132.2,
+    "sim": 126.3,
+    "what": "result screen"
+   },
+   {
+    "t": 134.8,
+    "sim": 126.3,
+    "what": "career screen"
+   },
+   {
+    "t": 136.6,
+    "sim": 0.3,
+    "what": "1-2 started"
+   },
+   {
+    "t": 138.5,
+    "sim": 0.6,
+    "what": "1-2 open"
+   },
+   {
+    "t": 173.4,
+    "sim": 35.5,
+    "what": "1-2 first karen"
+   },
+   {
+    "t": 190.3,
+    "sim": 51.7,
+    "what": "asked the cutter to queue"
+   },
+   {
+    "t": 191.2,
+    "sim": 52.6,
+    "what": "asked the cutter to queue"
+   },
+   {
+    "t": 192.4,
+    "sim": 53.7,
+    "what": "asked the cutter to queue"
+   },
+   {
+    "t": 193.2,
+    "sim": 54.6,
+    "what": "asked the cutter to queue"
+   },
+   {
+    "t": 194,
+    "sim": 55.3,
+    "what": "asked the cutter to queue"
+   },
+   {
+    "t": 233.1,
+    "sim": 94.4,
+    "what": "asked the cutter to queue"
+   },
+   {
+    "t": 234.2,
+    "sim": 95.6,
+    "what": "asked the cutter to queue"
+   },
+   {
+    "t": 235.1,
+    "sim": 96.5,
+    "what": "asked the cutter to queue"
+   },
+   {
+    "t": 236.1,
+    "sim": 97.5,
+    "what": "asked the cutter to queue"
+   },
+   {
+    "t": 236.9,
+    "sim": 98.3,
+    "what": "asked the cutter to queue"
+   },
+   {
+    "t": 262.3,
+    "sim": 121.9,
+    "what": "1-2 result"
+   }
+  ],
+  "cards": [],
+  "hudText": [
+   {
+    "at": "start",
+    "texts": {
+     "hintbar": "📘 教學 1/6：走到櫃台後面的收銀機（跟著黃色箭頭）",
+     "tutskip": "跳過教學"
+    },
+    "chars": 30,
+    "instructionChars": 26
+   }
+  ],
+  "tutorial": [
+   {
+    "step": 2,
+    "total": 6,
+    "text": "站好，第一位客人馬上來……",
+    "at": 7.8,
+    "hudChars": 106
+   },
+   {
+    "step": 3,
+    "total": 6,
+    "text": "貨架快空了：去倉庫對「飲料貨箱」按 「互動」 拿一箱",
+    "at": 13.9,
+    "hudChars": 79
+   },
+   {
+    "step": 4,
+    "total": 6,
+    "text": "搬到「便當」貨架，按 「互動」 上架",
+    "at": 21.1,
+    "hudChars": 36
+   },
+   {
+    "step": 5,
+    "total": 6,
+    "text": "客人在等結帳！先回收銀機按 「互動」",
+    "at": 44.8,
+    "hudChars": 28
+   },
+   {
+    "step": 6,
+    "total": 6,
+    "text": "對準髒污按 「互動」 拖乾淨",
+    "at": 54.4,
+    "hudChars": 26
+   }
+  ],
+  "confusions": [],
+  "shots": [
+   "/tmp/claude-0/ftue/after-phone-01-menu.png",
+   "/tmp/claude-0/ftue/after-phone-02-start.png",
+   "/tmp/claude-0/ftue/after-phone-03-tut2.png",
+   "/tmp/claude-0/ftue/after-phone-04-tut3.png",
+   "/tmp/claude-0/ftue/after-phone-05-tut4.png",
+   "/tmp/claude-0/ftue/after-phone-06-tut5.png",
+   "/tmp/claude-0/ftue/after-phone-07-tut6.png",
+   "/tmp/claude-0/ftue/after-phone-08-result11.png",
+   "/tmp/claude-0/ftue/after-phone-09-career.png",
+   "/tmp/claude-0/ftue/after-phone-10-start12.png",
+   "/tmp/claude-0/ftue/after-phone-11-karen12.png",
+   "/tmp/claude-0/ftue/after-phone-12-result12.png"
+  ],
+  "menuChars": 231,
+  "clicksToControl": 1,
+  "tControl": 0.7,
+  "simControl": 0.2,
+  "firstMoveAt": 4.8,
+  "tOpen": 7.8,
+  "simOpen": 5.3,
+  "simFirstServe": 10.2,
+  "tTutorialDone": 59.5,
+  "stamps11": [
+   "退散！"
+  ],
+  "tResult": 132.2,
+  "firstServeAt": 13.8,
+  "result11": {
+   "text": "1-1・第一天上班\n這班辛苦了\n★★★\n\n營業額未達目標 $85\n\n營業額 / 目標\n$33 / $85\n口碑\n★ 2.65\n混亂度\n18%\n服務顧客\n2\n奧客處理 成功/失敗\n1 / 0\n請出門 / 最高連送\n0 / 0\n生氣離開\n2\n清潔\n3\n時薪\n+$36\n營業獎金\n+$4\n🤑 錢董硬凹：打卡晚了 1 分鐘\n−$17\n💵 小費（自己的）\n+$3\n阿芬姐偷塞的退散獎金\n+$6\nEXP +42　💰 存款 +32\n\n★1 達成營業額・★2 口碑 2.8 以上且混亂低於 60%・★3 營業額達 115% 且奧客零失誤、生氣離開不超過 1 人\n\n🔁 再挑戰\n回職涯",
+   "chars": 218,
+   "won": false,
+   "stars": 0,
+   "overflow": true
+  },
+  "hook11": "",
+  "careerChars": 703,
+  "unlocked12ByHarness": true,
+  "hud12": {
+   "arccard": "🧓 常客奧客・集點王阿姨（1/4）「老客人」\n\n🧓 集點王阿姨：少年欸，我是這裡的老客人，讓我先結一下啦，我只有一瓶養樂多。\n\n👩‍🦱 阿芬姐：那是王阿姨。每天這個時間來，每天都說她只有一瓶。\n\n🧑 你：……她手上有六瓶。",
+   "phasebanner": "▶ 開始上班（10）"
+  },
+  "pressedStart": true,
+  "firstKaren12": 34.9,
+  "karenCard12": [],
+  "stamps12": [
+   "退散！"
+  ],
+  "result12": {
+   "text": "1-2・插隊阿伯\n下班快樂！\n★★★\n🤑\n錢董\n還行。明天客人會打翻東西，拖把記得帶——清潔費我照扣。\n明天見。　▶ 下一班：1-3・打翻了！\n營業額 / 目標\n$154 / $125\n口碑\n★ 3.04\n混亂度\n9%\n服務顧客\n6\n奧客處理 成功/失敗\n2 / 0\n請出門 / 最高連送\n0 / 0\n生氣離開\n0\n清潔\n0\n📖 🧓 常客奧客・集點王阿姨「老客人」（1/4）\n\n🧓 集點王阿姨：明天我還會來。你給我記住，我是王阿姨。\n\n👩‍🦱 阿芬姐：她記住你了。這不知道是好事還是壞事。\n\n時薪\n+$60\n營業獎金\n+$18\n🤑 錢董硬凹：「公司今年很辛苦」\n−$21\n💵 小費（自己的）\n+$8\nEXP +138（首次通關）　💰 存款 +65\n🎉 升級！Lv.3「試用期工讀生」・技能點 +2\n🏆 解鎖成就：\n第一天上班\n完成第一個班次\n🏆 解鎖成就：\n完美班次\n任一班次拿到 3 星\n\n★1 達成營業額・★2 口碑 2.8 以上且混亂低於 60%・★3 營業額達 115% 且奧客零失誤、生氣離開不超過 1 人\n\n🔁 再挑戰\n下一班 ▶\n回職涯",
+   "won": true,
+   "stars": 3
+  },
+  "hook12": "🤑\n錢董\n還行。明天客人會打翻東西，拖把記得帶——清潔費我照扣。\n明天見。　▶ 下一班：1-3・打翻了！",
+  "errors": []
+ }
+}

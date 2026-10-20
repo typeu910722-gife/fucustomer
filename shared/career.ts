@@ -228,7 +228,8 @@ export const CHAPTERS: ChapterDef[] = [
     n: 1, title: '巷口小店', place: '社區便利商店・白天班', minLevel: 1, baseExp: 120,
     story: '你錄取了巷口的便利商店。老店長說：「顧客至上，但奧客……你遲早會懂。」',
     shifts: [
-      S({ id: '1-1', title: '第一天上班', length: 100, goal: 85, karens: [], spawnEvery: 9, hints: ['走到櫃台內側，對收銀機按互動幫顧客結帳。', '貨架快空了就去左上角倉庫拿貨箱，對同類貨架互動上架。'] }),
+      // one gentle 插隊 karen early on: the first 退散 stamp happens on day one (the tutorial points at him)
+      S({ id: '1-1', title: '第一天上班', length: 110, goal: 85, karens: ['cutter'], firstKaren: 14, karenEvery: 999, maxKarens: 1, spawnEvery: 9, hints: ['走到櫃台內側，對收銀機按互動幫顧客結帳。', '貨架快空了就去左上角倉庫拿貨箱，對同類貨架互動上架。'] }),
       S({ id: '1-2', title: '插隊阿伯', length: 110, goal: 125, karens: ['cutter'], firstKaren: 35, maxKarens: 1, hints: ['有人插隊！靠近他按互動「請排隊」，不然其他客人會很不爽。'] }),
       S({ id: '1-3', title: '打翻了！', length: 120, goal: 150, karens: ['cutter'], firstKaren: 45, hints: ['地上的髒污會拉高混亂度。去西側牆邊拿拖把，對髒污互動清乾淨。'] }),
       S({ id: '1-4', title: '放學人潮', length: 130, goal: 185, karens: ['cutter'], spawnEvery: 7.5 }),

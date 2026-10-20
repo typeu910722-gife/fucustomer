@@ -151,6 +151,9 @@
     .welcome { display: flex; flex-direction: column; gap: 4px; background: #d3f9d8; border: 3px solid var(--good-d); border-radius: 16px; padding: 10px 12px; margin: 6px 0; }
     .welcome span { font-size: 14px; }
     .welcome .btn { margin: 4px 0 2px; }
+    .welcome .first-go { animation: firstgo 1.1s ease-in-out infinite alternate; }
+    @keyframes firstgo { to { box-shadow: 0 0 0 5px rgba(81,207,102,.5), 0 4px 0 var(--ink); } } /* glow only: the button never moves */
+    @media (prefers-reduced-motion: reduce) { .welcome .first-go { animation: none; } }
 
     /* ---------- HUD ---------- */
     #hud { position: fixed; inset: 0; pointer-events: none; z-index: 10; }
@@ -188,7 +191,8 @@
     #aftermath .af-txt::before { content: ''; position: absolute; left: -9px; top: 14px; width: 12px; height: 12px; background: inherit; border-left: 3px solid var(--ink); border-bottom: 3px solid var(--ink); transform: rotate(45deg); }
     #aftermath .af-who { display: block; font-size: 12px; color: #845ef7; }
     #aftermath.fail .af-who { color: #e03131; }
-    body.touch #aftermath { top: calc(150px + var(--safe-t)); max-width: 44vw; }
+    /* phone: the left column is the minimap + stock panel, so speech bubbles sit top-right (under the ☰ buttons) */
+    body.touch #aftermath { left: auto; right: calc(10px + var(--safe-r, 0px)); top: calc(64px + var(--safe-t)); max-width: 27vw; }
     body.touch #aftermath .af-txt { font-size: 12px; padding: 4px 9px 5px; }
     body.touch #aftermath .af-ico { width: 34px; height: 34px; font-size: 19px; }
     @keyframes toastin { from { opacity: 0; transform: translateY(-10px) scale(.9); } to { opacity: 1; transform: none; } }
@@ -238,7 +242,7 @@
     body.touch #toasts { top: calc(46px + var(--safe-t)); }
     body.touch #alert { bottom: calc(150px + var(--safe-b)); font-size: 14px; }
     body.touch #helpkeys { display: none; }
-    body.touch #prompt { font-size: 17px; }
+    body.touch #prompt { font-size: 17px; top: 62%; } /* below the karen alert on a 390 px tall phone */
     #rotate { position: fixed; inset: 0; z-index: 100; display: none; align-items: center; justify-content: center; flex-direction: column; gap: 18px; font-size: 22px; font-weight: 900; text-align: center; padding: 24px; color: #fff;
       background: repeating-linear-gradient(-45deg, #2c2350 0 34px, #322858 34px 68px); -webkit-text-stroke: 5px var(--ink); paint-order: stroke fill; }
     #rotate .phone { font-size: 80px; animation: rot 1.6s ease-in-out infinite; -webkit-text-stroke: 0; }
@@ -290,7 +294,8 @@
     body.touch.shiftmode #toasts { top: calc(150px + var(--safe-t)); }
     body.touch.shiftmode #eventstrip { top: calc(88px + var(--safe-t)); }
     body.touch #shiftbar { transform: translateX(-50%) scale(.8); transform-origin: top center; }
-    body.touch #hintbar { bottom: auto; top: calc(96px + var(--safe-t)); font-size: 13px; max-width: 52vw; }
+    body.touch #hintbar { bottom: auto; top: calc(96px + var(--safe-t)); font-size: 13px; max-width: 41vw; }
+    #hintbar.urgent { background: var(--accent); animation: alertpulse .6s ease-in-out infinite alternate; }
 
     /* ---------- career ---------- */
     .card.career { padding: 0; overflow: hidden; display: flex; height: min(640px, 100%); max-height: 100%; }
@@ -332,6 +337,10 @@
     .result .title { font-size: 46px; margin: 8px 0 2px; }
     .result > .row:last-child { position: sticky; bottom: -20px; background: var(--cream); padding: 4px 0 8px; margin: 0 -4px; }
     .result.lost .title { color: #a5d8ff; }
+    .result .hook { display: flex; gap: 10px; align-items: center; text-align: left; margin: 8px auto; max-width: 560px; background: #fff3bf; border: 3px solid var(--ink); border-radius: 14px; padding: 8px 12px; font-weight: 800; animation: popsoft .5s both 1.1s; }
+    .result .hook .hook-ico { font-size: 30px; flex: none; }
+    .result .hook b { display: block; font-size: 12px; color: #845ef7; }
+    .result .hook em { display: block; font-style: normal; color: var(--accent-d); margin-top: 2px; }
     .bigstars { text-align: center; font-size: 72px; letter-spacing: 10px; color: rgba(42,31,61,.15); line-height: 1.1; }
     .bigstars .on { color: #ffd43b; display: inline-block; animation: pop .5s both; -webkit-text-stroke: 5px var(--ink); paint-order: stroke fill; text-shadow: 0 5px 0 var(--ink); }
     @keyframes popsoft { from { transform: scale(.6); opacity: 0; } to { transform: none; opacity: 1; } }
@@ -362,7 +371,7 @@
       border-radius: 18px; padding: 10px 14px; z-index: 8; animation: pop .35s both; pointer-events: none; transition: opacity .5s; font-size: 14px; }
     #arccard.fade { opacity: 0; } #arccard .ac-title { font-size: 12px; font-weight: 900; color: #845ef7; margin-bottom: 4px; }
     #arccard p { margin: 3px 0; font-weight: 700; line-height: 1.35; } #arccard p b { color: var(--accent-d); }
-    body.touch #arccard { top: calc(150px + var(--safe-t)); font-size: 12px; }
+    body.touch #arccard { left: auto; right: calc(10px + var(--safe-r, 0px)); top: calc(64px + var(--safe-t)); width: 30vw; font-size: 11px; padding: 6px 9px; }
     .arc-result { background: #f3f0ff; border: 3px solid var(--ink); border-radius: 16px; padding: 8px 12px; margin: 8px 0; text-align: left; font-size: 14px; animation: popsoft .5s both; }
     .arc-result .ac-title { font-size: 13px; font-weight: 900; color: #845ef7; } .arc-result p { margin: 3px 0; font-weight: 700; } .arc-result p b { color: var(--accent-d); }
     #tutskip { position: absolute; left: 50%; top: auto; bottom: calc(160px + var(--safe-b)); transform: translateX(-50%); z-index: 9; pointer-events: auto; font-size: 13px; padding: 4px 10px; }

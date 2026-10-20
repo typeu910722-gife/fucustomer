@@ -1,10 +1,10 @@
 // Transport-agnostic room: lobby, membership, reconnect, host transfer and the game loop.
 // Used by the dedicated server (WebSocket connections) and by solo play (in-memory connection).
 import {
-  MAX_FILL_BOTS, MAX_PLAYERS, PLAYER_COLORS, QUICK_MESSAGES, RECONNECT_GRACE_GAME_S, RECONNECT_GRACE_LOBBY_S, SNAPSHOT_RATE, TICK_RATE,
+  MAX_FILL_BOTS, MAX_PLAYERS, PLAYER_COLORS, QUICK_BURST, QUICK_MESSAGES, QUICK_MIN_GAP_MS, QUICK_WINDOW_MS, RECONNECT_GRACE_GAME_S, RECONNECT_GRACE_LOBBY_S, SNAPSHOT_RATE, TICK_RATE,
 } from './constants.ts';
 import type { ClientMsg, GameEvent, LobbyState, ServerMsg, Snapshot, StoreSave, Target } from './protocol.ts';
-import { Bot, botMessages } from './bot.ts';
+import { Bot, BotTeam, botMessages } from './bot.ts';
 import {
   World, addPing, addPlayer, applyInput, createWorld, playerDisconnected, removePlayer, requestAct, requestBuy, requestDrop,
   finishShift, requestSpin, requestHit, requestThrow, requestUltimate, sanitizeSave, setReady, snapshot, tick, dayConfig,
@@ -24,6 +24,12 @@ export interface Member {
   outfit?: Outfit;
   /** 電腦店員補位: a server-run fill-in clerk (not a person: never host, not counted as a player, not checkpointed). */
   bot?: boolean;
+  /** Times of this player's recent quick messages / emotes (server-side rate limit). */
+  quickTimes?: number[];
+  /** When the "too many messages" hint was last sent to this player. */
+  quickWarnAt?: number;
+  /** Round trip the player's client last reported (ms), shown in the lobby. */
+  rtt?: number;
 }
 
 const BOT_NAMES = ['🤖小陳', '🤖阿美', '🤖阿豪', '🤖佳佳'];
@@ -101,7 +107,12 @@ export class Room {
   mapId: string;
   /** 電腦店員補位: the host lets bots fill empty slots (multiplayer business days only). */
   botFill = false;
-  private bots = new Map<string, { bot: Bot; snap: Snapshot | null; rid: number }>();
+  private bots = new Map<string, { bot: Bot; snap: Snapshot | null; rid: number; assistUntil: number }>();
+  /** A person's 「我去補貨」: until then the bots leave restocking to the people (ms, room clock). */
+  private humanRestockUntil = 0;
+  /** Lobby pings changed since the last lobby broadcast. */
+  private lobbyDirty = false;
+  private lastLobbyAt = 0;
 
   constructor(code: string, save: StoreSave | null | undefined, opts: RoomOptions = {}) {
     this.code = code;
@@ -173,7 +184,7 @@ export class Room {
     const name = BOT_NAMES.find(n => !used.has(n)) ?? `🤖店員${this.bots.size + 1}`;
     const usedColors = new Set([...this.members.values()].map(m => m.color));
     const order = this.joinCounter++;
-    const st = { bot: new Bot('any', (order * 0.37) % 1), snap: null as Snapshot | null, rid: 0 };
+    const st = { bot: new Bot('any', (order * 0.37) % 1), snap: null as Snapshot | null, rid: 0, assistUntil: 0 };
     const m: Member = {
       playerId: 'b' + this.rid(8), name, token: this.rid(32), bot: true, ready: true, connected: true, disconnectedAt: 0,
       color: PLAYER_COLORS.find(c => !usedColors.has(c)) ?? PLAYER_COLORS[order % PLAYER_COLORS.length], platform: 'bot', joinOrder: order, lastQuickAt: 0, lastPingAt: 0,
@@ -196,10 +207,18 @@ export class Room {
   /** The bots look at their latest snapshot and send the same messages a client would. */
   private driveBots(dt: number) {
     if (!this.world || this.paused) return;
+    const now = this.now();
+    // the bots split the work: each one sees which tasks the others hold (updated as each bot decides)
+    const claims = new Map<string, string>();
+    for (const [id, st] of this.bots) for (const k of st.bot.claimKeys()) if (!claims.has(k)) claims.set(k, id);
     for (const [id, st] of [...this.bots]) {
       if (!st.snap) continue;
       const me = st.snap.players.find(p => p.id === id); if (!me) continue;
-      for (const msg of botMessages(st.bot.update(st.snap, me, dt), () => 'bot' + st.rid++)) {
+      for (const [k, owner] of [...claims]) if (owner === id) claims.delete(k);
+      const team: BotTeam = { claims, humanRestock: Math.max(0, (this.humanRestockUntil - now) / 1000), assist: Math.max(0, (st.assistUntil - now) / 1000) };
+      const out = st.bot.update(st.snap, me, dt, team);
+      for (const k of st.bot.claimKeys()) if (!claims.has(k)) claims.set(k, id);
+      for (const msg of botMessages(out, () => 'bot' + st.rid++)) {
         if (!this.bots.has(id)) break;
         this.handle(id, msg);
       }
@@ -218,12 +237,11 @@ export class Room {
           const fit = sanitizeOutfit(outfit); if (fit) m.outfit = fit;
           const wp = this.world?.players.get(m.playerId);
           if (this.world && !wp) addPlayer(this.world, m.playerId, m.name, m.color).outfit = m.outfit;
-          else if (wp && fit) wp.outfit = fit;
-          else if (wp) { wp.connected = true; wp.away = false; }
+          else if (wp) { wp.connected = true; wp.away = false; if (fit) wp.outfit = fit; } // (a reconnect with an outfit used to stay "disconnected")
           conn.send({ type: 'welcome', playerId: m.playerId, token: m.token, code: this.code, reconnected: true, solo: this.solo });
           this.broadcastLobby();
           this.sendSnapshotTo(m);
-          this.broadcastEvents([{ e: 'toast', text: `🔌 ${m.name} 重新連線`, tone: 'info' }]);
+          this.broadcastEvents([{ e: 'toast', text: `🔌 ${m.name} 回到店裡了`, tone: 'info' }]);
           this.log(`${this.code}: ${m.name} reconnected`);
           return { ok: true, member: m };
         }
@@ -278,7 +296,7 @@ export class Room {
     else this.syncBots(); // a free slot gets a bot again; the last person leaving takes the bots along
     this.transferHostIfNeeded();
     this.broadcastLobby();
-    this.broadcastEvents([{ e: 'toast', text: `🚪 ${m.name} 離開了房間`, tone: 'info' }]);
+    this.broadcastEvents([{ e: 'toast', text: reason === 'kicked' ? `🚪 房主請 ${m.name} 離開了房間` : reason === 'timeout' ? `⌛ ${m.name} 超過保留時間，位置讓出來了` : `🚪 ${m.name} 離開了房間`, tone: 'info' }]);
   }
 
   private transferHostIfNeeded() {
@@ -288,7 +306,7 @@ export class Room {
     if (!candidates.length) return; // keep the old host id while nobody is online
     this.hostId = candidates[0].playerId;
     this.log(`${this.code}: host → ${candidates[0].name}`);
-    this.broadcastEvents([{ e: 'toast', text: `👑 房主轉移給 ${candidates[0].name}（遊戲在伺服器上繼續，不中斷）`, tone: 'info' }]);
+    this.broadcastEvents([{ e: 'toast', text: `👑 房主${host ? '斷線' : '離開'}了，由 ${candidates[0].name} 接任房主（${this.started ? '營業照常進行，不中斷' : '可以開始營業、踢人和改設定'}）`, tone: 'info' }]);
   }
 
   handle(playerId: string, msg: ClientMsg) {
@@ -358,11 +376,38 @@ export class Room {
       }
       case 'quick': {
         const t = this.now();
-        if (t - m.lastQuickAt < 1200 || typeof msg.msg !== 'number') return;
+        if (typeof msg.msg !== 'number' || !Number.isInteger(msg.msg)) return;
         const text = QUICK_MESSAGES[msg.msg];
         if (!text) return;
-        m.lastQuickAt = t;
-        this.broadcastEvents([{ e: 'quick', from: m.name, text }]);
+        // presets only; at most QUICK_BURST in QUICK_WINDOW_MS and never closer than QUICK_MIN_GAP_MS
+        const times = (m.quickTimes ??= []).filter(x => t - x < QUICK_WINDOW_MS);
+        m.quickTimes = times;
+        if (times.length >= QUICK_BURST || t - m.lastQuickAt < QUICK_MIN_GAP_MS) {
+          if (!m.bot && t - (m.quickWarnAt ?? 0) > QUICK_WINDOW_MS) { m.quickWarnAt = t; m.conn?.send({ type: 'events', list: [{ e: 'hint', text: '訊息送太快了，等一下再喊' }] }); }
+          return;
+        }
+        times.push(t); m.lastQuickAt = t;
+        this.broadcastEvents([{ e: 'quick', from: m.name, text, id: m.playerId, msg: msg.msg }]);
+        if (!m.bot) this.botsHear(m, msg.msg);
+        break;
+      }
+      case 'kick': {
+        // host only, people only (bots come and go with the 電腦店員補位 switch), never yourself
+        const target = typeof msg.id === 'string' ? this.members.get(msg.id) : undefined;
+        if (playerId !== this.hostId || this.solo || !target || target.bot || target.playerId === playerId) return;
+        target.conn?.send({ type: 'error', code: 'kicked', message: '房主把你請出了房間' });
+        this.leave(target.playerId, 'kicked');
+        this.opts.onCheckpoint?.(this.checkpoint());
+        break;
+      }
+      case 'host': {
+        const target = typeof msg.id === 'string' ? this.members.get(msg.id) : undefined;
+        if (playerId !== this.hostId || this.solo || !target || target.bot || !target.connected || target.playerId === playerId) return;
+        this.hostId = target.playerId;
+        this.log(`${this.code}: host handed to ${target.name}`);
+        this.broadcastLobby();
+        this.broadcastEvents([{ e: 'toast', text: `👑 ${m.name} 把房主交給了 ${target.name}`, tone: 'info' }]);
+        this.opts.onCheckpoint?.(this.checkpoint());
         break;
       }
       case 'bg': {
@@ -379,10 +424,36 @@ export class Room {
       case 'leave':
         this.leave(playerId, 'left');
         break;
-      case 'hb':
+      case 'hb': {
         m.conn?.send({ type: 'hb', t: msg.t });
+        const rtt = Number(msg.rtt);
+        if (Number.isFinite(rtt) && rtt >= 0) {
+          const v = Math.min(9999, Math.round(rtt));
+          if (m.rtt === undefined || Math.abs(v - m.rtt) >= 15) { m.rtt = v; this.lobbyDirty = true; }
+        }
         break;
+      }
     }
+  }
+
+  /** Fill-in bots react to a person's callout: one answers 「需要支援收銀」 / 「奧客在門口」 with 👍, and after 「我去補貨」
+   *  they leave restocking to the people for a while. */
+  private botsHear(from: Member, msg: number) {
+    const now = this.now();
+    if (msg === 1) { this.humanRestockUntil = now + 20_000; return; }
+    if (msg !== 0 && msg !== 2) return;
+    const w = this.world; if (!w || !this.bots.size) return;
+    const fp = w.players.get(from.playerId);
+    let best: { id: string; d: number } | null = null;
+    for (const id of this.bots.keys()) {
+      const p = w.players.get(id); if (!p || p.grabbing != null) continue;
+      const d = fp ? Math.hypot(p.x - fp.x, p.z - fp.z) : 0;
+      if (!best || d < best.d) best = { id, d };
+    }
+    if (!best) return;
+    const st = this.bots.get(best.id)!;
+    if (msg === 0) st.assistUntil = now + 20_000;
+    this.handle(best.id, { type: 'quick', msg: 5 });
   }
 
   startGame() {
@@ -412,6 +483,8 @@ export class Room {
       if (now - m.disconnectedAt > grace) this.leave(m.playerId, 'timeout');
     }
     if (this.connectedCount === 0) { if (!this.emptySince) this.emptySince = now; } else this.emptySince = 0;
+    // lobby pings: refreshed every 2 s at most while somebody's changed
+    if (this.lobbyDirty && !this.started && now - this.lastLobbyAt > 2000) this.broadcastLobby();
     if (!this.world || this.paused) return;
     tick(this.world, dt);
     this.flushResults();
@@ -445,12 +518,12 @@ export class Room {
       code: this.code, hostId: this.hostId, started: this.started, max: MAX_PLAYERS, day: this.world?.day ?? this.save.day, map: this.mapId, difficulty: this.difficulty,
       bots: this.solo || this.opts.shift ? undefined : this.botFill,
       players: [...this.members.values()].sort((a, b) => a.joinOrder - b.joinOrder)
-        .map(m => ({ id: m.playerId, name: m.name, ready: m.ready, connected: m.connected, color: m.color, platform: m.platform, outfit: m.outfit, bot: m.bot || undefined })),
+        .map(m => ({ id: m.playerId, name: m.name, ready: m.ready, connected: m.connected, color: m.color, platform: m.platform, outfit: m.outfit, bot: m.bot || undefined, ping: m.bot || !m.connected ? undefined : m.rtt })),
     };
   }
 
   broadcast(msg: ServerMsg) { for (const m of this.members.values()) m.conn?.send(msg); }
-  broadcastLobby() { this.broadcast({ type: 'lobby', lobby: this.lobbyState() }); }
+  broadcastLobby() { this.lobbyDirty = false; this.lastLobbyAt = this.now(); this.broadcast({ type: 'lobby', lobby: this.lobbyState() }); }
   broadcastEvents(list: GameEvent[]) {
     if (list.length) this.broadcast({ type: 'events', list: [...list] });
   }

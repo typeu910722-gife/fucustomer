@@ -3,7 +3,7 @@ import { GAME_BINDINGS, isDown, radialDeadzone, stickLook } from './padmap.ts';
 import { currentPad, inputMode, padActive, setMode } from './pad.ts';
 
 export type Action = 'interact' | 'alt' | 'drop' | 'ping' | 'menu' | 'quick' | 'shop' | 'ready' | 'tab' | 'grab' | 'spin' | 'ultimate' | 'hit'
-  | 'skip' | 'q1' | 'q2' | 'q3' | 'q4' | 'q5' | 'q6';
+  | 'skip' | 'q1' | 'q2' | 'q3' | 'q4' | 'q5' | 'q6' | 'q7' | 'q8';
 
 export class Input {
   move = { x: 0, y: 0 };
@@ -28,6 +28,10 @@ export class Input {
   private padPrev: boolean[] = [];
   holdInteract = false;
   private lockAt = 0;
+  /** Captured-mouse movement for the emote wheel (collected even while input is disabled). */
+  private wheelDX = 0; private wheelDY = 0;
+  /** Raw sticks of the active pad (x right, y down), read every frame even while input is disabled. */
+  padL = { x: 0, y: 0 }; padR = { x: 0, y: 0 };
   /** The page isn't allowed to capture the mouse (e.g. shown inside another site's frame): look by dragging instead. */
   lockBlocked = false;
 
@@ -47,6 +51,8 @@ export class Input {
     document.addEventListener('pointerlockchange', () => { this.lockAt = performance.now(); });
     document.addEventListener('pointerlockerror', () => { this.lockBlocked = true; });
     document.addEventListener('mousemove', e => {
+      // the emote wheel points with the captured mouse even while the game input is off
+      if (this.locked && Math.abs(e.movementX) < 250 && Math.abs(e.movementY) < 250) { this.wheelDX += e.movementX; this.wheelDY += e.movementY; }
       if (!this.enabled) return;
       if (!this.locked) {
         // fallback: hold a mouse button and drag to look around
@@ -75,7 +81,8 @@ export class Input {
         const map: Record<string, Action> = {
           KeyE: 'interact', KeyF: 'alt', KeyG: 'drop', KeyV: 'ping', Escape: 'menu', KeyP: 'menu', KeyT: 'quick', KeyB: 'shop', Enter: 'ready', Tab: 'tab',
           Space: 'grab', KeyQ: 'spin', KeyR: 'ultimate', KeyX: 'hit',
-          Digit1: 'q1', Digit2: 'q2', Digit3: 'q3', Digit4: 'q4', Digit5: 'q5', Digit6: 'q6',
+          Digit1: 'q1', Digit2: 'q2', Digit3: 'q3', Digit4: 'q4', Digit5: 'q5', Digit6: 'q6', Digit7: 'q7', Digit8: 'q8',
+          Numpad1: 'q1', Numpad2: 'q2', Numpad3: 'q3', Numpad4: 'q4', Numpad5: 'q5', Numpad6: 'q6', Numpad7: 'q7', Numpad8: 'q8',
         };
         const a = map[k];
         if (a) { this.pressed.add(a); if (k === 'Tab' || k === 'Space') e.preventDefault(); }
@@ -158,6 +165,7 @@ export class Input {
     if (gp) {
       if (padActive(gp)) setMode('pad', gp.id);
       const b = gp.buttons.map(isDown);
+      this.padL = { x: gp.axes[0] ?? 0, y: gp.axes[1] ?? 0 }; this.padR = { x: gp.axes[2] ?? 0, y: gp.axes[3] ?? 0 };
       if (this.enabled && !this.wasEnabled) { this.padHeldOver = new Set(b.flatMap((d, i) => (d ? [i] : []))); this.holdInteract = false; }
       for (const i of [...this.padHeldOver]) if (!b[i]) this.padHeldOver.delete(i);
       const live = (i: number) => !!b[i] && !this.padHeldOver.has(i);
@@ -181,6 +189,9 @@ export class Input {
     this.run = run;
   }
 
+  /** Is this pad button held right now? */
+  padDown(i: number) { return !!this.padPrev[i]; }
+  takeWheel() { const r = { dx: this.wheelDX, dy: this.wheelDY }; this.wheelDX = 0; this.wheelDY = 0; return r; }
   consume(a: Action) { const had = this.pressed.has(a); this.pressed.delete(a); return had; }
   clearPresses() { this.pressed.clear(); this.lookDX = 0; this.lookDY = 0; this.padDX = 0; this.padDY = 0; }
   /** Mouse/touch look (dx, dy: raw pixels) and right-stick look (pdx, pdy: already sensitivity- and invert-adjusted). */

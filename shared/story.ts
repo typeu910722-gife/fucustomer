@@ -11,20 +11,21 @@ export const CAST = {
 } as const;
 export type Speaker = keyof typeof CAST;
 export interface Line { who: Speaker; text: string }
-export interface Scene { id: string; title: string; lines: Line[] }
+/** `inStore`: played as speech bubbles inside the store while the player can already move (no modal cards). */
+export interface Scene { id: string; title: string; lines: Line[]; inStore?: boolean }
 
 export const SCENES: Record<string, Scene> = {
-  'ch1-intro': { id: 'ch1-intro', title: '第 1 章・巷口小店', lines: [
-    { who: 'me', text: '（存摺餘額：$87。房租下週到期。）……好，今天開始好好打工，存錢開一家自己的店！' },
-    { who: 'boss', text: '你就是新來的？我是錢董。時薪照規定給，但是——公司有公司的規矩。' },
-    { who: 'fen', text: '別理他。我是阿芬，做十年了。顧客至上，但奧客……你遲早會懂。' },
-    { who: 'fen', text: '小費是客人給你的，自己收好。薪水嘛……你月底就知道了。' },
+  // the very first scene plays inside the store (bubbles) so a new player is walking within seconds
+  'ch1-intro': { id: 'ch1-intro', title: '第 1 章・巷口小店', inStore: true, lines: [
+    { who: 'me', text: '存款 $87，房租下週到期。打工存錢，總有一天開自己的店！' },
+    { who: 'boss', text: '新來的？我錢董。時薪照規定給，扣薪也照規定扣。' },
+    { who: 'fen', text: '我阿芬。顧客至上，但奧客……你等一下就懂了。' },
   ] },
   'ch1-outro': { id: 'ch1-outro', title: '試用期結束', lines: [
-    { who: 'boss', text: '試用期過了。恭喜，正職。對了，這個月扣了「制服清潔費」跟「收銀短少」。' },
+    { who: 'boss', text: '試用期過了，恭喜轉正。對了，這個月扣「制服清潔費」跟「收銀短少」。' },
     { who: 'me', text: '收銀明明沒有少……' },
-    { who: 'fen', text: '噓。把小費存好，那才是你的。還有——之後遇到失控的奧客，你可以「出手」，但記住：要佔理。' },
-    { who: 'fen', text: '對方先失控、先推你，那叫正當防衛。你先動手，或是打到有背景的人……警察會來找你。' },
+    { who: 'fen', text: '噓，小費才是你的。還有：奧客先失控、先推你，你才能「出手」，那叫正當防衛。' },
+    { who: 'fen', text: '你先動手，或打到有背景的人……警察會來找你。' },
   ] },
   'ch2-intro': { id: 'ch2-intro', title: '第 2 章・深夜班', lines: [
     { who: 'boss', text: '24 小時店缺大夜。時薪加 20，但凌晨的電費要分攤一下。' },
@@ -134,6 +135,12 @@ export const SCENES: Record<string, Scene> = {
     { who: 'cop', text: '店員先生／小姐，有人報案說你在店裡動手打人。麻煩跟我們走一趟。' },
     { who: 'fen', text: '別緊張。誠實說明就好。如果遇到「恐龍法官」……你也可以做點不一樣的事。' },
   ] },
+};
+
+/** End-of-shift hook on the result screen (won shifts of the first chapter): a teaser for tomorrow. */
+export const SHIFT_HOOKS: Record<string, Line & { bye: string }> = {
+  '1-1': { who: 'fen', text: '第一天就撐過來了，不錯喔。明天這個時間王阿姨會來，她會說她「只有一瓶」。', bye: '明天見！' },
+  '1-2': { who: 'boss', text: '還行。明天客人會打翻東西，拖把記得帶——清潔費我照扣。', bye: '明天見。' },
 };
 
 /** Scene to show before starting a shift (chapter intro on its first shift). */

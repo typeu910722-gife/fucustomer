@@ -19,6 +19,7 @@ import { ARCS, arcState } from '../../shared/regulars.ts';
 import { getCosmetic } from '../../shared/shop.ts';
 import { chainHtml, recordsHtml } from './progress-ui.ts';
 import { canOpenBranch, openBranch } from '../../shared/progression.ts';
+import { CAST, SHIFT_HOOKS } from '../../shared/story.ts';
 
 const KEY = 'fucustomer.career.v1';
 export function loadProfile(): CareerProfile {
@@ -133,7 +134,12 @@ function chaptersHtml(p: CareerProfile) {
         <div class="muted story">客人和奧客越來越多，撐越久分數越高。隨時可以從選單「下班結算」。</div>
         <button class="btn primary" data-play="${ENDLESS_ID}">開始無限夜班</button></div>`
     : `<div class="chapter locked"><div class="chhead"><b>🌙 無限夜班</b></div><div class="muted story">🔒 擊敗第 6 章「奧客之王」後解鎖</div></div>`;
-  return dailyHtml(p) + weeklyHtml(p) + arcsHtml(p) + CHAPTERS.map(c => {
+  // a new player (chapter 1 not cleared) sees the chapter list first; the locked extras wait underneath in one line
+  const newbie = !dailyUnlocked(p);
+  const metArc = ARCS.some(a => { const st = arcState(p, a.id); return st.seen > 0 || st.stage > 0; });
+  const top = newbie ? '' : dailyHtml(p) + weeklyHtml(p) + arcsHtml(p);
+  const bottom = newbie ? (metArc ? arcsHtml(p) : '') + '<div class="chapter locked"><div class="chhead"><b>📅 每日挑戰・🗓 每週挑戰</b></div><div class="muted story">🔒 通過第 1 章「店長來巡店」後解鎖</div></div>' : '';
+  return top + CHAPTERS.map(c => {
     const open = chapterUnlocked(p, c.n);
     const got = c.shifts.reduce((n, s) => n + (p.stars[s.id] ?? 0), 0);
     return `
@@ -149,7 +155,7 @@ function chaptersHtml(p: CareerProfile) {
             <small>${s.length} 秒・目標 $${s.goal}・${esc(ks)}</small></button>`;
         }).join('')}</div>` : ''}
       </div>`;
-  }).join('') + endless;
+  }).join('') + bottom + endless;
 }
 
 /** The pay slip: wage, sales bonus, the boss's cut (with his excuse), tips you keep, and any court fine. */
@@ -309,6 +315,14 @@ function statsHtml(p: CareerProfile) {
     ${recordsHtml(p)}`;
 }
 
+/** First-chapter cliffhanger under a won shift: who says what about tomorrow, and the next shift's name. */
+function hookHtml(r: ShiftResult, nextId: string | null): string {
+  const h = r.won ? SHIFT_HOOKS[r.shiftId] : undefined;
+  if (!h) return '';
+  const sp = CAST[h.who], nx = nextId ? findShift(nextId) : null;
+  return `<div class="hook"><span class="hook-ico">${esc(sp.icon)}</span><div><b>${esc(sp.name)}</b>${esc(h.text)}<em>${esc(h.bye)}${nx ? `　▶ 下一班：${esc(nextId!)}・${esc(nx.shift.title)}` : ''}</em></div></div>`;
+}
+
 export function resultScreen(r: ShiftResult, reward: Reward, p: CareerProfile, fresh: Achievement[], h: { retry(): void; next(id: string | null): void; career(): void }) {
   if (r.shiftId === ENDLESS_ID) return endlessResult(r, reward, p, fresh, h);
   if (r.shiftId === DAILY_ID) return dailyResult(r, reward, p, fresh, h);
@@ -325,6 +339,7 @@ export function resultScreen(r: ShiftResult, reward: Reward, p: CareerProfile, f
       <h1 class="title">${r.won ? '下班快樂！' : '這班辛苦了'}</h1>
       <div class="bigstars">${[1, 2, 3].map(i => `<span class="${i <= reward.stars ? 'on' : ''}" style="animation-delay:${i * 0.25}s">★</span>`).join('')}</div>
       ${r.won ? '' : `<p class="err" style="text-align:center">${esc(r.failReason)}</p>`}
+      ${hookHtml(r, nextId)}
       <div class="grid2">
         <div>
           <div class="stat"><span>營業額 / 目標</span><b>$${r.revenue} / $${r.goal}</b></div>

@@ -2,7 +2,7 @@
 // server-confirmed actions, HUD, overlays and snapshot handling.
 import * as THREE from 'three';
 import {
-  FOOD_INFO, INPUT_RATE, INTERACT_RANGE, KAREN_INFO, PRODUCT_INFO, PRODUCTS, QUICK_MESSAGES, RUN_SPEED, WALK_SPEED, shelfCapacity, EYE_HEIGHT,
+  FOOD_INFO, INPUT_RATE, INTERACT_RANGE, KAREN_INFO, PRODUCT_INFO, PRODUCTS, QUICK_ICONS, QUICK_MESSAGES, QUICK_MIN_GAP_MS, RUN_SPEED, WALK_SPEED, shelfCapacity, EYE_HEIGHT,
 } from '../../shared/constants.ts';
 import { applyMap, CURRENT_MAP, COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, AABB, clampToStore, resolveCollision } from '../../shared/map.ts';
 import type { ShiftResult } from '../../shared/career.ts';
@@ -21,7 +21,8 @@ import { Settings, loadFlags, saveCoopSave, saveFlags, saveLastSession, saveSett
 import * as UI from './ui.ts';
 import { desktop } from './platform.ts';
 import { inputMode, keyOf, padStyle, rumble, setRumble } from './pad.ts';
-import { controlsLine } from './padmap.ts';
+import { BTN, actionLabel, controlsLine, setControlsContext } from './padmap.ts';
+import { EmoteWheel } from './emote-wheel.ts';
 import { JuiceKind, RateLimit, TimeWarp, juiceProfile, stampText, throwStrength } from './juice.ts';
 import { STORE_D } from '../../shared/map.ts';
 
@@ -33,6 +34,9 @@ export interface ShiftRegular {
 }
 let shiftRegular: ShiftRegular | null = null;
 export function setShiftRegular(r: ShiftRegular | null) { shiftRegular = r; setNamedRegular(null); }
+/** A story scene played as speech bubbles inside the store (no modal), set by the career flow before the game starts. */
+let shiftStory: { icon: string; name: string; text: string }[] | null = null;
+export function setShiftStory(lines: { icon: string; name: string; text: string }[] | null) { shiftStory = lines; }
 
 type Overlay = 'none' | 'pause' | 'shop' | 'quick' | 'summary' | 'settings' | 'help';
 
@@ -89,6 +93,14 @@ export class Game {
   private shelfGuide: { x: number; z: number } | null = null;
   private stockHtml = '';
   private introTimers: number[] = [];
+  /** T / View: the 8-slot quick message wheel (multiplayer). */
+  private wheel: EmoteWheel;
+  private lastQuickAt = 0;
+  /** Recent quick messages received (sender id, text) — read by the browser tests. */
+  quickLog: { id: string; text: string; at: number }[] = [];
+  /** After a reconnect, take the server's position on the next snapshot (no rubber-banding back). */
+  private resyncPos = false;
+  private lastHostId = '';
 
   constructor(private conn: GameConnection, private settings: Settings, private touch: boolean, private onExit: (reason?: string, result?: ShiftResult | null) => void) {
     const canvas = $('view') as HTMLCanvasElement;
@@ -107,12 +119,41 @@ export class Game {
     window.addEventListener('keydown', this.onKey);
     document.addEventListener('pointerlockerror', () => this.showHint('這個頁面不能鎖定滑鼠：按住滑鼠左鍵拖曳來轉動視角。'), { once: true });
     $('tutskip').onclick = () => this.skipTutorial();
+    this.wheel = new EmoteWheel(document.body, i => { this.sendQuick(i); this.closeOverlay(); }, () => this.closeOverlay());
     this.raf = requestAnimationFrame(this.frame);
     audio.unlock();
   }
 
   private onResize = () => this.view.resize();
   private onKey = (e: KeyboardEvent) => { if (e.code === 'KeyK' && this.tut && this.overlay === 'none') this.skipTutorial(); };
+
+  /** In-store story bubbles (setShiftStory): one line every few seconds in the speech-bubble slot while the player moves. */
+  private playStoryBubbles() {
+    const lines = shiftStory; shiftStory = null;
+    if (!lines?.length) return;
+    lines.forEach((l, i) => this.introTimers.push(window.setTimeout(() => this.bubble(l.icon, l.name, l.text, false, 0), 700 + i * 3800)));
+  }
+  /** Controls hint: only what this shift can use (no grab before Lv.11, no shop / social keys in a solo shift…). */
+  private ctlKey = '';
+  private refreshControls(s: Snapshot) {
+    const ctx = { abilities: s.shift.abilities, alt: !(s.shift.mode === 'shift' && s.shift.chapter <= 1), social: !this.conn.solo, shop: s.shift.mode !== 'shift', ready: s.shift.mode !== 'shift' || s.phase === 'prep' };
+    const k = JSON.stringify(ctx);
+    if (k === this.ctlKey) return;
+    this.ctlKey = k; setControlsContext(ctx);
+    $('helpkeys').textContent = controlsLine(inputMode(), padStyle());
+  }
+  private karenStamps = 0;
+  private autoReady = false;
+  private goalCheered = false;
+  /** Early payoffs: 退散 stamp for karens handled in chapter 1, and a ★ cheer the moment the shift goal is reached. */
+  private cheer(s: Snapshot) {
+    if (this.goalCheered || s.shift.mode !== 'shift' || s.shift.endless || s.raid || !(s.shift.goal > 0) || s.phase !== 'open') return;
+    if (s.dayStats.revenue < s.shift.goal) return;
+    this.goalCheered = true;
+    this.stamp('★ 達標！', 'big');
+    this.toast(`★ 營業額達標！撐到下班就拿到第一顆星${s.shift.chapter <= 1 ? '（多賺一點還有 ★★）' : ''}`, 'good', 3600);
+    this.view.burst(this.pos.x + Math.sin(this.yaw) * 1.5, this.pos.z + Math.cos(this.yaw) * 1.5, 0xffd43b, 18);
+  }
 
   /** Tutorial skipped (or finished): never shown again on this device. */
   private skipTutorial() {
@@ -141,6 +182,8 @@ export class Game {
   private introduceKaren(kind: string) {
     if (kind === 'boss' || this.flags.seenKarens.includes(kind) || !(kind in KAREN_INFO)) return;
     this.flags.seenKarens.push(kind); saveFlags(this.flags);
+    // first shift: the tutorial line already says what to do (no card, no pause in the middle of learning)
+    if (this.tutorial) return;
     const info = KAREN_INFO[kind as keyof typeof KAREN_INFO];
     const card = $('introcard');
     card.innerHTML = `<div class="muted">新奧客出現！</div><h3>⚠ ${UI.esc(info.name)}</h3><p>${UI.esc(info.hint)}</p><p class="how">處理方法：${UI.esc(info.how)}</p>`;
@@ -184,9 +227,18 @@ export class Game {
         if (!m.solo && 'url' in this.conn) {
           saveLastSession({ code: m.code, token: m.token, name: this.settings.name, url: (this.conn as unknown as { url: string }).url, at: Date.now() });
         }
-        if (m.reconnected) this.toast('🔌 已重新連線，世界狀態已同步', 'good');
+        if (m.reconnected && this.started) {
+          const held = this.snap?.players.find(p => p.id === m.playerId)?.held;
+          this.toast(`✅ 已回到店裡${held ? '（手上的東西還在）' : ''}`, 'good', 3200);
+        } else if (m.reconnected) UI.lobbyFlash('✅ 已重新連上等候室');
+        else if (this.started) this.toast('⌛ 保留時間已過：你以新店員的身分回到店裡（手上的東西沒了）', 'info', 4500);
+        if (this.started) this.resyncPos = true;
         break;
       case 'lobby':
+        if (this.lastHostId && this.lastHostId !== m.lobby.hostId && m.lobby.hostId === this.selfId) {
+          if (this.started) this.toast('👑 你現在是房主了', 'info', 3500); else UI.lobbyFlash('👑 你現在是房主：可以開始營業、改設定、踢人');
+        }
+        this.lastHostId = m.lobby.hostId;
         this.lobby = m.lobby;
         // the host switched the store type in the lobby: rebuild the 3D store before the game starts
         if (!m.lobby.started && !this.started && m.lobby.map && m.lobby.map !== CURRENT_MAP.id) this.switchMap(m.lobby.map);
@@ -217,7 +269,8 @@ export class Game {
     const el = $('netstatus');
     if (s === 'online') el.classList.add('hidden');
     else if (s === 'offline') { saveLastSession(null); this.exit(detail ?? '連線中斷'); }
-    else if (this.started) { el.classList.remove('hidden'); el.textContent = detail ?? '連線中…'; }
+    else if (this.started) { el.classList.remove('hidden'); el.style.whiteSpace = 'pre-line'; el.textContent = detail ?? '連線中…'; }
+    else UI.lobbyNet(s === 'reconnecting' ? detail ?? '重新連線中…' : '');
   }
 
   private switchMap(id: string) {
@@ -229,15 +282,22 @@ export class Game {
     this.view.shakeScale = this.settings.shake !== false && !this.settings.reduceMotion ? 1 : 0;
   }
 
+  private lobbyKey = '';
   private showLobby() {
     if (!this.lobby || this.started) return;
+    // only pings changed (refreshed every few seconds): patch them instead of redrawing the whole screen
+    const key = JSON.stringify({ ...this.lobby, players: this.lobby.players.map(p => ({ ...p, ping: undefined })) }) + this.selfId;
+    if (key === this.lobbyKey && document.getElementById('l-code')) { UI.lobbyPings(this.lobby); return; }
+    this.lobbyKey = key;
     UI.lobbyScreen(this.lobby, this.selfId, {
       ready: r => this.send({ type: 'ready', ready: r }),
       start: () => this.send({ type: 'start' }),
       leave: () => { saveLastSession(null); this.exit(); },
       copy: () => { void navigator.clipboard?.writeText(this.lobby!.code); this.toast('已複製房間碼', 'good'); },
       config: (map, difficulty, bots) => this.send({ type: 'lobbyCfg', map, difficulty, bots }),
-    });
+      kick: id => this.send({ type: 'kick', id }),
+      makeHost: id => this.send({ type: 'host', id }),
+    }, this.status === 'reconnecting');
   }
 
   private onSnap(s: Snapshot) {
@@ -256,8 +316,10 @@ export class Game {
       audio.startStoreAmbience(CURRENT_MAP.id);
       if (!s.raid) this.introduceStore();
       this.showArcCard();
+      this.playStoryBubbles();
     }
     if (first || !this.started) { this.pos = { x: me.x, z: me.z }; this.yaw = me.yaw; }
+    else if (this.resyncPos) { this.resyncPos = false; this.pos = { x: me.x, z: me.z }; this.corrections = 0; }
     // 打擊感: someone just grabbed a customer → squash-stretch, 嘿咻, camera dip (snapshots carry who holds whom)
     for (const p of s.players) {
       const was = this.grabSeen.get(p.id);
@@ -285,6 +347,8 @@ export class Game {
     switch (e.e) {
       case 'toast':
         this.toast(e.text, e.tone ?? 'info');
+        // chapter 1: every karen handled gets the 退散 stamp (the very first one big)
+        if (e.karen && e.ok !== false && this.snap?.shift.mode === 'shift' && this.snap.shift.chapter <= 1) this.stamp(stampText('eject'), this.karenStamps++ === 0 ? 'big' : '');
         if (e.karen) this.karenOutcome(e.ok !== false, e.kid);
         if (e.karen && this.regularId !== null && e.kid === this.regularId && shiftRegular) this.regularSays(e.ok !== false ? shiftRegular.handled : shiftRegular.bubbles[1] ?? shiftRegular.bubbles[0], e.ok === false);
         else if (e.karen) this.aftermath(e.karen, e.ok !== false, e.kid ?? 0);
@@ -305,11 +369,18 @@ export class Game {
           if (r.bubbles[1]) this.afTimers.push(window.setTimeout(() => { if (this.regularId === e.id && this.snap?.customers.some(c => c.id === e.id && !c.resolved)) this.regularSays(r.bubbles[1]); }, 12000));
         }
         break;
-      case 'quick': this.addFeed(`💬 ${e.from}：${e.text}`); audio.play('quick'); break;
+      case 'quick': {
+        const ico = e.msg !== undefined ? QUICK_ICONS[e.msg] ?? '💬' : '💬';
+        this.quickLog.push({ id: e.id ?? '', text: e.text, at: performance.now() }); if (this.quickLog.length > 12) this.quickLog.shift();
+        this.addFeed(`${ico} ${e.from}：${e.text}`);
+        if (e.id && e.id !== this.selfId) this.view.say(e.id, `${ico} ${e.text}`);
+        audio.play('quick');
+        break;
+      }
       case 'phase':
         if (e.phase === 'prep' && this.snap && this.snap.shift.mode !== 'shift') this.toast(`☀ 第 ${e.day} 天・開店準備：採購(${keyOf('shop')})、補貨、升級，按 ${keyOf('ready')} 準備開店`, 'info', 5000);
         break;
-      case 'hint': this.showHint(e.text); break;
+      case 'hint': if (!this.tut) this.showHint(e.text); break; // the tutorial line already says it (no competing text)
       case 'fx': this.onFx(e); break;
     }
   }
@@ -507,7 +578,7 @@ export class Game {
   private openOverlay(o: Overlay) {
     this.overlay = o;
     this.input.enabled = false;
-    this.input.unlock();
+    if (o !== 'quick') this.input.unlock(); // the wheel points with the captured mouse
     if (this.conn.solo && (o === 'pause' || o === 'settings' || o === 'help')) this.send({ type: 'pause', paused: true });
     this.shopKey = ''; this.summaryKey = '';
     switch (o) {
@@ -520,7 +591,12 @@ export class Game {
       }); break;
       case 'settings': UI.settingsMenu(this.settings, s => { this.applySettings(s); this.openOverlay('pause'); }, true); break;
       case 'help': UI.helpScreen(() => this.openOverlay('pause')); break;
-      case 'quick': UI.quickMenu(i => { this.send({ type: 'quick', msg: i }); this.closeOverlay(); }, () => this.closeOverlay()); break;
+      case 'quick': {
+        const pad = this.input.usingGamepad;
+        this.wheel.open(pad && this.input.padDown(BTN.VIEW), pad ? `搖桿選、放開 ${actionLabel('quick', 'pad', padStyle())} 或按 ${actionLabel('interact', 'pad', padStyle())} 送出` : this.touch ? '點一下送出' : '1–8 直接送・移動滑鼠選、左鍵送出・T 關閉');
+        this.input.takeWheel();
+        break;
+      }
       case 'shop': UI.show(`<div class="card wide"><h2>🛒 採購・升級</h2><div id="shop-body"></div><button class="btn primary" id="shop-close">關閉${this.touch ? '' : ' (B)'}</button></div>`, 'screen overlay');
         $('shop-close').addEventListener('click', () => this.closeOverlay());
         this.renderShop(); break;
@@ -530,8 +606,10 @@ export class Game {
 
   private closeOverlay() {
     if (this.overlay === 'summary' && this.snap?.phase === 'summary') return; // must ready up
+    const wasWheel = this.overlay === 'quick';
     this.overlay = 'none';
-    UI.hide();
+    this.wheel.close();
+    if (!wasWheel) UI.hide();
     this.input.enabled = true;
     this.input.clearPresses();
     if (this.conn.solo) this.send({ type: 'pause', paused: false });
@@ -604,6 +682,9 @@ export class Game {
       if (r.idx === 1 && !s.upgrades.register2) continue;
       const waiting = s.customers.find(c => c.state === 'atRegister' && Math.abs(c.x - r.customer.x) < 0.7 && Math.abs(c.z - r.customer.z) < 0.7);
       const box = { x0: r.x - 0.3, x1: r.x + 0.3, z0: r.z - 0.25, z1: r.z + 0.25, h: 1.4, kind: 'register' };
+      // tutorial: the 插隊 karen at the till can be told to queue from behind the counter (the lesson, not a fail)
+      const cut = waiting && this.tut && waiting.kind === 'cutter' && !waiting.resolved ? waiting : null;
+      if (cut && this.pos.z <= 11.2) { out.push({ label: '請插隊奧客重新排隊', primary: 'askQueue', target: { t: 'customer', id: cut.id }, box: { x0: r.x - 0.3, x1: r.x + 0.3, z0: r.z - 0.25, z1: r.z + 0.25, h: 1.4, kind: 'register' } }); continue; }
       out.push(waiting
         ? (this.pos.z > 11.2 ? { label: '收銀台', reason: '請繞到櫃台內側結帳', target: { t: 'register', idx: r.idx }, box }
           : { label: `結帳（${waiting.items} 件${waiting.kind === 'cutter' && !waiting.resolved ? '・⚠插隊奧客' : ''}）`, primary: 'checkout', target: { t: 'register', idx: r.idx }, box })
@@ -772,7 +853,10 @@ export class Game {
     // global hotkeys
     if (this.input.consume('menu')) { if (this.overlay === 'none') this.openOverlay('pause'); else if (this.overlay !== 'summary') this.closeOverlay(); }
     if (this.input.consume('shop')) { if (this.overlay === 'none') this.openOverlay('shop'); else if (this.overlay === 'shop') this.closeOverlay(); }
-    if (this.input.consume('quick')) { if (this.overlay === 'none') this.openOverlay('quick'); else if (this.overlay === 'quick') this.closeOverlay(); }
+    if (this.input.consume('quick') && !this.conn.solo) {
+      if (this.overlay === 'none') this.openOverlay('quick');
+      else if (this.overlay === 'quick') { if (this.wheel.sel !== null && !this.touch) this.sendQuick(this.wheel.sel); this.closeOverlay(); } // T again sends what the mouse points at
+    }
 
     if (this.overlay === 'none') {
       const look = this.input.takeLook();
@@ -794,7 +878,8 @@ export class Game {
       const fx = Math.sin(this.yaw), fz = Math.cos(this.yaw);
       const rx = -Math.cos(this.yaw), rz = Math.sin(this.yaw);
       const dx = (fx * mv.y + rx * mv.x) * speed * dt, dz = (fz * mv.y + rz * mv.x) * speed * dt;
-      const moving = Math.hypot(dx, dz) > 1e-4;
+      // while the connection is down you stay put (the server keeps your spot; no snapping back afterwards)
+      const moving = Math.hypot(dx, dz) > 1e-4 && (this.conn.solo || this.status === 'online');
       if (moving) {
         let p = resolveCollision(this.pos.x + dx, this.pos.z + dz);
         p = clampToStore(p.x, p.z);
@@ -830,13 +915,13 @@ export class Game {
       }
       if (this.input.consume('ultimate')) this.send({ type: 'ultimate', rid: newRid() });
       if (this.input.consume('ping')) this.doPing();
-      if (this.input.consume('skip')) { if (this.tut) this.skipTutorial(); else this.openOverlay('quick'); }
+      if (this.input.consume('skip')) { if (this.tut) this.skipTutorial(); else if (!this.conn.solo) this.openOverlay('quick'); }
       if (this.input.consume('ready') && (s.phase === 'prep' || s.phase === 'summary')) this.send({ type: 'ready', ready: !me.ready });
-      for (let i = 1; i <= 6; i++) if (this.input.consume(`q${i}` as 'q1')) this.send({ type: 'quick', msg: i - 1 });
+      for (let i = 1; i <= QUICK_MESSAGES.length; i++) if (this.input.consume(`q${i}` as 'q1')) this.sendQuick(i - 1);
     } else {
       this.input.takeLook();
       this.target = null;
-      if (this.overlay === 'quick') for (let i = 1; i <= 6; i++) if (this.input.consume(`q${i}` as 'q1')) { this.send({ type: 'quick', msg: i - 1 }); this.closeOverlay(); }
+      if (this.overlay === 'quick') this.wheelFrame();
     }
 
     // send position at INPUT_RATE
@@ -859,6 +944,8 @@ export class Game {
     this.view.setHighlight(tb);
     if (!this.tutorial && s.shift.id === '1-1' && !this.flags.tutorialDone) this.tutorial = new Tutorial(this.touch, () => keyOf('interact'));
     this.tut = this.tutorial ? this.tutorial.update(s, me, this.pos, now) : null;
+    // first shift: reaching the till during the prep seconds opens the store (no waiting, no extra button)
+    if (this.tut?.ready && s.phase === 'prep' && !me.ready && this.conn.solo && !this.autoReady) { this.autoReady = true; this.send({ type: 'ready', ready: true }); }
     this.view.setGuide(this.tut?.target ?? this.shelfGuide);
     this.view.render();
     this.minimap.draw(s, this.selfId, { x: this.pos.x, z: this.pos.z, yaw: this.yaw }, now / 1000, this.tut?.target ?? this.shelfGuide);
@@ -868,6 +955,29 @@ export class Game {
     this.fpsFrames++; this.fpsT += dt;
     if (this.fpsT >= 1) { $('fps').textContent = this.settings.showFps ? `${this.fpsFrames} FPS` : ''; this.fpsFrames = 0; this.fpsT = 0; }
   };
+
+  /** Preset callout / emote (multiplayer; solo has nobody to tell). A short client-side gap; the server rate-limits too. */
+  private sendQuick(i: number) {
+    const t = performance.now();
+    if (this.conn.solo || t - this.lastQuickAt < QUICK_MIN_GAP_MS) return;
+    this.lastQuickAt = t;
+    this.send({ type: 'quick', msg: i });
+  }
+
+  /** The emote wheel is open: number keys, mouse / stick pointing, click / A / letting go of View. */
+  private wheelFrame() {
+    const w = this.wheel;
+    for (let i = 1; i <= QUICK_MESSAGES.length; i++) if (this.input.consume(`q${i}` as 'q1')) { this.sendQuick(i - 1); this.closeOverlay(); return; }
+    const m = this.input.takeWheel(); w.mouse(m.dx, m.dy);
+    const { padL: l, padR: r } = this.input;
+    const st = Math.hypot(r.x, r.y) > Math.hypot(l.x, l.y) ? r : l;
+    w.stick(st.x, st.y);
+    const send = () => { if (w.sel !== null) this.sendQuick(w.sel); this.closeOverlay(); };
+    if (this.input.consume('interact')) { send(); return; }
+    if (this.input.consume('drop') || this.input.consume('menu')) { this.closeOverlay(); return; }
+    // hold View, point with a stick, let go: sent
+    if (w.byPad && !this.input.padDown(BTN.VIEW)) { if (w.sel !== null) { send(); return; } w.byPad = false; }
+  }
 
   private doPing() {
     let x: number, z: number;
@@ -883,6 +993,8 @@ export class Game {
   }
 
   private updateHud(s: Snapshot, me: Snapshot['players'][number]) {
+    this.refreshControls(s);
+    this.cheer(s);
     $('h-day').textContent = `第 ${s.day} 天`;
     $('h-clock').textContent = s.phase === 'prep' ? `準備 ${fmtSec(s.phaseLeft)}` : s.phase === 'closing' ? `打烊中 ${fmtSec(s.phaseLeft)}` : s.phase === 'summary' ? '日結' : `🕒 ${fmtClock(s.clock)}`;
     $('h-money').textContent = `💰 $${s.money}`;
@@ -935,7 +1047,7 @@ export class Game {
     if (boss) {
       al.classList.remove('hidden');
       al.innerHTML = `👑 奧客之王 第 ${boss.phase}/5 階段「${BOSS_PHASES[boss.phase]}」${boss.phase === 2 ? `（怒氣 ${boss.anger}）` : ''}<div style="font-size:13px;font-weight:600">${BOSS_HOW[boss.phase]}</div>`;
-    } else if (karens.length) {
+    } else if (karens.length && !this.tut?.urgent) { // (the tutorial's urgent line already names the karen)
       const k = karens[0];
       const info = KAREN_INFO[k.kind as keyof typeof KAREN_INFO];
       al.classList.remove('hidden');
@@ -943,7 +1055,10 @@ export class Game {
     } else al.classList.add('hidden');
     // phase banner
     const pb = $('phasebanner');
-    if (s.phase === 'prep' && s.shift.mode === 'shift') {
+    if (s.phase === 'prep' && s.shift.mode === 'shift' && this.tut) {
+      // first shift: the tutorial line is the only instruction (walking to the till starts the shift)
+      if (pb.dataset.k) { pb.dataset.k = ''; pb.innerHTML = ''; }
+    } else if (s.phase === 'prep' && s.shift.mode === 'shift') {
       const html = `<button class="btn small good" id="pb-ready">▶ 開始上班${this.touch ? '' : ` [${keyOf('ready')}]`}（<span id="pb-left"></span>）</button>`;
       if (pb.dataset.k !== html) {
         pb.dataset.k = html; pb.innerHTML = html;
@@ -1008,10 +1123,11 @@ export class Game {
       hb.textContent = this.touch ? '😈「互動」打翻商品／嗆客人、「丟垃圾」亂丟垃圾，別讓店員靠近太久' : `😈 ${keyOf('interact')} 打翻商品／嗆客人、${keyOf('drop')} 亂丟垃圾，別讓店員靠近太久`;
     } else if (this.tut) {
       const hb = $('hintbar'); hb.classList.remove('hidden');
-      hb.textContent = `📘 教學 ${Math.min(this.tut.step, this.tut.total)}/${this.tut.total}：${this.tut.text}`;
+      hb.textContent = this.tut.urgent ? this.tut.text : `📘 教學 ${Math.min(this.tut.step, this.tut.total)}/${this.tut.total}：${this.tut.text}`;
+      hb.classList.toggle('urgent', !!this.tut.urgent);
       const finished = this.tut.step >= this.tut.total;
       $('tutskip').classList.toggle('hidden', finished);
-      if (!this.touch) $('tutskip').textContent = `跳過教學（${keyOf('skip')}）`;
+      $('tutskip').textContent = this.touch ? '跳過教學' : `跳過教學（${keyOf('skip')}）`;
       if (finished && !this.flags.tutorialDone) { this.flags.tutorialDone = true; saveFlags(this.flags); }
     } else { $('tutskip').classList.add('hidden'); if (performance.now() > this.hintUntil) $('hintbar').classList.add('hidden'); }
     if (this.touch) {
@@ -1044,6 +1160,8 @@ export class Game {
     window.removeEventListener('keydown', this.onKey);
     for (const t of this.introTimers) clearTimeout(t);
     for (const t of this.afTimers) clearTimeout(t);
+    setControlsContext(null);
+    this.wheel.el.remove();
     $('aftermath').classList.add('hidden');
     $('introcard').classList.add('hidden'); $('tutskip').classList.add('hidden'); $('arccard').classList.add('hidden');
     this.input.unlock();

@@ -1,38 +1,70 @@
 // Procedural sound effects (WebAudio, no asset downloads) with simple distance attenuation.
+//
+// Mix (measured offline with scripts/audio-qa.mjs, see docs/AUDIO.md), at the default settings
+// (音效 0.7, 主音量 1, 音樂 0.5):
+//   each SFX → its own instance gain (per-sound trim `TRIM`, overlap ducking) → `master` (音效音量) → `out` (主音量)
+//   music → musicGain → `out`
+//   store ambience → ambience gain → 45 Hz high-pass → 5.5 kHz low-pass → `out`
+//   `out` → 28 Hz high-pass (DC / sub rumble) → 15 kHz low-pass → limiter (DynamicsCompressor) → soft-clip ceiling → speakers
+// Targets: important feedback ≈ −18 LUFS (400 ms momentary max), minor foley −24…−34, music ≈ −28 LUFS,
+// store ambience ≈ −42 LUFS; nothing above −1 dBFS even when everything fires at once.
+const dbToGain = (db: number) => Math.pow(10, db / 20);
+/** Per-sound level trim in dB (gain staging), measured against the targets above. */
+const TRIM: Record<string, number> = {
+  grab: 15.5, hit: 12, throw: 14.5, eject: 16.5, impact: 11.5, mistake: 13.5, spin: 15, ultimate: 11.5,
+  outage: 16, unplug: 16.5, levelup: 13.5, achievement: 12, win: 13, lose: 15, cash: 12.5, door: 11.5,
+  splat: 21.5, angry: 16, crash: 7, knock: 15, pickup: 15.5, drop: 14.5, stock: 14, brew: 17, deliver: 12,
+  clean: 14, calm: 12.5, ping: 10, buy: 15.5, upgrade: 13.5, open: 12, karen: 14, error: 19.5, step: 36,
+  quick: 15, heave: 19, whoosh: 16, ding: 13, ooh: 22.5, stamp: 12.5, star: 16.5, dust: 28, rise: 18.5,
+  bassdrop: 3.5, slap: 10.5, siren: 19.5, chime: 16, trombone: 26,
+};
+/** Long or loud one-shots allowed only one voice at a time; everything else at most `MAX_VOICES`. */
+const SOLO = new Set(['ultimate', 'bassdrop', 'trombone', 'siren', 'achievement', 'levelup', 'win', 'lose', 'ooh', 'outage', 'open', 'door', 'brew']);
+const MAX_VOICES = 3;
+
 export class Audio {
   ctx: AudioContext | null = null;
   /** Sound-effects bus (音效音量). Music and store ambience bypass it and go straight to `out`. */
   master: GainNode | null = null;
-  /** Master output (主音量) → limiter → speakers. */
+  /** Master output (主音量) → filters → limiter → speakers. */
   out: GainNode | null = null;
   volume = 0.7;
   masterVolume = 1;
   listener = { x: 0, z: 0 };
   private noiseBuf: AudioBuffer | null = null;
   private ambient: { stop(): void } | null = null;
+  /** Where the SFX helpers connect (the current sound's instance gain). */
+  private dest: AudioNode | null = null;
+  /** Latest end time scheduled by the helpers during the current `play` call. */
+  private endAt = 0;
 
   unlock() {
     if (this.ctx) { if (this.ctx.state === 'suspended') void this.ctx.resume(); return; }
     const AC = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
     if (!AC) return;
-    this.ctx = new AC();
-    this.master = this.ctx.createGain();
+    const c = this.ctx = new AC();
+    this.master = c.createGain();
     this.master.gain.value = this.volume;
-    this.out = this.ctx.createGain();
+    this.out = c.createGain();
     this.out.gain.value = this.masterVolume;
     this.master.connect(this.out);
-    // gentle limiter so stacked effects (ultimate + crash + eject) never clip
-    const comp = this.ctx.createDynamicsCompressor();
-    comp.threshold.value = -14; comp.knee.value = 10; comp.ratio.value = 6; comp.attack.value = 0.003; comp.release.value = 0.2;
-    this.out.connect(comp); comp.connect(this.ctx.destination);
-    const len = this.ctx.sampleRate * 0.6;
-    this.noiseBuf = this.ctx.createBuffer(1, len, this.ctx.sampleRate);
+    // master bus: strip DC / sub rumble and fizz, then a limiter, then a soft ceiling so stacked effects never clip
+    const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 28; hp.Q.value = 0.7;
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 15000; lp.Q.value = 0.5;
+    const lim = c.createDynamicsCompressor();
+    lim.threshold.value = -4; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.002; lim.release.value = 0.12;
+    const trim = c.createGain(); trim.gain.value = dbToGain(-2.3); // cancels the compressor's automatic make-up gain (unity below −4 dBFS)
+    const clip = c.createWaveShaper(); clip.curve = softClipCurve(); clip.oversample = 'none';
+    this.out.connect(hp); hp.connect(lp); lp.connect(lim); lim.connect(trim); trim.connect(clip); clip.connect(c.destination);
+    const len = c.sampleRate * 0.6;
+    this.noiseBuf = c.createBuffer(1, len, c.sampleRate);
     const d = this.noiseBuf.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
   }
 
-  setVolume(v: number) { this.volume = v; if (this.master) this.master.gain.value = v; }
-  setMaster(v: number) { this.masterVolume = v; if (this.out) this.out.gain.value = v; }
+  private ramp(p: AudioParam | undefined, v: number) { const c = this.ctx; if (!c || !p) return; p.cancelScheduledValues(c.currentTime); p.setTargetAtTime(v, c.currentTime, 0.015); }
+  setVolume(v: number) { this.volume = v; this.ramp(this.master?.gain, v); }
+  setMaster(v: number) { this.masterVolume = v; this.ramp(this.out?.gain, v); }
   suspend() { void this.ctx?.suspend(); }
   resume() { void this.ctx?.resume(); }
 
@@ -43,64 +75,83 @@ export class Audio {
   }
 
   private tone(freq: number, dur: number, type: OscillatorType, vol: number, at = 0, slideTo?: number) {
-    const c = this.ctx; if (!c || !this.master) return;
+    const c = this.ctx; const out = this.dest; if (!c || !out) return;
     const t = c.currentTime + at;
     const o = c.createOscillator(); const g = c.createGain();
     o.type = type; o.frequency.setValueAtTime(freq, t);
     if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
     g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(g); g.connect(this.master); o.start(t); o.stop(t + dur + 0.02);
+    o.connect(g); g.connect(out); o.start(t); o.stop(t + dur + 0.02);
+    this.endAt = Math.max(this.endAt, t + dur);
   }
 
-  private noise(dur: number, vol: number, filterFreq: number, at = 0, type: BiquadFilterType = 'lowpass') {
-    const c = this.ctx; if (!c || !this.master || !this.noiseBuf) return;
+  /** Filtered noise burst; 5 ms attack so even the sharpest hits don't click. */
+  private noise(dur: number, vol: number, filterFreq: number, at = 0, type: BiquadFilterType = 'lowpass', q = 1) {
+    const c = this.ctx; const out = this.dest; if (!c || !out || !this.noiseBuf) return;
     const t = c.currentTime + at;
     const s = c.createBufferSource(); s.buffer = this.noiseBuf;
-    const f = c.createBiquadFilter(); f.type = type; f.frequency.value = filterFreq;
-    const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    s.connect(f); f.connect(g); g.connect(this.master); s.start(t); s.stop(t + dur + 0.02);
+    const f = c.createBiquadFilter(); f.type = type; f.frequency.value = filterFreq; f.Q.value = type === 'lowpass' || type === 'highpass' ? 0.7 : q;
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(f); f.connect(g); g.connect(out); s.start(t); s.stop(t + dur + 0.02);
+    this.endAt = Math.max(this.endAt, t + dur);
   }
 
   /** Buzzy "voice": sawtooth through a band-pass (vowel-ish), optional vibrato rate (Hz). */
   private voice(freq: number, slideTo: number, dur: number, vol: number, formant: number, at = 0, startFormant?: number, vib = 0) {
-    const c = this.ctx; if (!c || !this.master) return;
+    const c = this.ctx; const out = this.dest; if (!c || !out) return;
     const t = c.currentTime + at;
     const o = c.createOscillator(); o.type = 'sawtooth';
     o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t + dur);
     const f = c.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 3;
     f.frequency.setValueAtTime(startFormant ?? formant, t); f.frequency.linearRampToValueAtTime(formant, t + dur * 0.5);
     const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.connect(f); f.connect(g); g.connect(this.master);
+    o.connect(f); f.connect(g); g.connect(out);
     let lfo: OscillatorNode | null = null;
     if (vib > 0) { lfo = c.createOscillator(); lfo.frequency.value = vib; const lg = c.createGain(); lg.gain.value = freq * 0.04; lfo.connect(lg); lg.connect(o.frequency); lfo.start(t); lfo.stop(t + dur + 0.02); }
     o.start(t); o.stop(t + dur + 0.02);
+    this.endAt = Math.max(this.endAt, t + dur);
   }
   /** Filtered-noise sweep (whoosh): band-pass centre glides from f0 to f1. */
   private sweep(dur: number, vol: number, f0: number, f1: number, at = 0) {
-    const c = this.ctx; if (!c || !this.master || !this.noiseBuf) return;
+    const c = this.ctx; const out = this.dest; if (!c || !out || !this.noiseBuf) return;
     const t = c.currentTime + at;
     const s = c.createBufferSource(); s.buffer = this.noiseBuf;
     const f = c.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 1.4;
     f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(f1, t + dur);
     const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + dur * 0.4); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    s.connect(f); f.connect(g); g.connect(this.master); s.start(t); s.stop(t + dur + 0.02);
+    s.connect(f); f.connect(g); g.connect(out); s.start(t); s.stop(t + dur + 0.02);
+    this.endAt = Math.max(this.endAt, t + dur);
   }
 
   private lastPlayed = new Map<string, number>();
   private voices = 0;
+  /** End times (AudioContext seconds) of the voices still sounding, per effect name. */
+  private live = new Map<string, number[]>();
   /** Minimum gap between two plays of the same effect (ms); loud one-shots get a longer gap. */
   private static GAP: Record<string, number> = { step: 120, knock: 120, cash: 70, impact: 150, crash: 250, karen: 600, ultimate: 800, error: 200, achievement: 400, levelup: 400,
     heave: 200, ooh: 900, ding: 300, trombone: 2500, siren: 1500, bassdrop: 800, stamp: 90, chime: 150, rise: 400, whoosh: 60, slap: 90 };
 
   /** `k` (0–1.4): strength of the juice layers (throw power, distance falloff for other players' actions). */
   play(name: string, x?: number, z?: number, k = 1) {
-    if (!this.ctx) return;
+    const c = this.ctx; if (!c || !this.master) return;
     const now = performance.now();
     const gap = Audio.GAP[name] ?? 50;
     if (now - (this.lastPlayed.get(name) ?? -1e9) < gap) return; // same sound fired twice at once: play it once
     if (this.voices > 24 && name !== 'ultimate' && name !== 'achievement' && name !== 'bassdrop') return; // too busy: drop minor sounds
+    // per-sound voice limit: rapid repeats don't stack into a wall of distortion; overlapping copies are ducked
+    const live = (this.live.get(name) ?? []).filter(e => e > c.currentTime + 0.03);
+    if (live.length >= (SOLO.has(name) ? 1 : MAX_VOICES)) { this.live.set(name, live); return; }
     this.lastPlayed.set(name, now);
     this.voices++; window.setTimeout(() => { this.voices--; }, 400);
+    const inst = c.createGain(); inst.gain.value = dbToGain(TRIM[name] ?? 0) / (1 + 0.45 * live.length);
+    inst.connect(this.master);
+    this.dest = inst; this.endAt = c.currentTime;
+    try { this.sfx(name, x, z, k); } finally { this.dest = null; }
+    live.push(this.endAt); this.live.set(name, live);
+    window.setTimeout(() => inst.disconnect(), (this.endAt - c.currentTime) * 1000 + 300);
+  }
+
+  private sfx(name: string, x: number | undefined, z: number | undefined, k: number) {
     const v = this.gainFor(x, z) * Math.max(0.15, Math.min(1, k));
     switch (name) {
       case 'grab': this.tone(330, 0.12, 'triangle', 0.16 * v, 0, 520); this.noise(0.12, 0.12 * v, 1200); this.tone(260, 0.18, 'sawtooth', 0.05 * v, 0.06, 420); break;
@@ -114,12 +165,12 @@ export class Audio {
         this.tone(110, 0.9, 'sawtooth', 0.12, 0, 55); this.noise(0.9, 0.3, 1400);
         [523, 659, 784, 1046, 1318].forEach((f, i) => this.tone(f, 0.35, 'square', 0.06, 0.15 + i * 0.06)); break;
       case 'outage': this.tone(220, 0.6, 'sawtooth', 0.1, 0, 40); this.noise(0.3, 0.15, 300); break;
-      case 'unplug': this.tone(1400, 0.05, 'square', 0.1 * v); this.noise(0.08, 0.12 * v, 4000, 0.03, 'highpass'); break;
+      case 'unplug': this.tone(1400, 0.05, 'square', 0.1 * v); this.noise(0.08, 0.12 * v, 3200, 0.03, 'bandpass', 1.2); break; // spark crackle (band-passed: was a 4 kHz+ hiss)
       case 'levelup': [523, 659, 784, 1046, 1318, 1568].forEach((f, i) => this.tone(f, 0.28, 'triangle', 0.11, i * 0.07)); break;
       case 'achievement': [784, 1046, 1318].forEach((f, i) => this.tone(f, 0.5, 'sine', 0.12, i * 0.1)); this.tone(1568, 0.7, 'triangle', 0.08, 0.32); break;
       case 'win': [523, 659, 784, 1046].forEach((f, i) => this.tone(f, 0.45, 'triangle', 0.12, i * 0.13)); break;
       case 'lose': [392, 349, 311, 262].forEach((f, i) => this.tone(f, 0.4, 'triangle', 0.1, i * 0.16)); break;
-      case 'cash': this.tone(1318, 0.12, 'square', 0.12 * v); this.tone(1760, 0.3, 'square', 0.1 * v, 0.08); this.noise(0.15, 0.08 * v, 6000, 0.05, 'highpass'); break;
+      case 'cash': this.tone(1318, 0.12, 'square', 0.12 * v); this.tone(1760, 0.3, 'square', 0.1 * v, 0.08); this.noise(0.15, 0.08 * v, 5000, 0.05, 'bandpass', 1.5); break;
       case 'door': this.tone(988, 0.35, 'sine', 0.15 * v); this.tone(784, 0.5, 'sine', 0.13 * v, 0.18); break;
       case 'splat': this.noise(0.25, 0.25 * v, 700); break;
       case 'angry': this.tone(160, 0.4, 'sawtooth', 0.12 * v, 0, 90); break;
@@ -160,7 +211,7 @@ export class Audio {
         this.tone(160, 1.1, 'sine', 0.35, 0.05, 32); this.tone(80, 1.2, 'triangle', 0.2, 0.05, 30);
         this.sweep(0.25, 0.25, 6000, 300, 0); this.noise(0.6, 0.25, 220, 0.05); break;
       case 'slap': // cartoon 「啪」: sharp crack + quick pitch drop
-        this.noise(0.05, 0.5 * v, 3500, 0, 'highpass'); this.noise(0.12, 0.25 * v, 1400, 0.005, 'bandpass');
+        this.noise(0.05, 0.5 * v, 2800, 0, 'bandpass', 0.8); this.noise(0.12, 0.25 * v, 1400, 0.005, 'bandpass');
         this.tone(900, 0.07, 'square', 0.08 * v, 0, 180); this.tone(120, 0.12, 'sine', 0.18 * v, 0.01, 60); break;
       case 'siren': // comedic police sting: wee-woo ×2
         for (let i = 0; i < 4; i++) this.tone(i % 2 ? 660 : 880, 0.22, 'square', 0.05, 0.2 + i * 0.22, i % 2 ? 640 : 900);
@@ -179,7 +230,7 @@ export class Audio {
   private nextBeat = 0;
   private beat = 0;
   musicVolume = 0.5;
-  setMusicVolume(v: number) { this.musicVolume = v; if (this.musicGain) this.musicGain.gain.value = v * 0.35; }
+  setMusicVolume(v: number) { this.musicVolume = v; this.ramp(this.musicGain?.gain, v * MUSIC_LEVEL); if (this.storeAmb) this.ramp(this.storeAmb.gain.gain, v * AMB_LEVEL * dbToGain(this.storeAmb.lvl)); }
 
   /** mood: 0 co-op, 1–6 chapters, 7 endless, 8 main menu. Different tempo, key and chord loop per mood. */
   startMusic(mood: number) {
@@ -187,13 +238,13 @@ export class Audio {
     if (this.musicMood === mood && this.musicTimer) return;
     this.stopMusic();
     this.musicMood = mood;
-    this.musicGain = c.createGain(); this.musicGain.gain.value = this.musicVolume * 0.35; this.musicGain.connect(this.out ?? this.master);
+    this.musicGain = c.createGain(); this.musicGain.gain.value = this.musicVolume * MUSIC_LEVEL; this.musicGain.connect(this.out ?? this.master);
     this.nextBeat = c.currentTime + 0.1; this.beat = 0;
     this.musicTimer = window.setInterval(() => this.schedule(), 90);
   }
   stopMusic() {
     clearInterval(this.musicTimer); this.musicTimer = 0; this.musicMood = -1;
-    if (this.musicGain) { const g = this.musicGain; try { g.gain.setTargetAtTime(0, this.ctx!.currentTime, 0.2); } catch { /* ignore */ } setTimeout(() => g.disconnect(), 800); }
+    if (this.musicGain) { const g = this.musicGain; try { g.gain.cancelScheduledValues(this.ctx!.currentTime); g.gain.setTargetAtTime(0, this.ctx!.currentTime, 0.12); } catch { /* ignore */ } setTimeout(() => g.disconnect(), 900); }
     this.musicGain = null;
   }
 
@@ -230,28 +281,34 @@ export class Audio {
   private kick(t: number) {
     const c = this.ctx!; const o = c.createOscillator(); const g = c.createGain();
     o.frequency.setValueAtTime(130, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
-    g.gain.setValueAtTime(0.25, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
+    g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(0.25, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.18);
     o.connect(g); g.connect(this.musicGain!); o.start(t); o.stop(t + 0.2);
   }
   private hat(t: number, vol: number, freq = 7000) {
     const c = this.ctx!; if (!this.noiseBuf) return;
     const s = c.createBufferSource(); s.buffer = this.noiseBuf;
     const f = c.createBiquadFilter(); f.type = 'highpass'; f.frequency.value = freq;
-    const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05);
     s.connect(f); f.connect(g); g.connect(this.musicGain!); s.start(t); s.stop(t + 0.06);
   }
 
   // ---------------- per-store ambience (procedural, very quiet) ----------------
-  private storeAmb: { timer: number; nodes: AudioScheduledSourceNode[]; gain: GainNode } | null = null;
+  private storeAmb: { timer: number; nodes: AudioScheduledSourceNode[]; gain: GainNode; lvl: number } | null = null;
   /** Background sounds for each kind of store: a steady bed plus occasional little events. */
   startStoreAmbience(mapId: string) {
     this.stopStoreAmbience();
     const c = this.ctx; if (!c || !this.master || !this.noiseBuf) return;
     const p = STORE_AMBIENCE[mapId] ?? STORE_AMBIENCE.convenience;
-    const gain = c.createGain(); gain.gain.value = 0.6 * this.musicVolume; gain.connect(this.out ?? this.master);
+    const lvl = p.lvl ?? 0;
+    const gain = c.createGain(); // fade in over ~0.5 s (no click when the bed starts)
+    gain.gain.setValueAtTime(0.0001, c.currentTime); gain.gain.setTargetAtTime(AMB_LEVEL * this.musicVolume * dbToGain(lvl), c.currentTime, 0.15);
+    // keep the bed out of the sub-bass (speaker rumble) and the fizz range
+    const hp = c.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 45;
+    const lp = c.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 5500;
+    gain.connect(hp); hp.connect(lp); lp.connect(this.out ?? this.master);
     const nodes: AudioScheduledSourceNode[] = [];
     if (p.bed) { // looping filtered noise (fridge hum, fryer sizzle, crowd murmur…)
-      const s = c.createBufferSource(); s.buffer = this.noiseBuf; s.loop = true;
+      const s = c.createBufferSource(); s.buffer = this.bedNoise(); s.loop = true;
       const f = c.createBiquadFilter(); f.type = p.bed.type; f.frequency.value = p.bed.freq; f.Q.value = p.bed.q ?? 0.7;
       const g = c.createGain(); g.gain.value = p.bed.vol;
       s.connect(f); f.connect(g); g.connect(gain); s.start(); nodes.push(s);
@@ -261,13 +318,20 @@ export class Audio {
       if (!this.storeAmb) return;
       for (const e of p.events) if (Math.random() < 1 / e.every) STORE_EVENTS[e.kind]?.(this, gain);
     };
-    this.storeAmb = { timer: window.setInterval(tick, 1000), nodes, gain };
+    this.storeAmb = { timer: window.setInterval(tick, 1000), nodes, gain, lvl };
   }
   stopStoreAmbience() {
     const a = this.storeAmb; if (!a) return;
     clearInterval(a.timer); this.storeAmb = null;
-    try { a.gain.gain.setTargetAtTime(0, this.ctx!.currentTime, 0.2); } catch { /* ignore */ }
+    try { a.gain.gain.cancelScheduledValues(this.ctx!.currentTime); a.gain.gain.setTargetAtTime(0, this.ctx!.currentTime, 0.1); } catch { /* ignore */ }
     setTimeout(() => { for (const n of a.nodes) { try { n.stop(); } catch { /* ignore */ } } a.gain.disconnect(); }, 600);
+  }
+  private bedBuf: AudioBuffer | null = null;
+  /** 3.7 s of noise for looping beds: the 0.6 s SFX buffer repeats audibly when looped. */
+  private bedNoise() {
+    const c = this.ctx!;
+    if (!this.bedBuf) { const n = Math.round(c.sampleRate * 3.7); this.bedBuf = c.createBuffer(1, n, c.sampleRate); const d = this.bedBuf.getChannelData(0); for (let i = 0; i < n; i++) d[i] = Math.random() * 2 - 1; }
+    return this.bedBuf;
   }
   /** A short note burst into a given output (used by the ambience events). */
   blip(out: AudioNode, freq: number, dur: number, type: OscillatorType, vol: number, at = 0, slideTo?: number) {
@@ -283,13 +347,15 @@ export class Audio {
     const t = c.currentTime + at;
     const s = c.createBufferSource(); s.buffer = this.noiseBuf;
     const f = c.createBiquadFilter(); f.type = type; f.frequency.value = freq;
-    const g = c.createGain(); g.gain.setValueAtTime(vol, t); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.005); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
     s.connect(f); f.connect(g); g.connect(out); s.start(t); s.stop(t + dur + 0.02);
   }
 
   /** Entrance sting for a karen: every kind gets its own little 3-note motif (stable per kind). */
   karenSting(kind: string) {
-    if (!this.ctx) return;
+    const c = this.ctx; if (!c || !this.master) return;
+    const inst = c.createGain(); inst.gain.value = dbToGain(TRIM.karen); inst.connect(this.master);
+    this.dest = inst;
     let h = 2166136261; for (const ch of kind) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); }
     h >>>= 0;
     const scale = [0, 3, 5, 6, 7, 10, 12];
@@ -298,6 +364,8 @@ export class Audio {
       const semi = scale[(h >>> (5 + i * 3)) % scale.length] - (i === 2 ? 12 : 0);
       this.tone(base * Math.pow(2, semi / 12), 0.13, type, 0.07, 0.5 + i * 0.14); // after the generic alarm
     }
+    this.dest = null;
+    window.setTimeout(() => inst.disconnect(), 1300);
   }
 
   /** Soft store ambience: low pad + occasional chime. */
@@ -311,6 +379,8 @@ export class Audio {
   stopAmbient() { this.ambient?.stop(); this.ambient = null; }
 }
 interface Mood { bpm: number; root: number; prog: number[][]; scale: number[]; pad: OscillatorType; lead: OscillatorType; drums: boolean; sparse?: boolean }
+/** Music and ambience bus levels (× the 音樂 slider). */
+const MUSIC_LEVEL = 2.2, AMB_LEVEL = 2.7;
 const MAJ = [0, 2, 4, 5, 7, 9, 11], MIN = [0, 2, 3, 5, 7, 8, 10], PENTA = [0, 2, 4, 7, 9];
 const MOODS: Record<number, Mood> = {
   0: { bpm: 92, root: 53, prog: [[0, 4, 7], [-3, 0, 4], [-7, -3, 0], [-5, -1, 2]], scale: MAJ, pad: 'sine', lead: 'triangle', drums: false, sparse: true },
@@ -326,36 +396,37 @@ const MOODS: Record<number, Mood> = {
 };
 
 type AmbEvent = 'chime' | 'sizzle' | 'clink' | 'bark' | 'ding' | 'page' | 'beep' | 'thump' | 'engine' | 'dryer' | 'pa' | 'bell' | 'oven';
-interface StoreAmb { bed?: { type: BiquadFilterType; freq: number; vol: number; q?: number }; hum?: number; events: { kind: AmbEvent; every: number }[] }
+/** `lvl`: per-store level trim in dB so every store's ambience sits at about the same loudness. */
+interface StoreAmb { lvl?: number; bed?: { type: BiquadFilterType; freq: number; vol: number; q?: number }; hum?: number; events: { kind: AmbEvent; every: number }[] }
 const FRIDGE = { type: 'lowpass' as BiquadFilterType, freq: 180, vol: 0.05 };
 const MURMUR = { type: 'bandpass' as BiquadFilterType, freq: 520, vol: 0.035, q: 0.6 };
-const SIZZLE = { type: 'highpass' as BiquadFilterType, freq: 3500, vol: 0.02 };
+const SIZZLE = { type: 'bandpass' as BiquadFilterType, freq: 3000, vol: 0.02, q: 0.7 }; // was a 3.5 kHz high-pass: constant harsh hiss
 const STORE_AMBIENCE: Record<string, StoreAmb> = {
-  convenience: { bed: FRIDGE, hum: 60, events: [{ kind: 'chime', every: 25 }] },
-  breakfast: { bed: SIZZLE, events: [{ kind: 'sizzle', every: 6 }, { kind: 'chime', every: 30 }] },
+  convenience: { lvl: -3, bed: FRIDGE, hum: 60, events: [{ kind: 'chime', every: 25 }] },
+  breakfast: { lvl: -4, bed: SIZZLE, events: [{ kind: 'sizzle', every: 6 }, { kind: 'chime', every: 30 }] },
   boba: { bed: MURMUR, events: [{ kind: 'clink', every: 5 }] },
   clothing: { bed: MURMUR, events: [{ kind: 'chime', every: 30 }] },
-  chicken: { bed: SIZZLE, events: [{ kind: 'sizzle', every: 4 }] },
+  chicken: { lvl: -4, bed: SIZZLE, events: [{ kind: 'sizzle', every: 4 }] },
   drugstore: { bed: MURMUR, events: [{ kind: 'beep', every: 12 }, { kind: 'chime', every: 30 }] },
-  bookstore: { bed: { type: 'lowpass', freq: 120, vol: 0.02 }, events: [{ kind: 'page', every: 6 }] },
-  bakery: { bed: { type: 'lowpass', freq: 220, vol: 0.03 }, events: [{ kind: 'oven', every: 18 }, { kind: 'chime', every: 30 }] },
-  supermarket: { bed: MURMUR, hum: 60, events: [{ kind: 'beep', every: 4 }, { kind: 'pa', every: 45 }] },
+  bookstore: { lvl: 6, bed: { type: 'lowpass', freq: 120, vol: 0.02 }, events: [{ kind: 'page', every: 6 }] },
+  bakery: { lvl: 5, bed: { type: 'lowpass', freq: 220, vol: 0.03 }, events: [{ kind: 'oven', every: 18 }, { kind: 'chime', every: 30 }] },
+  supermarket: { lvl: -5, bed: MURMUR, hum: 60, events: [{ kind: 'beep', every: 4 }, { kind: 'pa', every: 45 }] },
   petshop: { bed: MURMUR, events: [{ kind: 'bark', every: 9 }] },
   cafe: { bed: MURMUR, events: [{ kind: 'clink', every: 6 }, { kind: 'dryer', every: 25 }] },
-  cinema: { bed: { type: 'lowpass', freq: 90, vol: 0.06 }, events: [{ kind: 'thump', every: 10 }] },
+  cinema: { lvl: 6, bed: { type: 'lowpass', freq: 90, vol: 0.06 }, events: [{ kind: 'thump', every: 10 }] },
   hotpot: { bed: { type: 'bandpass', freq: 900, vol: 0.03, q: 0.8 }, events: [{ kind: 'clink', every: 5 }] },
-  gas: { bed: { type: 'lowpass', freq: 140, vol: 0.05 }, events: [{ kind: 'engine', every: 12 }, { kind: 'bell', every: 20 }] },
-  gym: { bed: MURMUR, events: [{ kind: 'thump', every: 3 }] },
-  steak: { bed: SIZZLE, events: [{ kind: 'sizzle', every: 4 }, { kind: 'clink', every: 9 }] },
-  electronics: { bed: { type: 'lowpass', freq: 200, vol: 0.03 }, events: [{ kind: 'beep', every: 5 }] },
+  gas: { lvl: 6, bed: { type: 'lowpass', freq: 140, vol: 0.05 }, events: [{ kind: 'engine', every: 12 }, { kind: 'bell', every: 20 }] },
+  gym: { lvl: -3, bed: MURMUR, events: [{ kind: 'thump', every: 3 }] },
+  steak: { lvl: -4, bed: SIZZLE, events: [{ kind: 'sizzle', every: 4 }, { kind: 'clink', every: 9 }] },
+  electronics: { lvl: 6, bed: { type: 'lowpass', freq: 200, vol: 0.03 }, events: [{ kind: 'beep', every: 5 }] },
   salon: { bed: MURMUR, events: [{ kind: 'dryer', every: 10 }] },
   post: { bed: MURMUR, events: [{ kind: 'ding', every: 12 }] },
   pharmacy: { bed: MURMUR, events: [{ kind: 'ding', every: 15 }] },
-  hotel: { bed: { type: 'lowpass', freq: 160, vol: 0.025 }, events: [{ kind: 'bell', every: 18 }] },
+  hotel: { lvl: 6, bed: { type: 'lowpass', freq: 160, vol: 0.025 }, events: [{ kind: 'bell', every: 18 }] },
 };
 const STORE_EVENTS: Record<AmbEvent, (a: Audio, out: AudioNode) => void> = {
   chime: (a, o) => { a.blip(o, 1318, 0.5, 'sine', 0.05); a.blip(o, 1046, 0.6, 'sine', 0.05, 0.25); },
-  sizzle: (a, o) => a.hiss(o, 1.2, 0.05, 4500, 'highpass'),
+  sizzle: (a, o) => a.hiss(o, 1.2, 0.05, 4000, 'bandpass'),
   clink: (a, o) => a.blip(o, 2400 + Math.random() * 800, 0.15, 'sine', 0.04),
   bark: (a, o) => { a.blip(o, 520, 0.12, 'square', 0.04, 0, 300); a.blip(o, 560, 0.12, 'square', 0.035, 0.18, 320); },
   ding: (a, o) => a.blip(o, 1568, 0.7, 'triangle', 0.05),
@@ -370,3 +441,13 @@ const STORE_EVENTS: Record<AmbEvent, (a: Audio, out: AudioNode) => void> = {
 };
 
 export const audio = new Audio();
+
+/** Identity up to −3 dBFS, then a tanh knee up to a −1 dBFS ceiling (inputs beyond +/-1 clamp to the ceiling). */
+function softClipCurve() {
+  const n = 4097, a = 0.7, ceil = 0.891, curve = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1, m = Math.abs(x);
+    curve[i] = Math.sign(x) * (m <= a ? m : a + (ceil - a) * Math.tanh((m - a) / (ceil - a)));
+  }
+  return curve;
+}

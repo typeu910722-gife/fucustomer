@@ -7,7 +7,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
-import type { ClientMsg, ServerMsg, Snapshot, LobbyState } from '../shared/protocol.ts';
+import type { ClientMsg, GameEvent, ServerMsg, Snapshot, LobbyState } from '../shared/protocol.ts';
 import { Bot, botMessages } from '../shared/bot.ts';
 
 const PORT = 18000 + Math.floor(Math.random() * 2000);
@@ -322,6 +322,107 @@ test('link via browser (app sign-in) HTTP API: start, pending poll, complete nee
   assert.equal((await api('POST', '/api/auth/link/poll', { pollToken: '0'.repeat(64) })).status, 404);
   assert.equal((await api('POST', '/api/auth/link/poll', { pollToken: s.data.code })).status, 404);
   assert.equal((await api('POST', '/api/auth/link/complete', { code: s.data.code })).status, 401);
+});
+
+// ---- round 25: co-op feel (reconnect state, emote wheel limit, kick / host transfer, lobby ping) ----
+const events = (c: Client) => c.msgs.flatMap(m => (m.type === 'events' ? m.list : []));
+
+test('reconnect mid-shift with an outfit: back as connected (was stuck "disconnected"), same spot, box still in hand', async () => {
+  const [a, b] = await room(2);
+  await start([a, b]);
+  for (let k = 0; k < 25; k++) { b.send({ type: 'input', x: 3.2, z: 2.2, yaw: 0, pitch: 0, seq: k }); await sleep(100); }
+  b.send({ type: 'act', rid: 'bx', kind: 'takeBox', target: { t: 'crate', product: 'snacks' } });
+  await b.until(() => b.me()?.held?.kind === 'box', 4000, 'box');
+  const pos = { x: b.me()!.x, z: b.me()!.z };
+  const token = b.token, id = b.playerId;
+  b.kill();
+  await a.until(() => a.snap!.players.find(p => p.id === id)?.connected === false, 15000, 'B marked disconnected');
+  const t0 = Date.now();
+  const b2 = new Client('b2'); await b2.connect();
+  b2.send({ type: 'join', code: a.code, name: 'P1', token, outfit: { hat: 'hat_cap' } });
+  await b2.until(() => !!b2.me(), 5000, 'resync');
+  const ms = Date.now() - t0;
+  assert.equal(b2.playerId, id);
+  assert.equal(b2.me()!.connected, true, 'the world player is connected again');
+  assert.equal(b2.me()!.held?.kind, 'box');
+  assert.ok(Math.hypot(b2.me()!.x - pos.x, b2.me()!.z - pos.z) < 0.6, 'same spot');
+  assert.equal(b2.me()!.outfit?.hat, 'hat_cap');
+  await a.until(() => a.snap!.players.find(p => p.id === id)?.connected === true, 3000, 'A sees B connected');
+  await a.until(() => events(a).some(e => e.e === 'toast' && /回到店裡/.test(e.text)), 3000, 'back-in-store toast');
+  console.log(`rejoin with token took ${ms} ms (same machine, localhost)`);
+  a.close(); b2.close();
+});
+
+test('emote wheel: presets only, bubble data (sender id + index), server rate limit with a hint', async () => {
+  const [a, b] = await room(2);
+  await start([a, b]);
+  a.send({ type: 'quick', msg: 99 }); a.send({ type: 'quick', msg: 1.5 }); a.send({ type: 'quick', msg: 'hi' } as unknown as ClientMsg);
+  a.send({ type: 'quick', msg: 5 });
+  await b.until(() => events(b).some(e => e.e === 'quick'), 3000, 'first emote');
+  const first = events(b).filter(e => e.e === 'quick');
+  assert.equal(first.length, 1, 'invalid indexes are dropped');
+  const q = first[0] as Extract<GameEvent, { e: 'quick' }>;
+  assert.equal(q.id, a.playerId); assert.equal(q.msg, 5); assert.equal(q.text, '讚！');
+  // spam: 10 more within ~2 s → at most 2 more (3 per 6 s window), and the sender gets a hint
+  for (let i = 0; i < 10; i++) { a.send({ type: 'quick', msg: i % 8 }); await sleep(200); }
+  await sleep(400);
+  const n = events(b).filter(e => e.e === 'quick').length;
+  assert.ok(n <= 3, `rate limited (${n} delivered)`);
+  assert.ok(n >= 2, `but not muted (${n})`);
+  assert.ok(events(a).some(e => e.e === 'hint' && /太快/.test(e.text)), 'sender told to slow down');
+  a.close(); b.close();
+});
+
+test('lobby: pings shown per player; host kick (people only) and host transfer', async () => {
+  const [h, j, k] = await room(3);
+  j.send({ type: 'hb', t: Date.now(), rtt: 42 });
+  await h.until(() => h.lobby?.players.find(p => p.id === j.playerId)?.ping === 42, 5000, 'ping in lobby');
+  // only the host can kick / transfer
+  j.send({ type: 'kick', id: k.playerId }); j.send({ type: 'host', id: j.playerId });
+  await sleep(300);
+  assert.equal(h.lobby!.players.length, 3); assert.equal(h.lobby!.hostId, h.playerId);
+  h.send({ type: 'kick', id: h.playerId }); // not yourself
+  await sleep(200);
+  assert.equal(h.lobby!.players.length, 3);
+  h.send({ type: 'kick', id: k.playerId });
+  await k.until(() => k.errors.some(e => e.code === 'kicked'), 3000, 'kicked notice');
+  await h.until(() => h.lobby!.players.length === 2, 3000, 'kicked player gone');
+  // transfer: j becomes host and can start; h can't any more
+  h.send({ type: 'host', id: j.playerId });
+  await j.until(() => j.lobby?.hostId === j.playerId, 3000, 'host transferred');
+  h.send({ type: 'ready', ready: true });
+  await j.until(() => !!j.lobby?.players.find(p => p.id === h.playerId)?.ready, 3000, 'old host readies');
+  h.send({ type: 'start' }); await sleep(300);
+  assert.equal(j.snap, null, 'old host cannot start');
+  j.send({ type: 'start' });
+  await j.until(() => !!j.me(), 4000, 'new host started');
+  h.close(); j.close(); k.close();
+});
+
+test('host drops mid-game: the next person takes over with a clear message; game keeps running', async () => {
+  const [a, b] = await room(2);
+  await start([a, b]);
+  a.kill();
+  await b.until(() => b.lobby?.hostId === b.playerId, 15000, 'host migrated');
+  await b.until(() => events(b).some(e => e.e === 'toast' && /接任房主/.test(e.text)), 3000, 'host message');
+  const t0 = b.snap!.t; await sleep(600); assert.ok(b.snap!.t > t0);
+  b.close();
+});
+
+test('fill-in bots split the work and answer a 「需要支援收銀」 callout', { timeout: 60_000 }, async () => {
+  const [h, j] = await room(2);
+  h.send({ type: 'lobbyCfg', bots: true } as ClientMsg);
+  await j.until(() => j.lobby?.players.filter(p => p.bot).length === 2, 5000, 'bots');
+  h.send({ type: 'kick', id: j.lobby!.players.find(p => p.bot)!.id }); // bots can't be kicked (the 補位 switch handles them)
+  await sleep(300);
+  assert.equal(h.lobby!.players.filter(p => p.bot).length, 2);
+  j.send({ type: 'ready', ready: true });
+  await h.until(() => !!h.lobby?.players.find(p => p.id === j.playerId)?.ready, 5000, 'ready');
+  h.send({ type: 'start' });
+  await h.until(() => !!h.me(), 5000, 'snap');
+  h.send({ type: 'quick', msg: 0 });
+  await h.until(() => events(h).some(e => e.e === 'quick' && e.msg === 5 && h.snap!.players.find(p => p.id === e.id)?.bot === true), 5000, 'a bot answers 👍');
+  h.close(); j.close();
 });
 
 test('server restart: room restored from checkpoint, player rejoins with token', { timeout: 40_000 }, async () => {
