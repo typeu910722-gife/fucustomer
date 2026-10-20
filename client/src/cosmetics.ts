@@ -7,6 +7,7 @@ import { COUNTER, DOOR_X1, STORE_D } from '../../shared/map.ts';
 import { getCosmetic, type Loadout, type Outfit } from '../../shared/shop.ts';
 import type { Quality } from './storage.ts';
 import { B, CAP, CONE, CYL, DOME, HEAD_R, HAIR, Human, RB, SKIN, SPH, TOR, basic, mat, put } from './models.ts';
+import { font, textTexture } from './labels.ts';
 
 const color = (id: string | undefined, fallback?: number) => getCosmetic(id)?.color ?? fallback;
 
@@ -129,8 +130,17 @@ export function buildShopDecor(scene: THREE.Object3D, q: Quality) {
       put(g, TOR(0.06, 0.015, 4, 10), neon, 0.08, -0.01, 0.06);
       for (const x of [-0.09, -0.01]) put(g, CAP(0.012, 0.06, 4), n2, x, 0.14, 0.06);
     } else {
-      // 「營業中」 as a little row of glowing letters: three blocks and a dot
-      for (const x of [-0.3, 0, 0.3]) { put(g, RB(0.2, 0.2, 0.02, 0.03), neon, x, 0, 0.04); put(g, B(0.12, 0.02, 0.012), n2, x, 0.03, 0.055); put(g, B(0.02, 0.12, 0.012), n2, x, -0.01, 0.055); }
+      // 「營業中」 in glowing neon letters (one small canvas texture)
+      const col = '#' + sign.color.toString(16).padStart(6, '0');
+      const tex = textTexture(() => {
+        const c = document.createElement('canvas'); c.width = 256; c.height = 96;
+        const x = c.getContext('2d')!;
+        x.font = font(64); x.textAlign = 'center'; x.textBaseline = 'middle';
+        x.shadowColor = col; x.shadowBlur = 16; x.fillStyle = col; x.fillText('營業中', 128, 50);
+        x.shadowBlur = 0; x.fillStyle = '#fff5f5'; x.fillText('營業中', 128, 50);
+        return c;
+      });
+      put(g, new THREE.PlaneGeometry(1.0, 0.375), new THREE.MeshBasicMaterial({ map: tex, transparent: true }), 0, 0, 0.04);
     }
   }
   const mascot = getCosmetic(l.mascot);

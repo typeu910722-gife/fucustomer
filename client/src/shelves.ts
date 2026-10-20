@@ -660,11 +660,11 @@ const roadGondola: Builder = k => {
 const wiperWall: Builder = k => {
   const { L, D, H, p } = k;
   const back = -D / 2;
-  p(B(L, H, 0.08), 0x495057, 0, H / 2, back + 0.04);
-  for (let y = 0.55; y < H - 0.2; y += 0.12) p(B(L - 0.1, 0.012, 0.01), 0x343a40, 0, y, back + 0.085);
+  p(B(L, H, 0.08), 0x6c757d, 0, H / 2, back + 0.04);
+  for (let y = 0.55; y < H - 0.3; y += 0.12) p(B(L - 0.1, 0.012, 0.01), 0x495057, 0, y, back + 0.085);
   p(B(L, 0.12, D), 0x212529, 0, 0.06, 0);
   for (const x of [-L / 2 + 0.03, L / 2 - 0.03]) p(B(0.06, H, D), 0x343a40, x, H / 2, 0);
-  p(B(L, 0.1, 0.12), k.ctx.theme.accent, 0, H - 0.05, back + 0.1);
+  p(B(L, 0.06, 0.1), k.ctx.theme.accent, 0, H - 0.03, back + 0.09);
   // tyre stacks at both ends (silver hubs)
   const tyreX = [-L / 2 + 0.6, L / 2 - 0.6];
   for (const x of tyreX) for (let i = 0; i < 3; i++) {
@@ -674,11 +674,11 @@ const wiperWall: Builder = k => {
   for (const x of tyreX) k.sign(0.62, 0.18, () => signCanvas('輪胎免費檢查', '#e03131', '#fff', 640, 160), x, 1.22, back + 0.09);
   // wiper blades hanging on pegs between the tyre stacks
   const span = L - 2.5;
-  for (const y of [0.92, 1.5]) for (const x of along(span, 0.22, 0.1)) {
+  for (const y of [0.85, 1.38]) for (const x of along(span, 0.22, 0.1)) {
     p(CYL(0.007, 0.007, 0.16, 4), 0xced4da, x, y + 0.26, back + 0.16, Math.PI / 2);
     k.slot(x, y, back + 0.17);
   }
-  k.sign(1.5, 0.24, () => signCanvas('雨刷・汽車百貨', '#2b8a3e', '#ffe066', 768, 128), 0, H - 0.22, back + 0.09);
+  k.sign(1.5, 0.22, () => signCanvas('雨刷・汽車百貨', '#2b8a3e', '#ffe066', 768, 128), 0, H - 0.19, back + 0.09);
   return { geometry: wiper() };
 };
 
@@ -704,6 +704,7 @@ const stationeryWall: Builder = k => {
   // on top: pen cups, washi tape rolls and a sign
   const top = rows[rows.length - 1];
   along(L, 0.9, 0.5).forEach((x, i) => {
+    if (Math.abs(x) < 0.8) return; // keep the sign clear
     p(CYL(0.06, 0.055, 0.14, 8), [0xffffff, 0xffe066, 0x74c0fc][i % 3], x, top + 0.085, cz + 0.08);
     for (let j = 0; j < 4; j++) p(CYL(0.008, 0.008, 0.2, 4), [0xe03131, 0x1c7ed6, 0x2f9e44, 0x212529][j], x - 0.03 + j * 0.02, top + 0.2, cz + 0.08 + (j % 2) * 0.02 - 0.01, 0.15 * (j - 1.5), 0, 0.1 * (j - 1.5));
     p(TOR(0.045, 0.02, 4, 8), [0xffa8a8, 0x8ce99a, 0xffd43b, 0xb197fc][i % 4], x + 0.3, top + 0.065, cz + 0.05, -0.1);
@@ -712,7 +713,7 @@ const stationeryWall: Builder = k => {
   along(L, 1.5, 0.6).forEach((x, i) => {
     for (let j = 0; j < 3; j++) p(CYL(0.04, 0.04, 0.7, 8), [0xff8787, 0x74c0fc, 0xffe066, 0x8ce99a][(i + j) % 4], x, 0.57 + (j === 2 ? 0.065 : 0), D / 2 - 0.25 + (j === 2 ? -0.04 : j * 0.085 - 0.04), 0, 0, Math.PI / 2);
   });
-  k.sign(1.2, 0.22, () => signCanvas('✏️ 文具・禮品', '#5c940d'), 0, H - 0.11, back + 0.065);
+  k.sign(1.2, 0.24, () => signCanvas('✏️ 文具・禮品', '#5c940d'), 0, H + 0.02, back + 0.065);
   return { labelY: H + 0.25 };
 };
 
@@ -730,21 +731,23 @@ const maskWall: Builder = k => {
     p(B(L - 0.06, 0.025, sd), 0xffffff, 0, t, sz);
     p(B(L - 0.06, 0.05, 0.015), teal, 0, t + 0.01, front);
     for (const x of along(L, 0.6, 0.35)) {
-      p(B(0.5, 0.13, 0.012), wire, x, t + 0.08, front - 0.03);
-      for (const sx of [-1, 1]) p(B(0.012, 0.13, sd - 0.1), wire, x + sx * 0.25, t + 0.08, sz);
-      for (const dx of [-0.1, 0.1]) k.slot(x + dx, t + 0.025 + 0.045, front - 0.28, [0.6, 0.75, 0.75], 0, (x * 5) % 0.2);
+      p(B(0.5, 0.08, 0.012), wire, x, t + 0.055, front - 0.03);
+      for (const sx of [-1, 1]) p(B(0.012, 0.08, sd - 0.1), wire, x + sx * 0.25, t + 0.055, sz);
+      // mask boxes stand leaning back in the basket, face out
+      for (const dx of [-0.11, 0.11]) k.slot(x + dx, t + 0.15, front - 0.16, [0.62, 0.55, 0.62], -Math.PI / 2 + 0.3, (x * 5) % 0.15);
     }
   }
   // lit header box
   p(RB(L * 0.6, 0.3, 0.12, 0.03), teal, 0, H - 0.2, back + 0.14);
   k.sign(L * 0.56, 0.22, () => signCanvas('😷 口罩・防疫專區', '#0c8599', '#fff', 1024, 160), 0, H - 0.2, back + 0.205);
   k.glow(B(L * 0.58, 0.02, 0.02), 0xe3fafc, 0, H - 0.36, back + 0.2);
-  // hand sanitizer pumps on the cabinet top
-  for (const x of along(L, 1.6, 0.5)) {
-    p(CYL(0.045, 0.045, 0.16, 8), 0xe7f5ff, x, 0.5, D / 2 - 0.25);
-    p(CYL(0.012, 0.012, 0.05, 5), 0xffffff, x, 0.6, D / 2 - 0.25);
-    p(B(0.06, 0.015, 0.02), 0xffffff, x + 0.02, 0.625, D / 2 - 0.25);
-    p(B(0.06, 0.06, 0.004), teal, x, 0.5, D / 2 - 0.2);
+  p(B(L - 0.06, 0.025, sd), 0xffffff, 0, 1.63, sz);
+  // hand sanitizer pumps on the top board, either side of the header
+  for (const x of [-L / 2 + 0.45, L / 2 - 0.45]) {
+    p(CYL(0.05, 0.05, 0.18, 8), 0xe7f5ff, x, 1.72, back + 0.3);
+    p(CYL(0.012, 0.012, 0.05, 5), 0xffffff, x, 1.835, back + 0.3);
+    p(B(0.07, 0.015, 0.02), 0xffffff, x + 0.025, 1.86, back + 0.3);
+    p(B(0.07, 0.07, 0.004), teal, x, 1.72, back + 0.352);
   }
   return { labelY: H + 0.25 };
 };
@@ -830,7 +833,10 @@ function fridgeDress(k: Kit, map: { icon: string; sign: { bg: string } }, name: 
   const col = hex(map.sign.bg), steel = mat(0xced4da, k.q, { metal: 0.6, rough: 0.3 });
   // lit header box on top, in the store's sign colour
   p(RB(L - 0.1, 0.3, 0.16, 0.03), col, 0, H + 0.15, D / 2 - 0.09);
-  k.sign(Math.min(L * 0.6, 2.4), 0.22, () => signCanvas(`❄ 冰涼${name}`, map.sign.bg, '#fff', 768, 160), 0, H + 0.15, D / 2 - 0.008);
+  // two header panels, leaving the middle free for the floating product-name label
+  const hw = Math.min(L * 0.3, 1.5);
+  k.sign(hw, 0.22, () => signCanvas(`❄ 冰涼${name}`, map.sign.bg, '#fff', 640, 160), -L / 2 + 0.15 + hw / 2, H + 0.15, D / 2 - 0.008);
+  k.sign(hw, 0.22, () => signCanvas(`${map.icon} 現冰現賣`, map.sign.bg, '#fff', 640, 160), L / 2 - 0.15 - hw / 2, H + 0.15, D / 2 - 0.008);
   // coloured top rail and kick plate on the door frame
   p(B(L, 0.07, 0.02), col, 0, H - 0.05, D / 2 + 0.002);
   p(B(L, 0.1, 0.02), k.ctx.theme.accent, 0, 0.05, D / 2 + 0.002);
@@ -838,7 +844,7 @@ function fridgeDress(k: Kit, map: { icon: string; sign: { bg: string } }, name: 
   for (let i = 0; i < 4; i++) {
     const cx = -L / 2 + (i + 0.5) * L / 4, hx = cx + (i % 2 ? -1 : 1) * (L / 8 - 0.12);
     p(B(0.03, 0.55, 0.025), steel, hx, 1.05, D / 2 + 0.014);
-    if (i === 0 || i === 2) k.sign(0.34, 0.17, () => signCanvas(i === 0 ? `${map.icon} 冰` : '第二件6折', i === 0 ? '#ffffff' : '#ffe066', i === 0 ? map.sign.bg : '#e03131', 384, 192), cx, 1.55, D / 2 + 0.006);
+    if (i === 0 || i === 2) k.sign(0.44, 0.22, () => signCanvas(i === 0 ? `${map.icon} 冰涼` : '第二件6折', i === 0 ? '#ffffff' : '#ffe066', i === 0 ? map.sign.bg : '#e03131', 384, 192), cx, 1.38, D / 2 + 0.006);
   }
   return {};
 }
