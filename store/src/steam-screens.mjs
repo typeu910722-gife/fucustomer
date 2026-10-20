@@ -22,7 +22,7 @@ const want = name => !ONLY || ONLY.some(o => name.startsWith(o));
 const HIDE_CSS = '#helpkeys, .ts-foot .muted { display: none !important; }'; // key-help line; server address on the title screen
 
 /** A fresh browser profile: career level, stars and seen-karens set so no tutorial or intro cards get in the way. */
-async function open(level, cleared, { extra = [], name = '阿明', fov = 80, viewport = { width: 1280, height: 720 }, scale = 1.5, profile = {}, seed = 7 } = {}) {
+async function open(level, cleared, { extra = [], name = '阿明', fov = 80, viewport = { width: 1280, height: 720 }, scale = 1.5, profile = {}, seed = 7, quality = 'high' } = {}) {
   const ctx = await browser.newContext({ viewport, deviceScaleFactor: scale }); // 1280×720 × 1.5 = 1920×1080, UI at a readable size
   // seeded Math.random: the same customers/karens every run (the sim's world seed comes from it too)
   await ctx.addInitScript(seed => { let a = seed >>> 0; Math.random = () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }, seed);
@@ -32,12 +32,12 @@ async function open(level, cleared, { extra = [], name = '阿明', fov = 80, vie
   const stars = {}, clears = {};
   for (let c = 1; c <= cleared; c++) for (let i = 1; i <= 5; i++) { stars[`${c}-${i}`] = 2 + ((c + i) % 2); clears[`${c}-${i}`] = 1; }
   for (const id of extra) { stars[id] = 2; clears[id] = 1; }
-  await page.evaluate(([level, stars, clears, karens, maps, name, fov, profile]) => {
+  await page.evaluate(([level, stars, clears, karens, maps, name, fov, profile, quality]) => {
     localStorage.clear();
-    localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'high', name, fov, fpsCap: 0, adaptive: false, volume: 0, music: 0 }));
+    localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality, name, fov, fpsCap: 0, adaptive: false, volume: 0, music: 0 }));
     localStorage.setItem('fucustomer.flags.v1', JSON.stringify({ tutorialDone: true, seenKarens: karens, seenMaps: maps }));
     localStorage.setItem('fucustomer.career.v1', JSON.stringify({ version: 1, level, exp: 40, wallet: 1860, skillPoints: 2, skills: { service: 6, body: 7, crisis: 5 }, gear: { shoes: 2, mop: 2, machine: 1, cleaner: 1, guard: 1 }, stars, clears, stats: { shifts: 60, wins: 52, served: 1400, ejected: 120, karens: 180, revenue: 18000 }, endlessBest: 1240, title: '', achievements: ['FIRST_SHIFT', 'FIRST_THROW', 'CH1', 'CH2', 'CH3', 'LV10', 'LV20', 'KARENS_100', 'SERVED_1000', 'STARS_60', 'COMBO_5', 'DAILY_FIRST'], story: ['ch1-intro', 'ch2-intro', 'ch3-intro', 'ch4-intro', 'ch5-intro', 'ch6-intro', 'ch7-intro', 'ch8-intro', 'first-court'], ...profile }));
-  }, [level, stars, clears, ALL_KARENS, MAPS, name, fov, profile]);
+  }, [level, stars, clears, ALL_KARENS, MAPS, name, fov, profile, quality]);
   await page.reload();
   await page.addStyleTag({ content: HIDE_CSS });
   return { ctx, page };
@@ -208,7 +208,8 @@ if (want('03')) {
 if (want('04')) {
   const names = ['阿明', '小美', '阿傑', '佳佳'];
   const pages = [];
-  for (const n of names) pages.push((await open(18, 3, { name: n, seed: 11 + pages.length })));
+  // only the host's view is photographed: the others run small and on low quality to keep software rendering fast
+  for (const n of names) pages.push(await open(18, 3, pages.length ? { name: n, seed: 11 + pages.length, quality: 'low', viewport: { width: 640, height: 360 }, scale: 1 } : { name: n }));
   const [host, ...guests] = pages.map(p => p.page);
   await host.click('#m-mp'); await host.click('#m-create');
   await host.waitForSelector('#l-code');
@@ -220,9 +221,11 @@ if (want('04')) {
   }
   await host.waitForSelector('#l-start:not([disabled])', { timeout: 20000 }).catch(async () => { console.log(await host.evaluate(() => document.getElementById('ui').innerText)); for (const g of guests) console.log('G', await g.evaluate(() => document.getElementById('ui').innerText.slice(0, 300))); });
   await host.click('#l-start');
-  for (const p of [host, ...guests]) await p.waitForFunction(() => window.__game?.started && window.__game.snap?.players.length === 4, null, { timeout: 60000 });
+  for (const p of [host, ...guests]) await p.waitForFunction(() => window.__game?.started && window.__game.snap?.players.length === 4, null, { timeout: 120000, polling: 500 });
+  // software rendering is slow: draw at a fraction of the resolution until the photo, so no client misses its pings
+  for (const p of [host, ...guests]) await p.evaluate(() => window.__game.view.setResolutionScale(0.25));
   for (const p of [host, ...guests]) await p.keyboard.press('Enter'); // everyone ready: the store opens
-  await host.waitForFunction(() => window.__game.snap.phase === 'open', null, { timeout: 60000 });
+  await host.waitForFunction(() => window.__game.snap.phase === 'open', null, { timeout: 120000, polling: 500 });
   /** Walks the player through waypoints at running pace (the server clamps speed, so no teleporting). */
   const walk = (page, pts) => page.evaluate(pts => new Promise(done => {
     const g = window.__game; let i = 0;
@@ -232,14 +235,18 @@ if (want('04')) {
       const s = Math.min(d, 0.22); g.pos = { x: g.pos.x + dx / d * s, z: g.pos.z + dz / d * s }; g.yaw = Math.atan2(dx, dz);
     }, 80);
   }), pts);
+  const t0 = Date.now();
   const spots = [[[14.2, 10.2], [12.4, 13.9]], [[10.9, 10.4]], [[8, 9.5], [12.3, 9.6]], [[14.2, 9.2], [13.7, 10.5]]];
   await Promise.all([host, ...guests].map((p, i) => walk(p, spots[i])));
+  console.log('walked in', Date.now() - t0, 'ms');
   // the three co-workers turn to the camera; the host looks at them
   const cam = spots[0][spots[0].length - 1];
   await Promise.all(guests.map(p => p.evaluate(([cx, cz]) => { const g = window.__game; g.yaw = Math.atan2(cx - g.pos.x, cz - g.pos.z); g.pitch = 0; }, cam)));
   await host.evaluate(() => { const g = window.__game; g.yaw = Math.atan2(12.2 - g.pos.x, 10.0 - g.pos.z); g.pitch = -0.08; });
-  await host.waitForTimeout(Number(process.env.WAIT4 ?? 15000)); // customers come in
-  await shot(host, '04-coop.png', 500);
+  await host.waitForTimeout(Number(process.env.WAIT4 ?? 3000)); // customers come in
+  console.log('coop', await host.evaluate(() => JSON.stringify({ clock: window.__game.snap.clock, status: document.body.innerText.includes('連線中斷'), players: window.__game.snap.players.map(p => [p.name, +p.x.toFixed(1), +p.z.toFixed(1)]) })));
+  await host.evaluate(() => window.__game.view.setResolutionScale(1));
+  await shot(host, '04-coop.png', 2500);
   for (const p of pages) await p.ctx.close();
 }
 // 05 — the boss fight: 奧客之王 (chapter 6-3)
