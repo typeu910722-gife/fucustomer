@@ -419,7 +419,7 @@ export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map
         <div class="row"><button class="btn purple" data-map-pack="${k.id}">🛍 看擴充包</button></div></div>`;
       return `<div class="shopitem mapcard" style="--mc:${hex(m.theme.accent)}"><b class="mapname"><span class="mapicon">${m.icon}</span>${esc(m.name)}</b>
         <span class="muted">${esc(m.desc)}</span>
-        <span class="muted">商品：${(['drinks', 'snacks', 'bento'] as const).map(p => esc(m.products[p].name)).join('、')}・現做：${esc(foods)}</span>
+        <span class="muted">商品：${[m.products.drinks, m.products.snacks, m.products.bento, m.products.extra].filter(Boolean).map(p => esc(p!.name)).join('、')}・現做：${esc(foods)}</span>
         <div class="row">${sv ? `<button class="btn primary" data-map-cont="${m.id}">繼續（第 ${sv.day} 天）</button>` : ''}
         <button class="btn ${sv ? '' : 'primary'}" data-map="${m.id}">${sv ? '重新開店' : '開店營業'}</button></div></div>`;
     }).join('')}</div></div>`);
