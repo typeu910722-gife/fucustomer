@@ -7,7 +7,7 @@ import { mkdirSync } from 'node:fs';
 const require = createRequire(import.meta.url);
 let pw; try { pw = require('playwright'); } catch { pw = require('/opt/node-tools/node_modules/playwright'); }
 const GAME = process.env.GAME_URL ?? 'http://127.0.0.1:8899/';
-const OUT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../steam/screenshots');
+const OUT = process.env.OUT ?? path.resolve(path.dirname(new URL(import.meta.url).pathname), '../steam/screenshots');
 const ONLY = process.env.ONLY ? process.env.ONLY.split(',') : null;
 mkdirSync(OUT, { recursive: true });
 const browser = await pw.chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
@@ -15,7 +15,7 @@ const ALL_KARENS = ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger',
 const MAPS = ['convenience', 'bakery', 'boba', 'bookstore', 'breakfast', 'cafe', 'chicken', 'cinema', 'clothing', 'drugstore', 'electronics', 'gas', 'gym', 'hotel', 'hotpot', 'petshop', 'pharmacy', 'post', 'salon', 'steak', 'supermarket'];
 
 async function open(level, cleared, extra = []) {
-  const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1.5 }) // 1920×1080 output, UI at a readable size;
   const page = await ctx.newPage();
   page.on('pageerror', e => console.error('page error', String(e)));
   await page.goto(GAME);
@@ -31,7 +31,7 @@ async function open(level, cleared, extra = []) {
   return { ctx, page };
 }
 const want = name => !ONLY || ONLY.some(o => name.startsWith(o));
-const shot = async (page, name) => { await page.waitForTimeout(1800); await page.screenshot({ path: path.join(OUT, name) }); console.log('wrote', name); };
+const shot = async (page, name) => { await page.waitForTimeout(1800); await page.screenshot({ path: path.join(OUT, name), timeout: 120000 }); console.log('wrote', name); };
 const look = (page, x, z, yaw, pitch) => page.evaluate(([x, z, yaw, pitch]) => {
   const g = window.__game, me = [...g.conn.room.world.players.values()][0];
   g.pos = { x, z }; g.yaw = yaw; g.pitch = pitch; me.x = x; me.z = z;
@@ -56,22 +56,31 @@ async function startShift(page, id, warm) {
 }
 
 // Free play in several store types (only free stores: paid map packs are not on sale yet)
-for (const [file, id, secs, views] of [
-  ['01-convenience.png', 'convenience', 70, [[12, 15.2, Math.PI, -0.2]]],
-  ['02-chicken.png', 'chicken', 60, [[22.6, 14.6, -2.35, -0.2]]],
-  ['03-supermarket.png', 'supermarket', 60, [[12, 15.2, Math.PI, -0.22]]],
-  ['04-boba.png', 'boba', 60, [[22.6, 14.6, -2.35, -0.2]]],
-  ['05-petshop.png', 'petshop', 60, [[12, 15.2, Math.PI, -0.22]]],
+const STORES = process.env.STORES ? process.env.STORES.split(',').map(id => [`cand-${id}.png`, id, 60, [[12, 15.2, Math.PI, -0.2]]]) : null;
+for (const [file, id, secs, views, dist] of STORES ?? [
+  ['01-chicken.png', 'chicken', 60, [[22.6, 14.6, -2.35, -0.2]], 7],
+  ['02-supermarket.png', 'supermarket', 60, [[12, 15.2, Math.PI, -0.22]], 7],
+  ['03-breakfast.png', 'breakfast', 60, [[12, 15.2, Math.PI, -0.2]], 8],
+  ['04-cafe.png', 'cafe', 60, [[12, 15.2, Math.PI, -0.2]], 8],
 ]) {
   if (!want(file)) continue;
   const { ctx, page } = await open(18, 3);
   await freePlay(page, id, secs);
-  await look(page, ...views[0]);
+  // stand back from where the customers are and face them
+  const cam = await page.evaluate(([dist, fallback]) => {
+    const w = window.__game.conn.room.world, cs = w.customers.filter(c => !c.gone);
+    if (cs.length < 2) return fallback;
+    const tx = cs.reduce((a, c) => a + c.x, 0) / cs.length, tz = cs.reduce((a, c) => a + c.z, 0) / cs.length;
+    let dx = 12 - tx, dz = 8 - tz; const d = Math.hypot(dx, dz) || 1; dx /= d; dz /= d;
+    const cx = Math.min(22.5, Math.max(1.5, tx + dx * dist)), cz = Math.min(14.8, Math.max(1.5, tz + dz * dist));
+    return [cx, cz, Math.atan2(tx - cx, tz - cz), -0.2];
+  }, [dist ?? 8, views[0]]);
+  await look(page, ...cam);
   await shot(page, file);
   await ctx.close();
 }
 // Grabbing a karen and carrying him to the door (chapter 4-1)
-if (want('06-grab.png')) {
+if (want('05-grab.png')) {
   const { ctx, page } = await open(16, 3);
   await startShift(page, '4-1', 700);
   await page.evaluate(() => {
@@ -83,11 +92,11 @@ if (want('06-grab.png')) {
   await page.keyboard.press('Space');
   await page.waitForFunction(() => window.__game.snap.players[0].grabbing === 9999, null, { timeout: 20000 }).catch(() => console.log('grab not confirmed'));
   await look(page, 12, 9, 0, -0.05);
-  await shot(page, '06-grab.png');
+  await shot(page, '05-grab.png');
   await ctx.close();
 }
 // Boss fight (chapter 6-3)
-if (want('07-boss.png')) {
+if (want('06-boss.png')) {
   const { ctx, page } = await open(29, 5, ['6-1', '6-2']);
   await startShift(page, '6-3', 900);
   const boss = await page.evaluate(() => { const b = window.__game.conn.room.world.customers.find(c => c.kind === 'boss'); return b ? { x: b.x, z: b.z } : null; });
@@ -96,24 +105,24 @@ if (want('07-boss.png')) {
     const cx = Math.min(22.5, Math.max(1.5, boss.x + dx / d * 4.5)), cz = Math.min(14.5, Math.max(1.5, boss.z + dz / d * 4.5));
     await look(page, cx, cz, Math.atan2(boss.x - cx, boss.z - cz), -0.05);
   }
-  await shot(page, '07-boss.png');
+  await shot(page, '06-boss.png');
   await ctx.close();
 }
 // Career screen + store picker
-if (want('08-career.png') || want('09-maps.png')) {
+if (want('07-career.png') || want('08-maps.png')) {
   const { ctx, page } = await open(22, 4);
   await page.click('#m-career');
   await page.waitForTimeout(800);
-  await shot(page, '08-career.png');
+  await shot(page, '07-career.png');
   await page.click('[data-tab="free"]');
   await page.waitForSelector('.mapcard');
-  await shot(page, '09-maps.png');
+  await shot(page, '08-maps.png');
   await ctx.close();
 }
 // Title screen
-if (want('10-title.png')) {
+if (want('09-title.png')) {
   const { ctx, page } = await open(22, 4);
-  await shot(page, '10-title.png');
+  await shot(page, '09-title.png');
   await ctx.close();
 }
 await browser.close();
