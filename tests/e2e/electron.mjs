@@ -12,15 +12,14 @@ const app = await pw._electron.launch({
 const page = await app.firstWindow();
 const errors = [];
 page.on('pageerror', e => errors.push(String(e)));
+// +join ABCDE on the command line → tries to join that room (no server here, so it ends with an error message, not a crash)
+await page.waitForFunction(() => /連線|伺服器|房間/.test(document.body.innerText), null, { timeout: 20000 });
+await page.evaluate(() => localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'low' })));
+await page.reload();
 await page.waitForSelector('#m-career', { timeout: 20000 });
 const info = await page.evaluate(() => ({ bridge: typeof window.fuDesktop?.achieve, quit: !!document.getElementById('m-quit'), url: location.protocol }));
 console.log('bridge', info);
 if (info.bridge !== 'function' || !info.quit || info.url !== 'file:') throw new Error('desktop bridge missing');
-// +join ABCDE on the command line → tries to join that room (no server here, so it ends with an error message, not a crash)
-await page.waitForFunction(() => /連線|伺服器|房間/.test(document.body.innerText), null, { timeout: 15000 });
-await page.evaluate(() => localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'low' })));
-await page.reload();
-await page.waitForSelector('#m-career');
 await page.click('#m-career');
 await page.waitForSelector('.rankcard');
 await page.click('[data-tab="chapters"]');

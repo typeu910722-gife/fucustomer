@@ -8,6 +8,8 @@ import { CURRENT_MAP } from '../../shared/map.ts';
 import type { CustomerSnap, Held } from '../../shared/protocol.ts';
 import type { Quality } from './storage.ts';
 import { INK, Label, UI_FONT, roundRect } from './labels.ts';
+import { buildKarenProp } from './karen-props.ts';
+import { isSig } from '../../shared/sigkarens.ts';
 
 // ---------- canvas text ----------
 export { Label, roundRect };
@@ -484,8 +486,20 @@ function baseLook(c: CustomerSnap) {
   if (c.kind === 'custom') return { ...base, shirt: 0xf59f00, hairStyle: 4, accessory: 1 };
   if (c.kind === 'fickle') return { ...base, shirt: 0xf783ac, hair: 0x343a40, hairStyle: 5, accessory: 2 };
   if (c.kind === 'tryhard') return { ...base, shirt: 0x9775fa, pants: 0xe64980, hairStyle: 1, accessory: 0 };
+  const sig = SIG_LOOK[c.kind];
+  if (sig) return { ...base, shirt: sig[0], pants: sig[1], hairStyle: sig[2], accessory: sig[3], ...(sig[4] ? { build: sig[4] } : {}) };
   return base;
 }
+
+/** Store-signature karens: [shirt, pants, hair style, accessory (1 glasses 2 cap 3 beanie 4 backpack 5 headphones), build]. */
+const SIG_LOOK: Record<string, [number, number, number, number, number?]> = {
+  sampler: [0xf783ac, 0x343a40, 1, 1], reader: [0x2b8a3e, 0x5c4033, 3, 1], toucher: [0xffa94d, 0x1c3f6e, 0, 3],
+  taster: [0xfab005, 0x495057, 4, 2], dogfeed: [0x74c0fc, 0x5c4033, 1, 0], squatter: [0x845ef7, 0x343a40, 5, 5],
+  kicker: [0x343a40, 0x1c3f6e, 0, 5], packer: [0x5c940d, 0x343a40, 2, 4], wiper: [0x1c7ed6, 0x212529, 0, 2],
+  benchhog: [0xe03131, 0x212529, 5, 0, 1.3], doneness: [0x862e9c, 0x212529, 1, 1], refry: [0xf08c00, 0x495057, 3, 2],
+  unboxer: [0x15aabf, 0x343a40, 0, 4], photo: [0xe64980, 0x212529, 1, 0], coins: [0x868e96, 0x5c4033, 2, 3],
+  rx: [0x99e9f2, 0x1c3f6e, 0, 1], upgrader: [0x1b1f3b, 0x1b1f3b, 1, 1],
+};
 
 /** Props that make each karen kind recognisable at a glance (head-anchor coords: head centre, radius HEAD_R). */
 export function karenAccessory(q: Quality, h: Human, kind: string) {
@@ -544,6 +558,11 @@ export function karenAccessory(q: Quality, h: Human, kind: string) {
   if (kind === 'tryhard') { // armful of clothes on a hanger
     put(h.armL, RB(0.24, 0.3, 0.04, 0.015), mat(0x63e6be, q), 0, -0.48, 0.12);
     put(h.armL, TOR(0.12, 0.01, 3, 10, Math.PI), basic(0xadb5bd), 0, -0.33, 0.12);
+  }
+  if (isSig(kind)) { // store-signature karens: their prop in the right hand (origin = grip)
+    const prop = buildKarenProp(kind);
+    if (prop) { prop.position.set(0, -0.33, 0.03); h.armR.add(prop); }
+    put(extra, SPH(0.035, 6, 4), basic(0xff3b30), 0.2, 0.22, onHead(0.2, 0.22)); // little red "trouble" dot like the other karens' marks
   }
   if (extra.children.length) { h.head.add(extra); mergeInto(extra, new Set(), false); }
   // props held in the hands: fold them into the arm meshes (one draw call per arm)

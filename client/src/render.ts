@@ -13,6 +13,7 @@ import {
 } from '../../shared/map.ts';
 import type { CustomerSnap, Held, PlayerSnap, Snapshot } from '../../shared/protocol.ts';
 import type { Quality } from './storage.ts';
+import { sigDef } from '../../shared/sigkarens.ts';
 import { INK, PillOpts, UI_FONT, isFontReady, labelTexture, pillCanvas, popCanvas, textTexture, whenFontReady } from './labels.ts';
 
 // ---------- helpers ----------
@@ -236,6 +237,7 @@ const KAREN_BG: Record<string, string> = {
   cutter: '#ff9f1c', rager: '#ff5d5d', streamer: '#8f6bff', hog: '#868e96', litterer: '#4fb35a', charger: '#48a6ff',
   custom: '#ffc23d', fickle: '#ff7eb6', tryhard: '#9775fa', boss: '#5f3dc4',
 };
+const SIG_BG: Record<string, string> = { haggle: '#ff5d5d', camp: '#ff9f1c', roam: '#8f6bff', till: '#48a6ff', redo: '#ff7eb6', sneak: '#868e96', refund: '#4fb35a' };
 const q20 = (v: number) => Math.round(Math.max(0, Math.min(1, v)) * 20) / 20;
 function customerTag(c: CustomerSnap): Tag | null {
   const loose = !c.held && !c.flying;
@@ -253,7 +255,12 @@ function customerTag(c: CustomerSnap): Tag | null {
     const extras = `${c.vip ? '💼 好像有背景' : ''}${c.vip && c.heavy ? '・' : ''}${c.heavy ? '🏋 抓不動' : ''}`;
     const badge = (c.vip ? '💼' : '') + (c.heavy ? '🏋' : '');
     let name = '', bar: PillOpts['bar'];
-    switch (c.kind) {
+    const sd = sigDef(c.kind);
+    if (sd) { // store-signature karen: its own tag; heat bar while haggling, otherwise how long until he wins
+      name = sd.tag.replace('N', String(c.phase + 1));
+      if (sd.tpl === 'haggle') bar = { v: q20(c.anger / 100), color: c.anger > 70 ? '#ff3b3b' : '#ffa94d' };
+      else if (['charge', 'camp', 'wander', 'flee', 'complain', 'atRegister'].includes(c.state)) bar = { v: q20(c.patience), color: '#3bc9db' };
+    } else switch (c.kind) {
       case 'rager': name = c.violent ? '🤬 失控！可正當防衛' : '😡 退貨大鬧'; bar = { v: q20(c.anger / 100), color: c.anger > 70 ? '#ff3b3b' : '#ffa94d' }; break;
       case 'cutter': name = '⚠ 插隊！'; break;
       case 'streamer': name = '📱 直播亂拍'; break;
@@ -265,7 +272,7 @@ function customerTag(c: CustomerSnap): Tag | null {
       case 'tryhard': name = '👕 試穿中…'; break;
       default: return null;
     }
-    const bg = c.violent ? '#d6336c' : KAREN_BG[c.kind] ?? '#ff5d5d', fg = bg === WARN ? INK : undefined;
+    const bg = c.violent ? '#d6336c' : KAREN_BG[c.kind] ?? SIG_BG[sd?.tpl ?? ''] ?? '#ff5d5d', fg = bg === WARN ? INK : undefined;
     const icon = name.split(' ')[0] + (c.violent && c.kind !== 'rager' ? '🤬' : '') + badge;
     return {
       key: `k${c.kind}|${name}|${extras}|${c.violent ? 1 : 0}|${bar?.v ?? ''}`,
