@@ -22,12 +22,13 @@ const want = name => !ONLY || ONLY.some(o => name.startsWith(o));
 const HIDE_CSS = '#helpkeys, .ts-foot .muted { display: none !important; }'; // key-help line; server address on the title screen
 
 /** A fresh browser profile: career level, stars and seen-karens set so no tutorial or intro cards get in the way. */
-async function open(level, cleared, { extra = [], name = '阿明', fov = 80, viewport = { width: 1280, height: 720 }, scale = 1.5, profile = {}, seed = 7, quality = 'high' } = {}) {
+async function open(level, cleared, { extra = [], name = '阿明', fov = 80, viewport = { width: 1280, height: 720 }, scale = 1.5, profile = {}, seed = 7, quality = 'high', clock = false } = {}) {
   const ctx = await browser.newContext({ viewport, deviceScaleFactor: scale }); // 1280×720 × 1.5 = 1920×1080, UI at a readable size
   // seeded Math.random: the same customers/karens every run (the sim's world seed comes from it too)
   await ctx.addInitScript(seed => { let a = seed >>> 0; Math.random = () => { a = (a + 0x6D2B79F5) >>> 0; let t = a; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }, seed);
   const page = await ctx.newPage();
   page.on('pageerror', e => console.error('page error', String(e)));
+  if (clock) await page.clock.install(); // time flows normally until a shot pauses it (frame-exact animation)
   await page.goto(GAME);
   const stars = {}, clears = {};
   for (let c = 1; c <= cleared; c++) for (let i = 1; i <= 5; i++) { stars[`${c}-${i}`] = 2 + ((c + i) % 2); clears[`${c}-${i}`] = 1; }
@@ -95,7 +96,7 @@ async function startShift(page, id, warm) {
 
 // 01 — a karen thrown out the front door, mid-air (grab and throw with the real Space key)
 if (want('01')) {
-  const { ctx, page } = await open(18, 3);
+  const { ctx, page } = await open(18, 3, { clock: true });
   await freePlay(page, 'convenience', 40);
   await freeze(page);
   await clearArea(page, 3, 4, 21, 16.5);
@@ -110,13 +111,14 @@ if (want('01')) {
   await page.waitForTimeout(800);
   await page.keyboard.press('Space');
   await page.waitForFunction(() => window.__game.conn.room.world.customers.find(c => c.id === 9001)?.fly, null, { timeout: 30000 });
-  // the last ticks one by one with a short pause, so the renderer draws the dust trail behind him
-  for (let i = 0; i < Number(process.env.FLY ?? 5); i++) { await step(page, 1); await page.waitForTimeout(150); }
   // the thrower stays where he was; the camera steps aside to watch him
   await coworker(page, 'pX', '阿傑', 0x48a6ff, 12, 9.0, 0);
   await lookAt(page, Number(process.env.CX ?? 14.2), Number(process.env.CZ ?? 14.8), Number(process.env.TX ?? 11.6), Number(process.env.TZ ?? 11.6), 1.4);
-  await step(page, 0);
-  await shot(page, '01-throw.png');
+  await page.waitForTimeout(1500);
+  // from here the page clock runs only as far as the flight: every tick is 50 ms of game time and of animation
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 100);
+  for (let i = 0; i < Number(process.env.FLY ?? 4); i++) { await step(page, 1); await page.clock.runFor(50); }
+  await shot(page, '01-throw.png', 0);
   await ctx.close();
 }
 
