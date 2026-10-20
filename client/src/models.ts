@@ -165,6 +165,9 @@ export const HEAD_R = 0.31, HEAD_Y = 1.3, HIP_Y = 0.42, SHOULDER_Y = 0.93;
 export const SIT_Y = -0.3;
 /** Overhead name label / status icon heights (group space). */
 export const LABEL_Y = 1.98, ICON_Y = 2.28;
+/** Hair cap radius (× HEAD_R) under a staff hat, its centre z, and the radius (× HEAD_R, from that centre) every hat
+ * part that overlaps the hair keeps clear of (a little more than the hair dome / fringe reach). */
+const HAIR_HATTED = 1.035, HAIR_Z = 0, HAT_CLEAR = 1.05;
 /** z of the head surface at (x, y) in head space (front side). */
 const onHead = (x: number, y: number, r = HEAD_R) => Math.sqrt(Math.max(0, r * r - x * x - y * y));
 
@@ -251,23 +254,30 @@ export class Human {
     const hatted = opts.apron === true;
     if (hs !== 2) {
       // a cap of hair tilted back to show the forehead, plus a fringe of tufts
-      put(H, DOME(HEAD_R * (hatted ? 1.035 : 1.07), Math.PI * (hs === 1 ? 0.55 : 0.48), lo ? 10 : 14, 5), hairM, 0, 0.0, -0.01, -0.42);
+      // (hatted: a finer dome centred on the head so its flat facets never dip under the head sphere — no skin showing
+      // through — while its vertices stay inside HAT_CLEAR, the radius every staff hat keeps clear of)
+      if (hatted) put(H, DOME(HEAD_R * HAIR_HATTED, Math.PI * (hs === 1 ? 0.55 : 0.48), lo ? 16 : 18, lo ? 6 : 7), hairM, 0, 0.0, HAIR_Z, -0.42);
+      else put(H, DOME(HEAD_R * 1.07, Math.PI * (hs === 1 ? 0.55 : 0.48), lo ? 10 : 14, 5), hairM, 0, 0.0, -0.01, -0.42);
       if (hatted) {
-        // fringe: four small tufts hugging the forehead, under the brim / band (max radius ≈ HEAD_R, hats start at ≥ 1.03 R)
-        for (const [x, y] of [[-0.15, 0.13], [-0.05, 0.155], [0.06, 0.155], [0.16, 0.12]]) put(H, SPH(0.06, 7, 5), hairM, x, y, onHead(x, y) - 0.02, 0, 0, x * -2, 1.15, 0.7, 0.55);
+        // fringe: four small flattened tufts hugging the forehead (outer surface ≤ ~1.04 R, inside HAT_CLEAR)
+        for (const [x, y] of [[-0.15, 0.12], [-0.05, 0.145], [0.06, 0.145], [0.16, 0.11]]) put(H, SPH(0.06, 7, 5), hairM, x, y, onHead(x, y) - 0.02, 0, 0, x * -2, 1.15, 0.7, 0.5);
       } else {
         const tufts = hs === 5 ? [] : [[-0.15, 0.17], [-0.05, 0.2], [0.06, 0.2], [0.16, 0.16]];
         for (const [x, y] of tufts) put(H, SPH(0.075, 7, 5), hairM, x, y, onHead(x, y) - 0.035, 0, 0, x * -2, 1.2, 0.85, 0.7);
       }
-      if (hs === 1) { // long hair: back curtain + side locks
-        put(H, RB(0.56, 0.46, 0.2, 0.09), hairM, 0, -0.16, -0.14);
+      if (hs === 1) { // long hair: back curtain + side locks (hatted: the curtain starts lower, under the hat's back edge)
+        put(H, RB(0.56, 0.46, 0.2, 0.09), hairM, 0, hatted ? -0.24 : -0.16, -0.14);
         for (const s of [-1, 1]) put(H, CAP(0.06, 0.24, 6), hairM, s * 0.28, -0.17, 0.06);
       }
       if (hs === 3) {
-        if (hatted) { put(H, SPH(0.1, 8, 6), hairM, 0, -0.1, -0.3); put(H, TOR(0.05, 0.018, 4, 10), basic(0xff8787), 0, -0.04, -0.27, -1.9); } // low bun
+        if (hatted) { put(H, SPH(0.1, 8, 6), hairM, 0, -0.15, -0.3); put(H, TOR(0.05, 0.018, 4, 10), basic(0xff8787), 0, -0.09, -0.27, -1.9); } // low bun
         else { put(H, SPH(0.12, 8, 6), hairM, 0, 0.28, -0.17); put(H, TOR(0.06, 0.02, 4, 10), basic(0xff8787), 0, 0.21, -0.12, -0.8); }
       }
-      if (hs === 4) for (const s of [-1, 1]) { put(H, SPH(0.1, 8, 6), hairM, s * 0.33, -0.02, -0.08, 0, 0, 0, 0.9, 1.4, 0.9); put(H, SPH(0.035, 6, 4), basic(0xffd43b), s * 0.3, 0.1, -0.08); }
+      // side puffs (hatted: lower and further back, clear of bands and headset ear cups)
+      if (hs === 4) for (const s of [-1, 1]) {
+        const [py, pz] = hatted ? [-0.1, -0.2] : [-0.02, -0.08];
+        put(H, SPH(0.1, 8, 6), hairM, s * 0.33, py, pz, 0, 0, 0, 0.9, 1.4, 0.9); put(H, SPH(0.035, 6, 4), basic(0xffd43b), s * 0.3, py + 0.12, pz);
+      }
       if (hs === 5 && !hatted) for (let i = 0; i < 4; i++) put(H, CONE(0.07, 0.2, 6), hairM, 0, 0.3 - Math.abs(i - 1.5) * 0.02, 0.15 - i * 0.11, -0.3 + i * 0.2); // spiky crest
       if (hs === 5 && hatted) for (const x of [-0.12, 0, 0.12]) put(H, CONE(0.05, 0.12, 6), hairM, x, -0.12, -0.27, -2.3); // short spikes at the nape
     }
@@ -461,6 +471,27 @@ function faceGeo(key: string) {
   });
 }
 
+/**
+ * A band round the head (head space) that hugs the hair without the hair poking through: an open, slightly conical
+ * cylinder centred on the hair cap's centre, tilted by `tilt` (about x), whose mid-height is `d` along its axis. Each
+ * edge's radius is the hair-clearance sphere's radius at that height, grown so the flat facets stay outside it.
+ */
+function band(H: THREE.Object3D, m: THREE.Material, d: number, h: number, tilt: number, out = 0, seg = 16) {
+  const R2 = (HAT_CLEAR * HEAD_R) ** 2, k = 1 / Math.cos(Math.PI / seg);
+  const rr = (u: number) => Math.sqrt(Math.max(0.0025, R2 - u * u)) * k + 0.004 + out;
+  return put(H, CYL(rr(d + h / 2), rr(d - h / 2), h, seg, true), m, 0, Math.cos(tilt) * d, HAIR_Z + Math.sin(tilt) * d, tilt);
+}
+/** Head-space point on a band() at angle `a` round it (0 = front, +PI/2 = the wearer's left / +x), `out` outside it. */
+function onBand(d: number, tilt: number, a: number, out = 0): [number, number, number] {
+  const r = Math.sqrt(Math.max(0.0025, (HAT_CLEAR * HEAD_R) ** 2 - d * d)) + 0.004 + out;
+  const lx = Math.sin(a) * r, lz = Math.cos(a) * r;
+  // rotate (lx, d, lz) about x by tilt, then move to the hair centre
+  return [lx, d * Math.cos(tilt) - lz * Math.sin(tilt), HAIR_Z + d * Math.sin(tilt) + lz * Math.cos(tilt)];
+}
+
+/** (y, z) on the front of the baseball-style caps' crown (DOME 1.1 R at y 0.03), where a patch tilted -0.75 lies flat. */
+const CAP_FRONT = [0.03 + Math.cos(Math.PI / 2 - 0.75) * (HEAD_R * 1.1 + 0.006), Math.sin(Math.PI / 2 - 0.75) * (HEAD_R * 1.1 + 0.006)] as const;
+
 /** Work hat for staff, in the map's colours: a different style per shop. Built in head space (merged with the head). */
 function staffHat(q: Quality, H: THREE.Object3D) {
   const TH = CURRENT_MAP.theme, R = HEAD_R;
@@ -473,9 +504,10 @@ function staffHat(q: Quality, H: THREE.Object3D) {
       break;
     }
     case 'boba': { // sun visor: a band round the head + a wide brim, logo dot
-      put(H, CYL(R * 1.07, R * 1.07, 0.08, 16, true), acc, 0, R * 0.55, -0.02, -0.18);
-      put(H, geo('visorBrim', () => new THREE.CylinderGeometry(0.2, 0.2, 0.02, 14, 1, false, -1.2, 2.4).scale(1.3, 1, 1)), acc, 0, R * 0.52, R * 0.95, 0.12);
-      put(H, CYL(0.045, 0.045, 0.012, 10), mat(0xffffff, q), 0, R * 0.62, R * 1.02, Math.PI / 2 - 0.2);
+      band(H, acc, R * 0.55, 0.08, -0.18);
+      const [, fy, fz] = onBand(R * 0.55, -0.18, 0);
+      put(H, geo('visorBrim', () => new THREE.CylinderGeometry(0.2, 0.2, 0.02, 14, 1, false, -1.2, 2.4).scale(1.3, 1, 1)), acc, 0, fy - 0.035, fz - 0.03, 0.12);
+      put(H, CYL(0.045, 0.045, 0.012, 10), mat(0xffffff, q), 0, fy, fz + 0.006, Math.PI / 2 - 0.18);
       break;
     }
     case 'clothing': { // slouchy beret with a stalk
@@ -484,16 +516,20 @@ function staffHat(q: Quality, H: THREE.Object3D) {
       break;
     }
     case 'chicken': { // fast-food paper garrison cap with a stripe
-      put(H, geo('garrison', () => new THREE.CylinderGeometry(0.0, R * 0.95, 0.2, 4, 1).rotateY(Math.PI / 4).scale(0.7, 1, 1.25)), wain, 0, R * 0.92, -0.02, -0.12);
-      put(H, CYL(R * 1.02, R * 1.03, 0.07, 14, true), wain, 0, R * 0.64, -0.02, -0.15);
-      put(H, CYL(R * 1.04, R * 1.04, 0.025, 14, true), mat(TH.accent, q), 0, R * 0.66, -0.02, -0.15);
+      // (a front-to-back paper ridge on the band's top edge, wide and tall enough to cover the hair cap under it)
+      band(H, wain, R * 0.6, 0.07, -0.15);
+      const pu = R * 0.6 + 0.035 + 0.078;
+      put(H, geo('garrison2', () => new THREE.CylinderGeometry(0.283, 0.283, 0.56, 3, 1).rotateX(-Math.PI / 2).scale(1, 0.55, 1)), wain, 0, Math.cos(-0.15) * pu, HAIR_Z + Math.sin(-0.15) * pu, -0.15);
+      band(H, mat(TH.accent, q), R * 0.6, 0.025, -0.15, 0.006);
       break;
     }
     case 'drugstore': { // beauty-counter headband with a big bow
-      put(H, TOR(R * 1.03, 0.028, 4, 14, Math.PI), acc, 0, 0.02, -0.04, -0.35);
-      const bx = -0.17, by = R * 0.86;
-      for (const s of [-1, 1]) put(H, CONE(0.06, 0.13, 5), mat(0xf783ac, q), bx + s * 0.065, by, 0.02, 0, 0, s * Math.PI / 2);
-      put(H, SPH(0.035, 6, 4), acc, bx, by, 0.02);
+      // (tube inner edge outside the hair clearance; the 14 segments over half a turn dip ≤ 0.7 %)
+      const hr = HAT_CLEAR * R / Math.cos(Math.PI / 28) + 0.028 + 0.004;
+      put(H, TOR(hr, 0.028, 4, 14, Math.PI), acc, 0, 0, HAIR_Z, -0.35);
+      const ba = Math.PI * 0.66, bx = Math.cos(ba) * (hr + 0.02), by = Math.sin(ba) * (hr + 0.02) * Math.cos(-0.35), bz = HAIR_Z + Math.sin(ba) * (hr + 0.02) * Math.sin(-0.35);
+      for (const s of [-1, 1]) put(H, CONE(0.06, 0.13, 5), mat(0xf783ac, q), bx + s * 0.065, by, bz, -0.35, 0, s * Math.PI / 2);
+      put(H, SPH(0.035, 6, 4), acc, bx, by, bz);
       break;
     }
     case 'bookstore': { // reader's beret + a pencil tucked behind the ear
@@ -510,23 +546,24 @@ function staffHat(q: Quality, H: THREE.Object3D) {
       break;
     }
     case 'supermarket': { // red visor, blue band, a little price-tag badge
-      put(H, CYL(R * 1.07, R * 1.07, 0.07, 14, true), mat(TH.wainscot, q), 0, R * 0.55, -0.02, -0.18);
-      put(H, geo('visorBrim', () => new THREE.CylinderGeometry(0.2, 0.2, 0.02, 14, 1, false, -1.2, 2.4).scale(1.3, 1, 1)), acc, 0, R * 0.52, R * 0.95, 0.12);
-      put(H, RB(0.1, 0.06, 0.015, 0.01), mat(0xffe066, q), 0.1, R * 0.6, R * 0.98, -0.2, 0.35, 0.25);
+      band(H, mat(TH.wainscot, q), R * 0.55, 0.07, -0.18);
+      const [, fy, fz] = onBand(R * 0.55, -0.18, 0);
+      put(H, geo('visorBrim', () => new THREE.CylinderGeometry(0.2, 0.2, 0.02, 14, 1, false, -1.2, 2.4).scale(1.3, 1, 1)), acc, 0, fy - 0.035, fz - 0.03, 0.12);
+      put(H, RB(0.1, 0.06, 0.015, 0.01), mat(0xffe066, q), ...onBand(R * 0.55, -0.18, 0.35, 0.01), -0.18, 0.35, 0.25);
       break;
     }
     case 'petshop': { // cap with floppy dog ears and a paw print
-      put(H, DOME(R * 1.1, Math.PI * 0.42, 12, 4), acc, 0, 0.03, 0, -0.12);
+      put(H, DOME(R * 1.1, Math.PI * 0.42, 16, 5), acc, 0, 0.03, 0, -0.12);
       put(H, RB(0.32, 0.03, 0.19, 0.012), acc, 0, 0.15, R + 0.02, 0.18);
       for (const s of [-1, 1]) put(H, CAP(0.055, 0.13, 6), mat(0x8d5524, q), s * R * 0.92, R * 0.55, -0.03, 0, 0, s * 0.5);
-      put(H, CYL(0.045, 0.045, 0.01, 8), white, 0, R * 0.8, R * 0.72, Math.PI / 2 - 0.75);
-      for (const t of [-1, 0, 1]) put(H, CYL(0.017, 0.017, 0.01, 6), white, t * 0.045, R * 0.8 + 0.06 - Math.abs(t) * 0.015, R * 0.72 - 0.045, Math.PI / 2 - 0.75);
+      put(H, CYL(0.045, 0.045, 0.01, 8), white, 0, CAP_FRONT[0], CAP_FRONT[1], Math.PI / 2 - 0.75);
+      for (const t of [-1, 0, 1]) put(H, CYL(0.017, 0.017, 0.01, 6), white, t * 0.045, CAP_FRONT[0] + 0.06 - Math.abs(t) * 0.015, CAP_FRONT[1] - 0.05, Math.PI / 2 - 0.75);
       break;
     }
     case 'cafe': { // barista knit beanie (no pompom) with a turned-up cuff and a bean patch
-      put(H, DOME(R * 1.1, Math.PI * 0.45, 12, 5), mat(0xe9d3b0, q), 0, 0.05, -0.02, -0.25, 0, 0, 1, 1.05, 1);
+      put(H, DOME(R * 1.1, Math.PI * 0.45, 16, 6), mat(0xfff4e0, q), 0, 0.05, -0.02, -0.25, 0, 0, 1, 1.05, 1);
       put(H, CYL(R * 1.12, R * 1.14, 0.08, 14, true), acc, 0, 0.07, -0.02, -0.25);
-      put(H, SPH(0.04, 6, 4), mat(0x6f4e37, q), 0.12, 0.2, onHead(0.12, 0.2, R * 1.1), 0, 0, 0.5, 1, 0.7, 0.5);
+      put(H, SPH(0.04, 6, 4), mat(0x3e2723, q), 0.12, 0.2, onHead(0.12, 0.2, R * 1.1), 0, 0, 0.5, 1, 0.7, 0.5);
       break;
     }
     case 'cinema': { // striped popcorn-box paper hat with popcorn on top
@@ -536,22 +573,22 @@ function staffHat(q: Quality, H: THREE.Object3D) {
       break;
     }
     case 'hotpot': { // red bandana tied at the back, white polka dots
-      put(H, DOME(R * 1.13, Math.PI * 0.46, 12, 4), wain, 0, 0.02, -0.02, -0.18);
-      for (const [x, y] of [[-0.12, 0.2], [0.1, 0.22], [0, 0.29], [0.2, 0.12], [-0.21, 0.1]]) put(H, SPH(0.022, 5, 3), white, x, y, onHead(x, y, R * 1.13) - 0.03);
+      put(H, DOME(R * 1.13, Math.PI * 0.46, 16, 5), wain, 0, 0.02, -0.02, -0.18);
+      for (const [x, y] of [[-0.12, 0.2], [0.1, 0.22], [0, 0.29], [0.2, 0.12], [-0.21, 0.1]]) put(H, SPH(0.022, 5, 3), white, x, y + 0.02, onHead(x, y + 0.02, R * 1.13) - 0.012);
       for (const s of [-1, 1]) put(H, CONE(0.05, 0.14, 4), wain, s * 0.06, 0.02, -R - 0.03, -0.6, 0, s * 0.6);
       break;
     }
     case 'gas': { // mesh-back trucker cap with a round oil-drop logo patch
-      put(H, DOME(R * 1.1, Math.PI * 0.42, 12, 4), wain, 0, 0.03, 0, -0.12);
+      put(H, DOME(R * 1.1, Math.PI * 0.42, 16, 5), wain, 0, 0.03, 0, -0.12);
       put(H, RB(0.34, 0.03, 0.21, 0.012), acc, 0, 0.15, R + 0.02, 0.18);
-      put(H, CYL(0.07, 0.07, 0.012, 10), acc, 0, R * 0.78, R * 0.74, Math.PI / 2 - 0.75);
-      put(H, CONE(0.03, 0.06, 6), mat(0xe03131, q), 0, R * 0.8, R * 0.76, -0.75);
+      put(H, CYL(0.07, 0.07, 0.012, 10), acc, 0, CAP_FRONT[0], CAP_FRONT[1], Math.PI / 2 - 0.75);
+      put(H, CONE(0.03, 0.06, 6), mat(0xe03131, q), 0, CAP_FRONT[0] + 0.005, CAP_FRONT[1] + 0.012, -0.75);
       break;
     }
     case 'gym': { // terry sweatband round the forehead
-      put(H, CYL(R * 1.05, R * 1.06, 0.075, 16, true), acc, 0, 0.12, -0.01, -0.25);
-      put(H, CYL(R * 1.065, R * 1.065, 0.018, 16, true), white, 0, 0.12, -0.01, -0.25);
-      put(H, CYL(0.035, 0.035, 0.01, 8), white, 0.1, 0.13, R * 1.0, Math.PI / 2 - 0.25, 0, 0, 1, 1, 1);
+      band(H, acc, 0.12, 0.075, -0.25);
+      band(H, white, 0.12, 0.018, -0.25, 0.006);
+      put(H, CYL(0.035, 0.035, 0.01, 8), white, ...onBand(0.12, -0.25, 0.32, 0.008), Math.PI / 2 - 0.25, 0, -0.32);
       break;
     }
     case 'steak': { // tall pleated chef's toque with a coloured band
@@ -561,7 +598,7 @@ function staffHat(q: Quality, H: THREE.Object3D) {
       break;
     }
     case 'electronics': { // service headset: band, one ear cup, mic boom; blue polo-cap colours
-      put(H, TOR(R + 0.035, 0.03, 4, 14, Math.PI), acc, 0, 0.0, -0.02, -0.15);
+      put(H, TOR(HAT_CLEAR * R / Math.cos(Math.PI / 28) + 0.034, 0.03, 4, 14, Math.PI), acc, 0, 0.0, HAIR_Z, -0.15);
       put(H, CYL(0.1, 0.1, 0.08, 10), mat(0x343a40, q), R + 0.03, -0.02, 0, 0, 0, Math.PI / 2);
       put(H, CYL(0.1, 0.1, 0.08, 10), mat(0x343a40, q), -R - 0.03, -0.02, 0, 0, 0, Math.PI / 2);
       put(H, CYL(0.012, 0.012, 0.22, 5), mat(0x343a40, q), R * 0.75, -0.14, 0.17, 1.2, 0, -0.35);
@@ -569,16 +606,19 @@ function staffHat(q: Quality, H: THREE.Object3D) {
       break;
     }
     case 'salon': { // wide hair wrap with a knotted bow on top
-      put(H, CYL(R * 1.05, R * 1.07, 0.1, 14, true), acc, 0, 0.1, -0.02, -0.35);
-      put(H, SPH(0.05, 6, 4), acc, 0, R * 0.97, 0.06);
-      for (const s of [-1, 1]) put(H, SPH(0.07, 6, 4), mat(0xb197fc, q), s * 0.08, R * 1.02, 0.05, 0, 0, s * 0.5, 1.2, 0.6, 0.7);
+      band(H, acc, 0.1, 0.1, -0.35);
+      // the knot and bow sit on the top edge of the wrap, a little off-centre
+      const [kx, ky, kz] = onBand(0.15, -0.35, -0.25, 0.01);
+      put(H, SPH(0.05, 6, 4), acc, kx, ky, kz);
+      for (const s of [-1, 1]) put(H, SPH(0.07, 6, 4), mat(0xb197fc, q), kx + s * 0.08, ky + 0.02, kz - 0.01, -0.35, 0, s * 0.5, 1.2, 0.6, 0.7);
       break;
     }
     case 'post': { // postman's peaked cap: flat green crown, black peak, gold badge
-      put(H, CYL(R * 1.06, R * 0.95, 0.12, 14), acc, 0, R * 0.8, -0.03, -0.12);
-      put(H, CYL(R * 1.07, R * 1.07, 0.03, 14), mat(0x1b4d2b, q), 0, R * 0.7, -0.02, -0.12);
-      put(H, geo('visorBrim', () => new THREE.CylinderGeometry(0.2, 0.2, 0.02, 14, 1, false, -1.2, 2.4).scale(1.3, 1, 1)), mat(0x212529, q), 0, R * 0.62, R * 0.9, 0.2);
-      put(H, CYL(0.03, 0.03, 0.012, 8), mat(0xfcc419, q, { metal: 0.6, rough: 0.3 }), 0, R * 0.82, R * 0.98, Math.PI / 2 - 0.12);
+      // (crown top above the hair cap: R 0.88 + 0.06 > HAT_CLEAR)
+      put(H, CYL(R * 1.06, R * 0.95, 0.12, 14), acc, 0, R * 0.88, -0.02, -0.12);
+      put(H, CYL(R * 1.07, R * 1.07, 0.03, 14), mat(0x1b4d2b, q), 0, R * 0.77, -0.01, -0.12);
+      put(H, geo('visorBrim', () => new THREE.CylinderGeometry(0.2, 0.2, 0.02, 14, 1, false, -1.2, 2.4).scale(1.3, 1, 1)), mat(0x212529, q), 0, R * 0.68, R * 0.9, 0.2);
+      put(H, CYL(0.03, 0.03, 0.012, 8), mat(0xfcc419, q, { metal: 0.6, rough: 0.3 }), 0, R * 0.9, R * 0.99, Math.PI / 2 - 0.12);
       break;
     }
     case 'pharmacy': { // little folded nurse-style cap with a teal cross
@@ -595,11 +635,11 @@ function staffHat(q: Quality, H: THREE.Object3D) {
       break;
     }
     default: { // convenience store: baseball cap in the store colour with a white front panel
-      put(H, DOME(R * 1.1, Math.PI * 0.42, 14, 4), acc, 0, 0.03, 0, -0.12);
+      put(H, DOME(R * 1.1, Math.PI * 0.42, 16, 5), acc, 0, 0.03, 0, -0.12);
       put(H, RB(0.34, 0.03, 0.2, 0.012), acc, 0, 0.15, R + 0.02, 0.18);
       put(H, SPH(0.03, 6, 4), acc, 0, R * 1.1 + 0.02, -0.04);
-      put(H, RB(0.15, 0.09, 0.02, 0.008), white, 0, R * 0.78, R * 0.73, -0.75);
-      put(H, CYL(0.025, 0.025, 0.01, 8), mat(TH.wainscot, q), 0, R * 0.79, R * 0.745, Math.PI / 2 - 0.75);
+      put(H, RB(0.15, 0.09, 0.02, 0.008), white, 0, CAP_FRONT[0] - 0.005, CAP_FRONT[1] - 0.005, -0.75);
+      put(H, CYL(0.025, 0.025, 0.01, 8), mat(TH.wainscot, q), 0, CAP_FRONT[0], CAP_FRONT[1] + 0.006, Math.PI / 2 - 0.75);
     }
   }
 }

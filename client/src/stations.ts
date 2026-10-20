@@ -166,20 +166,24 @@ export function buildStation(ctx: DecorCtx, key: string, b: AABB): StationInfo |
         p(B(0.02, 0.02, 0.11), 0x212529, sx, 0.33, -0.115);
         p(CYL(0.03, 0.035, 0.05, 8), 0xadb5bd, sx, 0.08, -0.06);
         glow(CONE(0.022, 0.05, 6), 0x74c0fc, sx, 0.13, -0.06);
-        // the glass alone reads as nothing from across the store: opaque rims and collars outline the shape,
-        // both chambers hold coffee, and thin white glints mark the glass surfaces
-        glass(SPH(0.08, 10, 7), sx, 0.23, -0.06);
-        p(SPH(0.068, 8, 5), 0x5c2e0e, sx, 0.215, -0.06, 0, 0, 0, 1, 0.72, 1);
-        p(TOR(0.079, 0.006, 3, 14), steel, sx, 0.23, -0.06, Math.PI / 2);
+        // see-through glass (the shared transparent glass mesh): only a shallow pool of coffee in the lower bulb and a
+        // thin layer under the grounds up top, so you look through most of both chambers. Thin opaque rims and
+        // collars outline the shape from across the store, and white glints mark the glass surfaces.
+        glass(SPH(0.08, 12, 8), sx, 0.23, -0.06);
+        p(SPH(0.056, 10, 5), 0x5c2e0e, sx, 0.172, -0.06, 0, 0, 0, 1, 0.4, 1);
+        p(TOR(0.079, 0.004, 3, 14), steel, sx, 0.23, -0.06, Math.PI / 2);
         p(CYL(0.026, 0.026, 0.025, 8), steel, sx, 0.31, -0.06);
         glass(CYL(0.014, 0.014, 0.08, 6), sx, 0.33, -0.06);
+        p(CYL(0.006, 0.006, 0.07, 4), 0x5c2e0e, sx, 0.33, -0.06); // coffee rising through the tube
         p(CYL(0.045, 0.045, 0.02, 10), steel, sx, 0.365, -0.06);
-        glass(CYL(0.065, 0.04, 0.14, 10), sx, 0.43, -0.06);
-        p(CYL(0.057, 0.04, 0.085, 10), 0x6f4e37, sx, 0.415, -0.06);
-        p(CYL(0.058, 0.058, 0.012, 10), 0xd9b38c, sx, 0.462, -0.06);
-        p(CYL(0.069, 0.069, 0.018, 10), 0x212529, sx, 0.5, -0.06);
-        glow(B(0.012, 0.07, 0.004), 0xffffff, sx - 0.035, 0.25, -0.06 + 0.072);
-        glow(B(0.01, 0.09, 0.004), 0xffffff, sx - 0.032, 0.43, -0.06 + 0.06);
+        glass(CYL(0.065, 0.04, 0.14, 12), sx, 0.43, -0.06);
+        p(CYL(0.046, 0.041, 0.03, 10), 0x6f4e37, sx, 0.39, -0.06);
+        p(CYL(0.048, 0.047, 0.012, 10), 0xd9b38c, sx, 0.41, -0.06);
+        p(TOR(0.064, 0.004, 3, 14), steel, sx, 0.492, -0.06, Math.PI / 2);
+        p(CYL(0.069, 0.069, 0.018, 10), 0x212529, sx, 0.508, -0.06);
+        glow(B(0.01, 0.07, 0.004), 0xffffff, sx - 0.035, 0.245, -0.06 + 0.072);
+        glow(B(0.006, 0.035, 0.004), 0xffffff, sx + 0.04, 0.215, -0.06 + 0.066);
+        glow(B(0.008, 0.09, 0.004), 0xffffff, sx - 0.032, 0.44, -0.06 + 0.058);
       }
       cup(0.36, 0.1, 0xffffff); cup(0.36, -0.08, 0xfff3bf);
       // stack of menus and a tiny sugar pot

@@ -594,6 +594,22 @@ function produce() {
     [new THREE.ConeGeometry(0.02, 0.06, 4).translate(-0.06, 0.16, 0.02), 0.45],
   ]);
 }
+let chipGeo: THREE.BufferGeometry | null = null;
+/** A snack facing: a pillow chip bag (crimped top and bottom, pale label, little window) with a second bag behind it,
+ * bottom at y 0, front at z ≈ +0.04. */
+function chipBags() {
+  const bag = (z: number, h: number, v: number): [THREE.BufferGeometry, number][] => [
+    [new THREE.SphereGeometry(0.1, 8, 4).scale(0.9, h / 0.2, 0.32).translate(0, h / 2 + 0.012, z), v],
+    [new THREE.BoxGeometry(0.17, 0.022, 0.03).translate(0, 0.012, z), v * 0.8],
+    [new THREE.BoxGeometry(0.17, 0.022, 0.03).translate(0, h + 0.012, z), v * 0.8],
+  ];
+  return chipGeo ??= shaded([
+    ...bag(-0.08, 0.24, 0.75),
+    ...bag(0, 0.22, 1),
+    [new THREE.BoxGeometry(0.11, 0.06, 0.004).translate(0, 0.15, 0.033), 1.75],
+    [new THREE.CircleGeometry(0.03, 8).translate(0, 0.085, 0.031), 1.35],
+  ]);
+}
 const hex = (css: string) => parseInt(css.replace('#', ''), 16) || 0x495057;
 
 /** Gas-station motor-oil gondola: dark steel, hazard-stripe kick plate, black drip-tray lips, a lit "機油" header. */
@@ -623,19 +639,41 @@ const oilRack: Builder = k => {
   return { geometry: oilJug(), labelY: H + 0.6 };
 };
 
-/** Gas-station snack gondola: green metal, yellow price channels, car air-fresheners on the end caps, a road-trip header. */
+/** Gas-station snack gondola, convenience-store style: light shelves on a green frame with yellow price channels, rows
+ * of chip-bag facings (the stocked items), a top shelf of bottled drinks, car air-fresheners on the end caps and a
+ * road-trip header with shrink-wrapped water packs. */
 const roadGondola: Builder = k => {
   const { L, D, H, p, RB } = k;
   const green = k.ctx.theme.wainscot, yellow = k.ctx.theme.accent;
   p(B(L, 0.14, D), green, 0, 0.07, 0);
-  p(B(L - 0.04, H, 0.05), 0xdee2e6, 0, H / 2, 0);
+  p(B(L - 0.04, H, 0.05), 0xf1f3f5, 0, H / 2, 0);
+  // pegboard dots on the back panel above each tier
+  for (const s of [1, -1]) for (let y = 0.4; y < H - 0.3; y += 0.41) p(B(L - 0.2, 0.012, 0.004), 0xdee2e6, 0, y, s * 0.027);
   for (const x of [-L / 2 + 0.03, L / 2 - 0.03]) p(B(0.06, H + 0.05, D), green, x, (H + 0.05) / 2, 0);
-  const tiers = [0.14, 0.6, 1.06].filter(t => t < H - 0.3);
-  for (const t of tiers.slice(1)) p(B(L - 0.08, 0.025, D - 0.02), 0xf1f3f5, 0, t, 0);
-  for (const s of [1, -1]) for (const t of tiers) {
-    p(B(L - 0.08, 0.06, 0.02), yellow, 0, t + 0.01, s * (D / 2 - 0.0));
-    for (const x of along(L, 0.6, 0.35)) p(B(0.12, 0.045, 0.006), Math.round(x * 2) % 3 === 0 ? 0xe03131 : 0xffffff, x, t + 0.01, s * (D / 2 + 0.012));
-    for (const x of along(L, 0.48, 0.3)) k.slot(x, t + 0.04 + k.half * 0.9, s * (D / 2 - 0.2), [0.9, 0.9, 0.9], 0, (x * 7) % 0.25);
+  const tiers = [0.14, 0.55, 0.96].filter(t => t < H - 0.4), top = Math.min(1.37, H - 0.23);
+  for (const t of [...tiers.slice(1), top]) p(B(L - 0.08, 0.025, D - 0.02), 0xf8f9fa, 0, t, 0);
+  for (const s of [1, -1]) {
+    for (const t of [...tiers, top]) {
+      p(B(L - 0.08, 0.06, 0.02), yellow, 0, t + 0.01, s * (D / 2 - 0.0));
+      for (const x of along(L, 0.6, 0.35)) p(B(0.12, 0.045, 0.006), Math.round(x * 2) % 3 === 0 ? 0xe03131 : 0xffffff, x, t + 0.01, s * (D / 2 + 0.012));
+    }
+    // chip-bag facings, each a front bag with a second one behind it
+    for (const t of tiers) for (const x of along(L, 0.24, 0.22)) k.slot(x, t + 0.0125, s * (D / 2 - 0.13), undefined, -0.1, (s > 0 ? 0 : Math.PI) + ((x * 7) % 0.16) - 0.08);
+    // top shelf: bottled drinks (static), two deep, merged into one mesh per colour (few meshes for a long row)
+    const drinkC = [0x74c0fc, 0xff8787, 0x8ce99a, 0xffd43b, 0xf8f9fa];
+    const byC = new Map<number, THREE.BufferGeometry[]>(), caps: THREE.BufferGeometry[] = [], labels: THREE.BufferGeometry[] = [];
+    along(L, 0.11, 0.2).forEach((x, i) => {
+      const c = drinkC[(i * 3 + (s > 0 ? 0 : 2)) % drinkC.length], list = byC.get(c) ?? byC.set(c, []).get(c)!;
+      for (const dz of [0.12, 0.26]) {
+        const z = s * (D / 2 - dz);
+        list.push(CYL(0.032, 0.032, 0.15, 6).clone().translate(x, top + 0.0875, z), CYL(0.016, 0.026, 0.03, 6).clone().translate(x, top + 0.177, z));
+        caps.push(CYL(0.014, 0.014, 0.018, 5).clone().translate(x, top + 0.2, z));
+      }
+      labels.push(B(0.066, 0.05, 0.004).clone().translate(x, top + 0.09, s * (D / 2 - 0.088)));
+    });
+    for (const [c, list] of byC) p(mergeGeometries(list, false)!, c);
+    p(mergeGeometries(caps, false)!, 0xffffff);
+    p(mergeGeometries(labels, false)!, 0xffffff);
   }
   // end caps: a hook strip of little tree-shaped car air fresheners
   const tree = [0x40c057, 0xfab005, 0xe64980, 0x228be6];
@@ -653,7 +691,7 @@ const roadGondola: Builder = k => {
     p(B(0.5, 0.24, 0.34), 0xa5d8ff, x, H + 0.12, 0, 0, 0.1);
     for (const dx of [-0.17, 0, 0.17]) for (const dz of [-0.09, 0.09]) p(CYL(0.035, 0.035, 0.03, 6), 0x1c7ed6, x + dx, H + 0.255, dz);
   }
-  return { labelY: H + 0.6 };
+  return { geometry: chipBags(), labelY: H + 0.6 };
 };
 
 /** Gas-station east wall: dark slatwall with wiper blades on pegs, two stacks of tyres, a car-supplies header. */

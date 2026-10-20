@@ -678,7 +678,7 @@ export class StoreView {
     const blocked = (f: Face, t0: number, t1: number, y0: number) => {
       for (const b of SOLIDS) {
         if (b.kind === 'wall') continue;
-        const h = b.kind === 'atm' ? 2.2 : b.h; // the ATM's sign sits above it
+        const h = b.kind === 'atm' ? 2.2 : b.kind === 'fridge' || b.kind === 'wallshelf' ? b.h + 0.55 : b.h; // the ATM's sign / wall units' headers and name labels sit above them
         const [near, s0, s1] = f === 'N' ? [b.z0 < 1.2, b.x0, b.x1] : f === 'W' ? [b.x0 < 1.2, b.z0, b.z1] : f === 'E' ? [b.x1 > STORE_W - 1.2, b.z0, b.z1]
           : f === 'SS' ? [b.z0 < 6.4 && b.z1 > 5.25, b.x0, b.x1] : [b.z1 > 3.9 && b.z0 < 5, b.x0, b.x1];
         if (near && s1 > t0 - 0.1 && s0 < t1 + 0.1 && h > y0 - 0.05) return true;
