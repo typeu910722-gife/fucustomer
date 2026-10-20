@@ -73,6 +73,14 @@
     .row > * { flex: 1; }
     input[type=text], select { width: 100%; padding: 11px 12px; border-radius: 14px; border: 3px solid var(--ink); background: var(--paper); color: var(--ink);
       font: inherit; font-size: 17px; font-weight: 700; user-select: text; -webkit-user-select: text; box-shadow: inset 0 3px 0 rgba(42,31,61,.08); }
+    textarea.bk-code { width: 100%; padding: 9px 11px; border-radius: 14px; border: 3px solid var(--ink); background: var(--paper); color: var(--ink); resize: vertical;
+      font: 12px/1.35 ui-monospace, Menlo, Consolas, monospace; word-break: break-all; user-select: text; -webkit-user-select: text; box-shadow: inset 0 3px 0 rgba(42,31,61,.08); }
+    textarea.bk-code:focus { outline: none; border-color: var(--info-d); }
+    .bk-cmp { width: 100%; border-collapse: collapse; font-size: 14px; margin: 6px 0; }
+    .bk-cmp th, .bk-cmp td { padding: 4px 6px; border-bottom: 2px dashed rgba(42,31,61,.15); text-align: left; }
+    .bk-cmp th { font-size: 12px; color: var(--ink2); }
+    .bk-err { color: #c92a2a; font-weight: 800; }
+    .bk-warn { background: #fff3bf; border: 3px solid var(--ink); border-radius: 14px; padding: 8px 10px; font-size: 14px; }
     input[type=text]:focus, select:focus { outline: none; border-color: var(--info-d); box-shadow: 0 0 0 4px rgba(72,166,255,.3); }
     input.code { text-transform: uppercase; letter-spacing: 6px; text-align: center; font-size: 24px; font-weight: 900; }
     label.field { display: block; margin: 10px 0; color: var(--ink2); font-size: 14px; font-weight: 700; }

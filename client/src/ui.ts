@@ -7,6 +7,7 @@ import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from '../../shared/diff
 import { getLicense, renderGoogleButton, signOut } from './account.ts';
 import { NOTICES, randomQuote } from './quotes.ts';
 import { getCosmetic } from '../../shared/shop.ts';
+import { backupScreen } from './backup-ui.ts';
 
 /** 商城: which paid pack (if any) blocks a store in free play / own store / hosting a room. Set by main.ts. */
 type StoreLock = (mapId: string) => { id: string; name: string; icon: string } | null;
@@ -191,12 +192,14 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
       <label class="muted"><input type="checkbox" id="s-inv" ${s.invertY ? 'checked' : ''}> 反轉 Y 軸</label><br>
       <label class="muted"><input type="checkbox" id="s-fps" ${s.showFps ? 'checked' : ''}> 顯示 FPS</label>
       <label class="field">自訂伺服器（留空使用預設）<input type="text" id="s-url" placeholder="wss://example.com/ws" value="${esc(s.serverUrl)}"></label>
+      ${overlay ? '' : '<button class="btn info" id="s-backup">💾 存檔備份（換裝置）<span class="sub">匯出／匯入存檔碼，網頁、Android、Windows 互通</span></button>'}
       <button class="btn primary" id="s-ok">完成</button>
     </div>`, overlay ? 'screen overlay' : 'screen');
   (document.getElementById('s-q') as HTMLSelectElement).value = s.quality;
   (document.getElementById('s-fps-cap') as HTMLSelectElement).value = String(s.fpsCap ?? 0);
   const upd = () => { document.getElementById('s-sens-v')!.textContent = val('s-sens'); document.getElementById('s-fov-v')!.textContent = val('s-fov'); };
   upd(); on('s-sens', 'input', upd); on('s-fov', 'input', upd);
+  on('s-backup', 'click', () => backupScreen(() => settingsMenu(s, onDone, overlay)));
   on('s-ok', 'click', () => {
     onDone({
       ...s, quality: val('s-q') as Settings['quality'], sensitivity: Number(val('s-sens')), fov: Number(val('s-fov')), volume: Number(val('s-vol')), music: Number(val('s-music')), fpsCap: Number(val('s-fps-cap')), adaptive: (document.getElementById('s-adapt') as HTMLInputElement).checked,
