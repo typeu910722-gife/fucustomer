@@ -99,25 +99,25 @@ if (want('01')) {
   const { ctx, page } = await open(18, 3, { clock: true });
   await freePlay(page, 'convenience', 40);
   await freeze(page);
+  // from here the page clock only moves when we advance it: every tick is exactly 50 ms of game time and animation
+  await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 100);
+  const run = async ms => { for (let t = 0; t < ms; t += 50) { await step(page, 1); await page.clock.runFor(50); } };
   await clearArea(page, 3, 4, 21, 16.5);
   await spawn(page, 9001, 'rager', 12, 10.0, { anger: 85 });
   await look(page, 12, 9.0, 0, 0.0);
-  await step(page, 2);
-  await page.waitForTimeout(500);
-  await page.keyboard.press('Space');
-  await step(page, 2);
-  await page.waitForFunction(() => window.__game.snap.players.find(p => p.id === window.__game.selfId).grabbing === 9001, null, { timeout: 10000 });
+  await run(300);
+  await page.keyboard.press('Space'); // grab
+  await run(300);
+  console.log('grabbing', await page.evaluate(() => window.__game.conn.room.world.players.get(window.__game.selfId).grabbing));
   await look(page, 12, 9.0, 0, 0.45); // aim up a little: a higher arc
-  await page.waitForTimeout(800);
-  await page.keyboard.press('Space');
-  await page.waitForFunction(() => window.__game.conn.room.world.customers.find(c => c.id === 9001)?.fly, null, { timeout: 30000 });
-  // the thrower stays where he was; the camera steps aside to watch him
+  await page.clock.runFor(100);
+  // the thrower stays where he is; the camera steps aside to watch him (set up before the throw, so it's in place)
+  await page.keyboard.press('Space'); // throw
+  await page.clock.runFor(50);
+  console.log('flying', await page.evaluate(() => !!window.__game.conn.room.world.customers.find(c => c.id === 9001)?.fly));
   await coworker(page, 'pX', '阿傑', 0x48a6ff, 12, 9.0, 0);
   await lookAt(page, Number(process.env.CX ?? 14.2), Number(process.env.CZ ?? 14.8), Number(process.env.TX ?? 11.6), Number(process.env.TZ ?? 11.6), 1.4);
-  await page.waitForTimeout(1500);
-  // from here the page clock runs only as far as the flight: every tick is 50 ms of game time and of animation
-  await page.clock.pauseAt(await page.evaluate(() => Date.now()) + 100);
-  for (let i = 0; i < Number(process.env.FLY ?? 4); i++) { await step(page, 1); await page.clock.runFor(50); }
+  await run(Number(process.env.FLY ?? 4) * 50);
   await shot(page, '01-throw.png', 0);
   await ctx.close();
 }
