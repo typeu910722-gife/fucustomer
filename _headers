@@ -6,3 +6,7 @@
 /beta/*.mobileconfig
   Content-Type: application/x-apple-aspen-config
   Content-Disposition: attachment; filename="fucustomer-beta.mobileconfig"
+
+/beta/*.apk
+  Content-Type: application/vnd.android.package-archive
+  Content-Disposition: attachment; filename="fucustomer-beta.apk"
