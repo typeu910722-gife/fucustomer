@@ -17,7 +17,9 @@ import { SCENES, sceneAfter, sceneBefore } from '../../shared/story.ts';
 import { courtScreen, playScene } from './story-ui.ts';
 import { ownStoreConfig, settleStoreDay, staffPace } from '../../shared/ownstore.ts';
 import { dayConfig } from '../../shared/sim.ts';
-import { MAPS } from '../../shared/maps/index.ts';
+import { MAPS, getMap } from '../../shared/maps/index.ts';
+import { OUTSIDE_SCORE, buildRaidConfig, raidReward } from '../../shared/raid.ts';
+import { getStore, sendRaid, syncStore } from './friends.ts';
 import { desktop, initPlatform, isApp, onAppPause, onBack, quitApp, reportAchievements } from './platform.ts';
 
 let settings = loadSettings();
@@ -64,7 +66,9 @@ function tryFullscreenLandscape() {
 async function online(url: string, intent: Intent) {
   UI.show('<div class="card"><h2>連線中…</h2><p class="muted">正在連線到伺服器</p></div>');
   try {
-    const { WsConnection } = await import('./net-ws.ts');
+    const { WsConnection, roomMap } = await import('./net-ws.ts');
+    // build the 3D store for the room's store type
+    if (intent.kind === 'join' && !intent.map) intent = { ...intent, map: await roomMap(url, intent.code) };
     startGame(() => new WsConnection(url, intent, platform));
   } catch { menu('無法載入連線模組，請檢查網路'); }
 }
@@ -78,6 +82,7 @@ function career(tab?: Parameters<typeof careerScreen>[2]) {
   careerScreen(p, {
     back: () => menu(), play: id => playShift(id), enterStore: () => playStore(),
     opened: () => sceneOnce('store-open', () => career('store')),
+    raid: code => void raidFriend(code),
   }, tab);
 }
 
@@ -95,13 +100,60 @@ function playStore() {
       const prof = loadProfile();
       const out = settleStoreDay(prof, save);
       saveProfile(prof);
+      if (prof.store?.online) void syncStore(prof.store); // friends see today's shelves and rating
       if (out.quit) { conn?.dismissStaff(); cfg.staffWage = 0; current?.toast(`📋 員工受不了你的薪水，辭職了！`, 'bad', 5000); }
       else if (prof.store) conn?.setStaffPace(staffPace(prof.store.staff.mood));
       if (out.bankrupt) { bankrupt = out.reason; current?.toast(`💸 ${out.reason}……店撐不下去了`, 'bad', 5000); window.setTimeout(() => current?.exit(), 2500); }
     },
   })), () => {
-    if (!bankrupt) return career('store');
+    if (!bankrupt) return lockReminder();
     playScene('store-bankrupt', () => UI.message('倒閉了', `${bankrupt}。投入的錢全部賠光了，回去打工重新存吧。`, '回職涯', () => career('store')));
+  });
+}
+
+/** Leaving your own store with the door unlocked: friends could walk right in. */
+function lockReminder() {
+  const p = loadProfile();
+  const on = p.store?.online;
+  if (!p.store || !on || on.locked) return career('store');
+  UI.show(`<div class="card"><h2>🔓 店門還沒鎖！</h2><p>下班不鎖門，好友可以衝進你的店搗亂。要鎖門嗎？</p>
+    <div class="row"><button class="btn good" id="lk-yes">🔒 鎖門再走</button><button class="btn" id="lk-no">不用，就開著</button></div><div class="muted" id="lk-msg"></div></div>`);
+  document.getElementById('lk-no')!.onclick = () => career('store');
+  document.getElementById('lk-yes')!.onclick = async () => {
+    on.locked = true; saveProfile(p);
+    const r = await syncStore(p.store!);
+    if (!r.ok) { on.locked = false; saveProfile(p); document.getElementById('lk-msg')!.textContent = r.error; return; }
+    career('store');
+  };
+}
+
+/** Raid a friend's store: 90 seconds as the troublemaker (or just trash at the door if it's locked). */
+async function raidFriend(code: string) {
+  screenDepth = 1;
+  UI.show('<div class="card"><h2>找店中…</h2><p class="muted">正在查詢店碼</p></div>');
+  const r = await getStore(code);
+  if (!r.ok) return UI.message('去不了', r.error, '回職涯', () => career('store'));
+  const v = r.data;
+  const done = (title: string, body: string) => UI.message(title, body, '回職涯', () => career('store'));
+  const pay = (score: number) => { const coins = raidReward(score); const p = loadProfile(); p.wallet += coins; saveProfile(p); return coins; };
+  if (v.locked) {
+    UI.show(`<div class="card"><h2>🔒 ${UI.esc(v.name)} 鎖門了</h2><p>店主下班有鎖門，進不去。你可以在門口丟一袋垃圾就走。</p>
+      <div class="row"><button class="btn" id="rd-trash">🗑 在門口丟垃圾</button><button class="btn" id="rd-back">算了</button></div></div>`);
+    document.getElementById('rd-back')!.onclick = () => career('store');
+    document.getElementById('rd-trash')!.onclick = async () => {
+      const s = await sendRaid(code, playerName(), OUTSIDE_SCORE, true);
+      if (!s.ok) return done('沒丟成', s.error);
+      done('丟完就跑 🏃', `你在 ${v.name} 門口丟了一袋垃圾。店主損失 $${s.data.money}。你拿到 $${pay(OUTSIDE_SCORE)} 零用錢。`);
+    };
+    return;
+  }
+  const cfg = buildRaidConfig(v);
+  startGame(() => new LocalConnection(playerName(), null, cfg, undefined, { staff: { name: '店員', pace: 0.9 } }), async (_reason, result) => {
+    if (!result) return career('store');
+    const score = result.score ?? 0;
+    const s = await sendRaid(code, playerName(), score, false);
+    if (!s.ok) return done('搗亂結束', `分數 ${score}，但沒有送出：${s.error}`);
+    done('搗亂結束 😈', `${getMap(v.map).icon} ${v.name}：分數 ${score}。店主損失 $${s.data.money}${s.data.rating ? `、口碑 −${s.data.rating}` : ''}。你拿到 $${pay(score)} 零用錢。`);
   });
 }
 
@@ -181,7 +233,7 @@ function menu(error?: string) {
     setName: n => { settings = { ...settings, name: n }; saveSettings(settings); },
     career: () => career(),
     solo: () => freePlay(),
-    create: cont => online(serverUrl(), { kind: 'create', name: playerName(), save: cont ? loadCoopSave() : null }),
+    create: (cont, map) => online(serverUrl(), { kind: 'create', name: playerName(), save: cont ? loadCoopSave() : null, map }),
     join: code => online(serverUrl(), { kind: 'join', code, name: playerName() }),
     rejoin: () => {
       const l = loadLastSession(); if (!l) return menu();

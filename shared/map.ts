@@ -65,6 +65,7 @@ const BASE_PRODUCTS = JSON.parse(JSON.stringify(PRODUCT_INFO)) as typeof PRODUCT
 /** Switches the whole game (simulation, renderer, bots) to a map. Returns the map actually used. */
 export function applyMap(id?: string): MapDef {
   const m = getMap(id);
+  if (m === CURRENT_MAP && SOLIDS.length) return m;
   CURRENT_MAP = m;
   SHELVES = m.shelves.map(s => ({ product: s.product, box: { ...s.box } }));
   COUNTER = { ...m.counter };
@@ -142,14 +143,19 @@ export function clampToStore(x: number, z: number, r = PLAYER_RADIUS) {
   return { x: Math.min(Math.max(x, r), STORE_W - r), z: Math.min(Math.max(z, r), STORE_D - r) };
 }
 
-const pathCache = new Map<string, { x: number; z: number }[]>();
+let pathCache = new Map<string, { x: number; z: number }[]>();
 
 // ---------- grid pathfinding for NPCs ----------
 export const CELL = 0.5;
 export const GW = Math.ceil(STORE_W / CELL);
 export const GD = Math.ceil((STORE_D + 2) / CELL); // include strip outside the door
-const blocked = new Uint8Array(GW * GD);
+let blocked: Uint8Array = new Uint8Array(GW * GD);
+/** Each map's walkability grid and path cache, built once, so switching maps (e.g. between server rooms) is cheap. */
+const gridCache = new Map<string, { blocked: Uint8Array; paths: Map<string, { x: number; z: number }[]> }>();
 function rebuildGrid() {
+  const hit = gridCache.get(CURRENT_MAP.id);
+  if (hit) { blocked = hit.blocked; pathCache = hit.paths; return; }
+  blocked = new Uint8Array(GW * GD);
   const npcR = 0.32;
   for (let gz = 0; gz < GD; gz++) for (let gx = 0; gx < GW; gx++) {
     const x = (gx + 0.5) * CELL, z = (gz + 0.5) * CELL;
@@ -158,7 +164,8 @@ function rebuildGrid() {
     if (z > STORE_D && (x < DOOR_X0 - 1 || x > DOOR_X1 + 1)) b = 1;
     blocked[gz * GW + gx] = b;
   }
-  pathCache.clear();
+  pathCache = new Map();
+  gridCache.set(CURRENT_MAP.id, { blocked, paths: pathCache });
 }
 
 export function isBlockedCell(gx: number, gz: number) {

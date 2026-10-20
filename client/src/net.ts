@@ -39,7 +39,7 @@ export class LocalConnection implements GameConnection {
   private staff: { bot: Bot; id: string; snap: Snapshot | null; rid: number } | null = null;
   constructor(name: string, save: StoreSave | null, shift?: ShiftConfig, seed?: number, extras: LocalExtras = {}) {
     applyMap(shift?.map ?? extras.map); // must happen before the world and the 3D view are built
-    this.room = new Room('SOLO', save, { solo: true, shift, seed });
+    this.room = new Room('SOLO', save, { solo: true, shift, seed, map: extras.map });
     this.onSave = extras.onSave;
     const conn = { send: (m: ServerMsg) => queueMicrotask(() => { if (m.type === 'save') this.onSave?.(m.save); this.onMessage(m); }), close: () => {} };
     const r = this.room.join(conn, name, undefined, 'solo');

@@ -11,6 +11,7 @@ import { defaultSave } from '../../shared/sim.ts';
 import { MAPS, getMap } from '../../shared/maps/index.ts';
 import { KAREN_INFO } from '../../shared/constants.ts';
 import { confirmTwice, esc, show } from './ui.ts';
+import { takeReports, syncStore, uploadStore } from './friends.ts';
 
 const KEY = 'fucustomer.career.v1';
 export function loadProfile(): CareerProfile {
@@ -19,7 +20,7 @@ export function loadProfile(): CareerProfile {
 export function saveProfile(p: CareerProfile) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ignore */ } }
 
 type Tab = 'chapters' | 'store' | 'skills' | 'gear' | 'achievements' | 'stats';
-export interface CareerHandlers { play(shiftId: string): void; back(): void; enterStore(): void; opened(): void }
+export interface CareerHandlers { play(shiftId: string): void; back(): void; enterStore(): void; opened(): void; raid(code: string): void }
 
 const stars = (n: number, max = 3) => '★'.repeat(n) + '<span class="dim">' + '★'.repeat(max - n) + '</span>';
 
@@ -66,6 +67,41 @@ export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'ch
   const closeBtn = document.getElementById('st-close') as HTMLButtonElement | null;
   if (closeBtn) closeBtn.onclick = () => confirmTwice(closeBtn, '再按一次收店（現金回到存款）', () => { closeStore(p); redraw(); });
   document.querySelectorAll<HTMLInputElement>('[name="st-wage"]').forEach(r => { r.onchange = () => { if (p.store) { p.store.wage = r.value as WageMode; redraw(); } }; });
+  // friends: share the store code, lock the door, collect damage reports, go raid a friend
+  const msg = (t: string) => { const el = document.getElementById('st-msg'); if (el) el.textContent = t; };
+  on('st-upload', async () => {
+    if (!p.store) return; msg('上傳中…');
+    const r = await uploadStore(p.store);
+    if (!r.ok) return msg(r.error);
+    const prof = loadProfile(); if (!prof.store) return;
+    prof.store.online = { code: r.data.code, token: r.data.token, locked: false };
+    saveProfile(prof); careerScreen(prof, h, 'store');
+  });
+  on('st-lock', async () => {
+    if (!p.store?.online) return;
+    p.store.online.locked = !p.store.online.locked; saveProfile(p);
+    const r = await syncStore(p.store);
+    if (!r.ok) { p.store.online.locked = !p.store.online.locked; saveProfile(p); return msg(r.error); }
+    careerScreen(p, h, 'store');
+  });
+  on('st-reports', async () => {
+    if (!p.store?.online) return; msg('查詢中…');
+    const r = await takeReports(p.store);
+    if (!r.ok) return msg(r.error);
+    if (!r.data.length) return msg('沒有人來搗亂過 👍');
+    const lossM = r.data.reduce((n, x) => n + x.money, 0), lossR = r.data.reduce((n, x) => n + x.rating, 0);
+    const st = p.store;
+    st.save = { ...st.save, money: st.save.money - lossM, rating: Math.max(0, Math.round((st.save.rating - lossR) * 100) / 100) };
+    saveProfile(p); void syncStore(st);
+    careerScreen(p, h, 'store');
+    msg(r.data.map(x => `${x.outside ? '🚪 在門外丟垃圾' : '😈 進店搗亂'}：${x.raider}（−$${x.money}${x.rating ? `、口碑 −${x.rating}` : ''}）`).join('　'));
+  });
+  on('st-raid', () => {
+    const code = (document.getElementById('st-raid-code') as HTMLInputElement).value.trim().toUpperCase();
+    if (!/^[A-Z0-9]{6}$/.test(code)) return msg('店碼是 6 碼英數字');
+    if (p.store?.online?.code === code) return msg('這是你自己的店 😅');
+    h.raid(code);
+  });
   document.querySelectorAll<HTMLButtonElement>('[data-gear]').forEach(b => { b.onclick = () => { if (buyGear(p, b.dataset.gear as GearId)) saveProfile(p); careerScreen(p, h, 'gear'); }; });
 }
 
@@ -118,7 +154,7 @@ function storeHtml(p: CareerProfile) {
     const can = canOpenStore(p);
     if (!can.ok) return `<div class="chapter locked"><div class="chhead"><b>🏪 自己開店</b></div>
       <div class="muted story">🔒 ${esc(can.why ?? '')}</div>
-      <p class="muted">開店基金 $${STORE_FUND}。目前存款 $${p.wallet}。開店後要付租金、進貨、員工薪水；連續 3 天打烊時現金為負或口碑見底（≤0.5）就會倒閉，投入的錢全部賠光。</p></div>${histLine}`;
+      <p class="muted">開店基金 $${STORE_FUND}。目前存款 $${p.wallet}。開店後要付租金、進貨、員工薪水；連續 3 天打烊時現金為負或口碑見底（≤0.5）就會倒閉，投入的錢全部賠光。</p></div>${friendsHtml(p)}${histLine}`;
     return `<div class="chapter daily"><div class="chhead"><b>🏪 自己開店</b><span class="tag ok">存款 $${p.wallet}</span></div>
       <p>夢想的時刻到了。用存款開一家自己的店——這次換你當老闆。</p>
       <label class="field">店名<input id="st-name" maxlength="16" placeholder="我的便利商店"></label>
@@ -126,7 +162,7 @@ function storeHtml(p: CareerProfile) {
       <div class="grid2">${MAPS.map((m, i) => `<label class="shopitem"><b><input type="radio" name="st-map" value="${m.id}" ${i === 0 ? 'checked' : ''}> ${m.icon} ${esc(m.name)}</b><span class="muted">${esc(m.desc)}</span></label>`).join('')}</div>
       <label class="muted"><input type="checkbox" id="st-all"> 投入全部存款（$${p.wallet}）；不勾選只投入開店基金 $${STORE_FUND}</label>
       <p class="muted">⚠ 有機會倒閉：連續 3 天打烊時現金為負或口碑見底 → 店收掉，投入的錢沒了。</p>
-      <button class="btn primary" id="st-open">開店！</button></div>${histLine}`;
+      <button class="btn primary" id="st-open">開店！</button></div>${friendsHtml(p)}${histLine}`;
   }
   const s = st.save, staff = st.staff;
   const mood = staff.quit ? '已辭職' : staff.mood >= 70 ? '😄 很有幹勁' : staff.mood >= 40 ? '🙂 普通' : staff.mood >= 20 ? '😒 很不爽' : '😡 快辭職了';
@@ -146,7 +182,23 @@ function storeHtml(p: CareerProfile) {
       <button class="btn" id="st-withdraw" ${s.money > STORE_RESERVE ? '' : 'disabled'}>💰 提領 $${Math.max(0, s.money - STORE_RESERVE)} 到存款</button>
       ${staff.quit ? `<button class="btn" id="st-hire" ${s.money >= 150 ? '' : 'disabled'}>📋 招募新員工（$150）</button>` : ''}
       <button class="btn small" id="st-close">收店</button>
-    </div></div>${histLine}`;
+    </div></div>${friendsHtml(p)}${histLine}`;
+}
+
+/** Friend stores (needs a game server): share your store code, lock the door, raid a friend. */
+function friendsHtml(p: CareerProfile) {
+  const st = p.store, on = st?.online;
+  const mine = !st ? '' : !on
+    ? `<p>把店上傳到遊戲伺服器，拿到 6 碼店碼，好友就能來搗亂（你也能去他們的店）。</p><button class="btn" id="st-upload">📤 取得店碼</button>`
+    : `<div class="row" style="align-items:center"><span>店碼 <b class="code">${esc(on.code)}</b></span>
+        <span class="tag ${on.locked ? 'ok' : ''}" style="flex:0 0 auto;${on.locked ? '' : 'background:#c92a2a'}">${on.locked ? '🔒 店門已鎖' : '🔓 店門沒鎖'}</span></div>
+      <p class="muted">${on.locked ? '鎖著的店，好友只能在門外丟垃圾（損失很小）。' : '⚠ 沒鎖門：好友可以衝進店裡搗亂，打翻商品、嗆客人、亂丟垃圾。下線前記得鎖門！'}</p>
+      <div class="row"><button class="btn ${on.locked ? '' : 'good'}" id="st-lock">${on.locked ? '🔓 開門營業' : '🔒 鎖店門'}</button><button class="btn" id="st-reports">📬 搗亂報告</button></div>`;
+  return `<div class="chapter"><div class="chhead"><b>👥 好友的店</b><span class="muted">需要連線到遊戲伺服器（測試中）</span></div>
+    ${mine}
+    <p class="muted" style="margin-top:10px">輸入好友的店碼，去他的店搗亂 90 秒：打翻商品、嗆客人、亂丟垃圾，別被店員盯太久。搗亂分數會變成一點零用錢。</p>
+    <div class="row"><input type="text" class="code" id="st-raid-code" maxlength="6" placeholder="店碼" autocomplete="off" autocapitalize="characters"><button class="btn" id="st-raid" style="flex:0 0 140px">😈 去搗亂</button></div>
+    <div class="muted" id="st-msg"></div></div>`;
 }
 
 function dailyHtml(p: CareerProfile) {

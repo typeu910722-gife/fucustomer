@@ -78,6 +78,15 @@ export class Bot {
       if (this.goalKey !== 'throw') { this.goalKey = 'throw'; this.path = findPath(me, THROW_SPOT); }
       return this.walk(me, out, dt, THROW_SPOT);
     }
+    // friend-store raid: the clerk keeps an eye on the troublemaker (on and off, so a careful raider gets chances)
+    if (open && s.raid && !me.raider) {
+      const r = s.players.find(p => p.raider);
+      if (r && Math.hypot(r.x - me.x, r.z - me.z) < 6 && s.phaseLeft % 12 > 5) {
+        if (this.goalKey !== 'watch') { this.goalKey = 'watch'; this.path = findPath(me, r); }
+        if (Math.hypot(r.x - me.x, r.z - me.z) < 1.1) { out.yaw = Math.atan2(r.x - me.x, r.z - me.z); return out; }
+        return this.walk(me, out, dt, { x: r.x, z: r.z });
+      }
+    }
     const goal = this.pickGoal(s, me);
     if (!goal) {
       if (me.held && me.held.kind !== 'mop' && this.cooldown <= 0) { out.drop = true; this.cooldown = 1; }

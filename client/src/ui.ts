@@ -20,7 +20,7 @@ function val(id: string) { return (document.getElementById(id) as HTMLInputEleme
 
 export interface MainMenuHandlers {
   career(): void;
-  solo(fresh: boolean): void; create(continueCoop: boolean): void; join(code: string): void; rejoin(): void; settings(): void;
+  solo(fresh: boolean): void; create(continueCoop: boolean, map?: string): void; join(code: string): void; rejoin(): void; settings(): void;
   quit?(): void;
   /** First launch: jump straight into career shift 1-1. */
   firstDay?(): void;
@@ -41,7 +41,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: Sto
         <button class="btn" id="m-solo-new">🗺 選擇店面開始營業（${MAPS.length} 種地圖）</button>
       </div>
       <h3>多人合作（最多 ${MAX_PLAYERS} 人，測試中）</h3>
-      <button class="btn" id="m-create">建立房間</button>
+      <div class="row"><select id="m-map" aria-label="店面種類">${MAPS.map(m => `<option value="${m.id}">${m.icon} ${esc(m.name)}</option>`).join('')}</select><button class="btn" id="m-create">建立房間</button></div>
       ${info.coopSave ? `<label class="muted"><input type="checkbox" id="m-coop-cont" checked> 延續上次合作店面（第 ${info.coopSave.day} 天）</label>` : ''}
       <div class="row" style="margin-top:8px">
         <input type="text" class="code" id="m-code" maxlength="5" placeholder="房間碼" autocomplete="off" autocapitalize="characters">
@@ -56,7 +56,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { soloSave: Sto
   on('m-name', 'change', name);
   on('m-career', 'click', () => { name(); h.career(); });
   on('m-solo-new', 'click', () => { name(); h.solo(true); });
-  on('m-create', 'click', () => { name(); h.create(!!(document.getElementById('m-coop-cont') as HTMLInputElement | null)?.checked); });
+  on('m-create', 'click', () => { name(); h.create(!!(document.getElementById('m-coop-cont') as HTMLInputElement | null)?.checked, val('m-map') || undefined); });
   on('m-join', 'click', () => { name(); const c = val('m-code').trim().toUpperCase(); if (c.length < 5) { document.getElementById('m-err')!.textContent = '請輸入 5 碼房間碼'; return; } h.join(c); });
   on('m-code', 'keydown', e => { if ((e as KeyboardEvent).key === 'Enter') document.getElementById('m-join')!.click(); });
   on('m-rejoin', 'click', () => { name(); h.rejoin(); });

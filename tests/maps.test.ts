@@ -60,7 +60,7 @@ for (const m of MAPS) {
   test(`map ${m.icon} ${m.name}: a simulated worker runs a whole business day`, () => {
     applyMap(m.id);
     let t = 0;
-    const room = new Room('S', null, { solo: true, now: () => t, seed: 3 });
+    const room = new Room('S', null, { solo: true, now: () => t, seed: 3, map: m.id });
     const c: { snap: any; pid: string; send(msg: any): void; close(): void } = { snap: null, pid: '', send(msg) { if (msg.type === 'snap') c.snap = msg.s; if (msg.type === 'welcome') c.pid = msg.playerId; }, close() {} };
     room.join(c, 'bot', undefined); room.startGame();
     const bot = new Bot('any', 0.3); let rid = 0;

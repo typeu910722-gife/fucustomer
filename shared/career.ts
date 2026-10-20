@@ -43,6 +43,8 @@ export interface ShiftConfig {
   staffWage?: number;
   /** Map id (shared/maps). Omitted = 便利商店. */
   map?: string;
+  /** Raiding a friend's store: you play the troublemaker for a short timed round. */
+  raid?: { store: string; owner?: string };
 }
 
 // ---------------- ranks & levels ----------------
@@ -530,5 +532,7 @@ function sanitizeStore(v: unknown, int: (x: unknown, lo: number, hi: number, d: 
     days: int(o.days, 0, 1e6, 0), negDays: int(o.negDays, 0, 3, 0), wage, bestDay: int(o.bestDay, -1e6, 1e9, 0), withdrawn: int(o.withdrawn, 0, 1e9, 0),
     staff: { name: typeof staff.name === 'string' ? staff.name.slice(0, 8) : '小陳', mood: int(staff.mood, 0, 100, 70), quit: staff.quit === true },
     map: typeof o.map === 'string' && /^[a-z0-9-]{1,24}$/.test(o.map) ? o.map : 'convenience',
+    online: o.online && typeof o.online === 'object' && typeof o.online.code === 'string' && /^[A-Z0-9]{6}$/.test(o.online.code) && typeof o.online.token === 'string' && o.online.token.length <= 64
+      ? { code: o.online.code, token: o.online.token, locked: o.online.locked === true } : undefined,
   };
 }

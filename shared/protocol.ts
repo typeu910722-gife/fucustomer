@@ -13,7 +13,7 @@ export type CustomerKind = 'normal' | KarenKind;
 
 export type ActKind =
   | 'checkout' | 'brew' | 'deliver' | 'takeBox' | 'stock' | 'returnBox' | 'takeMop' | 'returnMop'
-  | 'clean' | 'calm' | 'coupon' | 'askQueue' | 'stopFilm' | 'checkBag' | 'pickup' | 'heat' | 'grab' | 'stopLitter' | 'unplug' | 'treat' | 'repeatOrder' | 'recommend' | 'limitTry';
+  | 'clean' | 'calm' | 'coupon' | 'askQueue' | 'stopFilm' | 'checkBag' | 'pickup' | 'heat' | 'grab' | 'stopLitter' | 'unplug' | 'treat' | 'repeatOrder' | 'recommend' | 'limitTry' | 'knock' | 'heckle';
 
 /** A target is either a static fixture or a dynamic entity id. */
 export type Target =
@@ -50,6 +50,8 @@ export interface PlayerSnap {
   held: Held | null; held2: Held | null; connected: boolean; away: boolean; ready: boolean;
   busy: { kind: ActKind; p: number } | null;
   grabbing: number | null; spinCd: number;
+  /** This player is raiding the store (friend-store mode). */
+  raider?: boolean;
 }
 export interface CustomerSnap {
   id: number; kind: CustomerKind; x: number; z: number; yaw: number; state: string;
@@ -62,6 +64,8 @@ export interface CustomerSnap {
 }
 export interface Snapshot {
   t: number; // server time ms
+  /** Friend-store raid: score so far and how close the staff is to throwing you out (0..1). */
+  raid?: { score: number; watched: number };
   phase: Phase; phaseLeft: number; clock: number; day: number;
   money: number; rating: number; backstock: Record<Product, number>; shelves: Record<Product, number>;
   upgrades: Record<UpgradeId, number>; mopsOnRack: number;
@@ -84,7 +88,7 @@ export interface LobbyState {
 // ---- messages ----
 export type ClientMsg =
   | { type: 'hello'; v: number; platform: string }
-  | { type: 'create'; name: string; save?: StoreSave | null }
+  | { type: 'create'; name: string; save?: StoreSave | null; map?: string }
   | { type: 'join'; code: string; name: string; token?: string }
   | { type: 'ready'; ready: boolean }
   | { type: 'start' }

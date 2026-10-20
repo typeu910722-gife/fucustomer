@@ -349,6 +349,18 @@ export class Game {
     const me = s.players.find(p => p.id === this.selfId)!;
     const held = me.held;
     const out: Candidate[] = [];
+    if (me.raider) {
+      // raiding a friend's store: knock things off shelves and heckle customers (G throws trash)
+      for (const sh of SHELVES) out.push(s.shelves[sh.product] > 0
+        ? { label: `😈 打翻${PRODUCT_INFO[sh.product].name}`, primary: 'knock', target: { t: 'shelf', product: sh.product }, box: sh.box }
+        : { label: `${PRODUCT_INFO[sh.product].name}貨架`, reason: '已經空了', target: { t: 'shelf', product: sh.product }, box: sh.box });
+      for (const c of s.customers) {
+        if (c.kind !== 'normal' || c.state === 'leaving' || c.flying || c.held) continue;
+        const pos = this.view.customerWorldPos(c.id) ?? c;
+        out.push({ label: '😈 嗆這位客人', primary: 'heckle', target: { t: 'customer', id: c.id }, point: { x: pos.x, z: pos.z, r: 0.45, h: 1.8 } });
+      }
+      return out;
+    }
     const cap = shelfCapacity(s.upgrades.shelves);
     for (const r of REGISTERS) {
       if (r.idx === 1 && !s.upgrades.register2) continue;
@@ -565,7 +577,7 @@ export class Game {
         if (this.target?.alt && this.target.altLabel) this.send({ type: 'act', rid: newRid(), kind: this.target.alt, target: this.target.target });
         else if (me.held) this.send({ type: 'drop', rid: newRid() });
       }
-      if (this.input.consume('drop') && (me.held || me.held2 || me.grabbing != null || me.busy)) this.send({ type: 'drop', rid: newRid() });
+      if (this.input.consume('drop') && (me.held || me.held2 || me.grabbing != null || me.busy || me.raider)) this.send({ type: 'drop', rid: newRid() });
       if (this.input.consume('grab')) {
         if (!this.canGrab()) this.toast('「抓起／投擲」在 Lv.11 資深店員解鎖', 'info', 1800);
         else if (me.grabbing != null) this.send({ type: 'throw', rid: newRid(), yaw: this.yaw, pitch: this.pitch });
@@ -726,7 +738,11 @@ export class Game {
     (($('stamina').firstElementChild) as HTMLElement).style.background = this.stamina < 25 ? '#ff6b6b' : '#69db7c';
     const es = $('eventstrip');
     if (s.event) { es.classList.remove('hidden'); es.textContent = s.event.kind === 'outage' ? `⚡ 停電中 ${Math.ceil(s.event.left)}s` : `🚶 尖峰人潮 ${Math.ceil(s.event.left)}s`; } else es.classList.add('hidden');
-    if (this.tut) {
+    if (s.raid && s.phase === 'open') {
+      const hb = $('hintbar'); hb.classList.remove('hidden');
+      const eye = '👀'.repeat(Math.ceil(s.raid.watched * 5)) || '—';
+      hb.textContent = `😈 搗亂分數 ${s.raid.score}・剩 ${Math.ceil(s.phaseLeft)} 秒・店員注意：${eye}（E 打翻商品／嗆客人、G 亂丟垃圾，別讓店員靠近太久）`;
+    } else if (this.tut) {
       const hb = $('hintbar'); hb.classList.remove('hidden');
       hb.textContent = `📘 教學 ${Math.min(this.tut.step, this.tut.total)}/${this.tut.total}：${this.tut.text}`;
       const finished = this.tut.step >= this.tut.total;
@@ -773,7 +789,7 @@ export class Game {
 }
 
 function shortLabel(k: ActKind) {
-  const m: Partial<Record<ActKind, string>> = { checkout: '結帳', brew: FOOD_INFO.coffee.verb, deliver: '交付', takeBox: '拿貨', stock: '上架', returnBox: '放回', takeMop: '拿拖把', returnMop: '放回', clean: '清理', calm: '安撫', coupon: '折價券', askQueue: '請排隊', stopFilm: '制止', checkBag: '請結帳', pickup: '撿起' };
+  const m: Partial<Record<ActKind, string>> = { knock: '打翻', heckle: '嗆人', checkout: '結帳', brew: FOOD_INFO.coffee.verb, deliver: '交付', takeBox: '拿貨', stock: '上架', returnBox: '放回', takeMop: '拿拖把', returnMop: '放回', clean: '清理', calm: '安撫', coupon: '折價券', askQueue: '請排隊', stopFilm: '制止', checkBag: '請結帳', pickup: '撿起' };
   return m[k] ?? '互動';
 }
 

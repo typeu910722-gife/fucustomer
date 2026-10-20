@@ -9,6 +9,8 @@ import {
   finishShift, requestSpin, requestHit, requestThrow, requestUltimate, sanitizeSave, setReady, snapshot, tick,
 } from './sim.ts';
 import type { ShiftConfig } from './career.ts';
+import { applyMap } from './map.ts';
+import { getMap } from './maps/index.ts';
 
 export interface Conn { send(msg: ServerMsg): void; close(reason: string): void }
 
@@ -18,7 +20,7 @@ export interface Member {
 }
 
 export interface RoomCheckpoint {
-  code: string; save: StoreSave; hostId: string; started: boolean; savedAt: number;
+  code: string; save: StoreSave; hostId: string; started: boolean; savedAt: number; map?: string;
   members: { playerId: string; name: string; token: string; color: number; platform: string; joinOrder: number }[];
 }
 
@@ -31,9 +33,11 @@ export interface RoomOptions {
   /** Career shift config (solo). Omit for the multiplayer business-day loop. */
   shift?: ShiftConfig;
   seed?: number;
+  /** Store type for the business-day loop (multiplayer rooms). Career shifts carry their own. */
+  map?: string;
 }
 
-const ACT_KINDS = new Set(['checkout', 'brew', 'deliver', 'takeBox', 'stock', 'returnBox', 'takeMop', 'returnMop', 'clean', 'calm', 'coupon', 'askQueue', 'stopFilm', 'checkBag', 'pickup', 'heat', 'grab', 'stopLitter', 'unplug', 'treat', 'repeatOrder', 'recommend', 'limitTry']);
+const ACT_KINDS = new Set(['checkout', 'brew', 'deliver', 'takeBox', 'stock', 'returnBox', 'takeMop', 'returnMop', 'clean', 'calm', 'coupon', 'askQueue', 'stopFilm', 'checkBag', 'pickup', 'heat', 'grab', 'stopLitter', 'unplug', 'treat', 'repeatOrder', 'recommend', 'limitTry', 'knock', 'heckle']);
 const TARGET_KINDS = new Set(['register', 'coffee', 'microwave', 'crate', 'shelf', 'mop', 'customer', 'spill', 'item']);
 
 function defaultRandomId(len: number) {
@@ -78,6 +82,8 @@ export class Room {
   private now: () => number;
   private rid: (len: number) => string;
   private opts: RoomOptions;
+  /** This room's store type. The map state is shared by the whole process, so every entry point switches to it first. */
+  readonly mapId: string;
 
   constructor(code: string, save: StoreSave | null | undefined, opts: RoomOptions = {}) {
     this.code = code;
@@ -86,10 +92,12 @@ export class Room {
     this.opts = opts;
     this.now = opts.now ?? (() => Date.now());
     this.rid = opts.randomId ?? defaultRandomId;
+    this.mapId = getMap(opts.shift?.map ?? opts.map).id;
   }
+  private useMap() { applyMap(this.mapId); }
 
   static restore(cp: RoomCheckpoint, opts: RoomOptions = {}) {
-    const r = new Room(cp.code, cp.save, opts);
+    const r = new Room(cp.code, cp.save, { ...opts, map: cp.map ?? opts.map });
     r.hostId = cp.hostId;
     const now = r.now();
     for (const m of cp.members) {
@@ -109,7 +117,7 @@ export class Room {
 
   checkpoint(): RoomCheckpoint {
     return {
-      code: this.code, save: this.save, hostId: this.hostId, started: this.started, savedAt: this.now(),
+      code: this.code, save: this.save, hostId: this.hostId, started: this.started, savedAt: this.now(), map: this.mapId,
       members: [...this.members.values()].map(m => ({ playerId: m.playerId, name: m.name, token: m.token, color: m.color, platform: m.platform, joinOrder: m.joinOrder })),
     };
   }
@@ -120,6 +128,7 @@ export class Room {
   /** Join or reconnect. Returns the member or an error code. */
   join(conn: Conn, name: unknown, token: unknown, platform = 'web'): { ok: true; member: Member } | { ok: false; code: string; message: string } {
     if (this.closed) return { ok: false, code: 'room_closed', message: '房間已關閉' };
+    this.useMap();
     if (typeof token === 'string' && token) {
       for (const m of this.members.values()) {
         if (m.token === token) {
@@ -196,6 +205,7 @@ export class Room {
   handle(playerId: string, msg: ClientMsg) {
     const m = this.members.get(playerId);
     if (!m || !msg || typeof msg !== 'object') return;
+    this.useMap();
     const w = this.world;
     switch (msg.type) {
       case 'ready':
@@ -276,6 +286,7 @@ export class Room {
   }
 
   startGame() {
+    this.useMap();
     this.started = true;
     this.world = createWorld(this.save, this.opts.seed ?? Date.now(), this.opts.shift);
     for (const m of [...this.members.values()].sort((a, b) => a.joinOrder - b.joinOrder)) {
@@ -290,6 +301,7 @@ export class Room {
 
   /** Advance one simulation tick. */
   update(dt = 1 / TICK_RATE) {
+    this.useMap();
     const now = this.now();
     // reconnect grace
     for (const m of [...this.members.values()]) {

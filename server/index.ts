@@ -10,12 +10,14 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { PROTOCOL_VERSION, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, TICK_RATE } from '../shared/constants.ts';
 import type { ClientMsg, ServerMsg } from '../shared/protocol.ts';
 import { Conn, Room, RoomCheckpoint } from '../shared/room.ts';
+import { FriendStore, StoreRegistry } from './stores.ts';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, '..');
 const STATIC_DIR = process.env.STATIC_DIR ?? path.join(ROOT, 'dist');
 const DATA_DIR = process.env.DATA_DIR ?? path.join(ROOT, 'data', 'rooms');
+const STORES_DIR = process.env.STORES_DIR ?? path.join(path.dirname(DATA_DIR), 'stores');
 const MAX_ROOMS = Number(process.env.MAX_ROOMS ?? 500);
 const CHECKPOINT_MAX_AGE_MS = 30 * 60 * 1000;
 const MAX_MSG_BYTES = 4096;
@@ -48,8 +50,8 @@ async function deleteCheckpoint(code: string) {
   try { await fs.unlink(path.join(DATA_DIR, `${code}.json`)); } catch { /* ignore */ }
 }
 
-function makeRoom(code: string, save: unknown) {
-  return new Room(code, save as never, { onCheckpoint: cp => void writeCheckpoint(cp), log: s => log(s) });
+function makeRoom(code: string, save: unknown, map?: unknown) {
+  return new Room(code, save as never, { onCheckpoint: cp => void writeCheckpoint(cp), log: s => log(s), map: typeof map === 'string' ? map.slice(0, 24) : undefined });
 }
 
 async function restoreRooms() {
@@ -64,6 +66,62 @@ async function restoreRooms() {
   }
 }
 
+// ---------- friend stores (prototype) ----------
+const storeWrites = new Map<string, Promise<void>>();
+function persistStore(s: FriendStore) {
+  const file = path.join(STORES_DIR, `${s.code}.json`);
+  const prev = storeWrites.get(s.code) ?? Promise.resolve();
+  const next = prev.then(async () => {
+    try { await fs.mkdir(STORES_DIR, { recursive: true }); await fs.writeFile(file + '.tmp', JSON.stringify(s)); await fs.rename(file + '.tmp', file); }
+    catch (e) { log('store write failed', e); }
+  });
+  storeWrites.set(s.code, next);
+}
+const stores = new StoreRegistry(persistStore);
+async function loadStores() {
+  if (!existsSync(STORES_DIR)) return;
+  for (const f of await fs.readdir(STORES_DIR)) {
+    if (!f.endsWith('.json')) continue;
+    try { stores.load(JSON.parse(await fs.readFile(path.join(STORES_DIR, f), 'utf8'))); } catch (e) { log('bad store file', f, e); }
+  }
+}
+
+function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+  return new Promise(resolve => {
+    let size = 0; const chunks: Buffer[] = [];
+    req.on('data', (c: Buffer) => { size += c.length; if (size > 8192) { req.destroy(); resolve({}); } else chunks.push(c); });
+    req.on('end', () => { try { const v = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); resolve(v && typeof v === 'object' ? v : {}); } catch { resolve({}); } });
+    req.on('error', () => resolve({}));
+  });
+}
+const apiHits = new Map<string, { n: number; at: number }>();
+async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL) {
+  const send = (status: number, body: unknown) => {
+    res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, x-owner-token', 'access-control-allow-methods': 'GET, POST, PUT, OPTIONS' });
+    res.end(status === 204 ? undefined : JSON.stringify(body));
+  };
+  if (req.method === 'OPTIONS') return send(204, {});
+  const ip = String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '').split(',')[0].trim();
+  const hit = apiHits.get(ip); const t = Date.now();
+  if (hit && t - hit.at < 60_000) { if (++hit.n > 120) return send(429, { error: '太頻繁了，稍後再試' }); } else apiHits.set(ip, { n: 1, at: t });
+  const parts = url.pathname.split('/').filter(Boolean); // api, room|stores, code?, action?
+  const token = req.headers['x-owner-token'];
+  const out = (r: { ok: true; value: unknown } | { ok: false; status: number; error: string }) => (r.ok ? send(200, r.value) : send(r.status, { error: r.error }));
+  if (parts[1] === 'room' && parts[2] && req.method === 'GET') {
+    const room = rooms.get(parts[2].toUpperCase());
+    return room ? send(200, { code: room.code, map: room.mapId, players: room.connectedCount }) : send(404, { error: '找不到房間' });
+  }
+  if (parts[1] === 'stores') {
+    const code = (parts[2] ?? '').toUpperCase();
+    if (!code && req.method === 'POST') return out(stores.create(await readBody(req)));
+    if (code && !parts[3] && req.method === 'GET') return out(stores.get(code));
+    if (code && !parts[3] && req.method === 'PUT') return out(stores.update(code, token, await readBody(req)));
+    if (code && parts[3] === 'raid' && req.method === 'POST') { const b = await readBody(req); return out(stores.raid(code, `${ip}|${String(b.raider ?? '')}`, b)); }
+    if (code && parts[3] === 'reports' && req.method === 'GET') return out(stores.takeReports(code, token));
+  }
+  send(404, { error: 'not found' });
+}
+
 // ---------- HTTP (health + static client) ----------
 const MIME: Record<string, string> = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json',
@@ -71,6 +129,7 @@ const MIME: Record<string, string> = {
 };
 function serveStatic(req: IncomingMessage, res: ServerResponse) {
   const url = new URL(req.url ?? '/', 'http://x');
+  if (url.pathname.startsWith('/api/')) { void handleApi(req, res, url); return; }
   if (url.pathname === '/health') {
     let players = 0;
     for (const r of rooms.values()) players += r.connectedCount;
@@ -138,7 +197,7 @@ wss.on('connection', (ws: WebSocket) => {
         break;
       case 'create': {
         if (rooms.size >= MAX_ROOMS) return fail('server_full', '伺服器房間已滿，請稍後再試');
-        const room = makeRoom(newCode(), msg.save);
+        const room = makeRoom(newCode(), msg.save, msg.map);
         rooms.set(room.code, room);
         const r = room.join(conn, msg.name, undefined, s.platform);
         if (r.ok) { s.room = room; s.playerId = r.member.playerId; }
@@ -195,4 +254,5 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 process.on('SIGINT', () => shutdown('SIGINT'));
 
 await restoreRooms();
+await loadStores();
 http.listen(PORT, () => log(`FUCustomer server on :${PORT} (ws path /ws, static ${STATIC_DIR})`));

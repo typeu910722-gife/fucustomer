@@ -5,8 +5,20 @@ import { PROTOCOL_VERSION } from '../../shared/constants.ts';
 import type { ClientMsg, ServerMsg, StoreSave } from '../../shared/protocol.ts';
 import type { GameConnection, NetStatus } from './net.ts';
 
-export interface JoinIntent { kind: 'create'; name: string; save: StoreSave | null }
-export type Intent = JoinIntent | { kind: 'join'; code: string; name: string; token?: string };
+export interface JoinIntent { kind: 'create'; name: string; save: StoreSave | null; map?: string }
+/** `map` for a join is the room's store type, looked up before connecting (see roomMap). */
+export type Intent = JoinIntent | { kind: 'join'; code: string; name: string; token?: string; map?: string };
+
+/** Asks the server which store type a room uses, so the 3D view is built for the right map. */
+export async function roomMap(wsUrl: string, code: string): Promise<string | undefined> {
+  try {
+    const http = wsUrl.replace(/^ws/, 'http').replace(/\/ws$/, '');
+    const r = await fetch(`${http}/api/room/${encodeURIComponent(code)}`);
+    if (!r.ok) return undefined;
+    const j = await r.json() as { map?: string };
+    return typeof j.map === 'string' ? j.map : undefined;
+  } catch { return undefined; }
+}
 
 export class WsConnection implements GameConnection {
   readonly solo = false;
@@ -24,7 +36,7 @@ export class WsConnection implements GameConnection {
   private giveUpAt = 0;
 
   constructor(public url: string, private intent: Intent, private platform: string) {
-    applyMap(); // online rooms are always the 便利商店 for now
+    applyMap(intent.map); // the room's store type (defaults to the 便利商店)
     this.connect();
     this.hbTimer = window.setInterval(() => this.heartbeat(), 3000);
     window.addEventListener('online', this.onOnline);
@@ -51,7 +63,7 @@ export class WsConnection implements GameConnection {
       this.attempts = 0; this.lastRx = performance.now();
       this.raw({ type: 'hello', v: PROTOCOL_VERSION, platform: this.platform });
       if (this.everJoined && this.token) this.raw({ type: 'join', code: this.code, name: '', token: this.token });
-      else if (this.intent.kind === 'create') this.raw({ type: 'create', name: this.intent.name, save: this.intent.save });
+      else if (this.intent.kind === 'create') this.raw({ type: 'create', name: this.intent.name, save: this.intent.save, map: this.intent.map });
       else this.raw({ type: 'join', code: this.intent.code, name: this.intent.name, token: this.intent.token });
     };
     ws.onmessage = (ev) => {

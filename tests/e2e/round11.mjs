@@ -41,7 +41,7 @@ await pg.evaluate(() => {
   c.x = 16.5; c.z = 12.5; c.state = 'atRegister'; c.path = []; c.items = ['drinks']; c.shopping = []; c.life = 999; w.registers[0] = c.id;
   g.pos = { x: 16.5, z: 13.6 }; g.yaw = Math.PI; g.pitch = 0.05; me.x = 16.5; me.z = 13.6;
 });
-await pg.waitForTimeout(600);
+await pg.waitForFunction(() => /複誦/.test(document.getElementById('prompt')?.innerText ?? ''), null, { timeout: 4000 }).catch(() => {});
 out.prompt = await pg.evaluate(() => document.getElementById('prompt')?.innerText ?? '');
 await pg.screenshot({ path: `${OUT}/r11-custom.png` });
 await pg.keyboard.down('e');

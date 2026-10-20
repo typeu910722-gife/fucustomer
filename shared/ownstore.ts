@@ -21,6 +21,8 @@ export interface OwnStore {
   staff: { name: string; mood: number; quit: boolean }; wage: WageMode; bestDay: number; withdrawn: number;
   /** Which kind of store (map id). */
   map: string;
+  /** Shared with friends: store code, the owner's secret token, and whether the door is locked. */
+  online?: { code: string; token: string; locked: boolean };
 }
 export interface StoreHistory { opened: number; closed: number; lost: number; lastReason: string }
 

@@ -32,6 +32,8 @@ export interface PlayerState {
   held: Held | null; held2: Held | null; connected: boolean; away: boolean; ready: boolean; busy: Busy | null;
   lastInputAt: number; recent: Map<string, { ok: boolean; reason?: string }>;
   grabbing: number | null; spinReadyAt: number; hitReadyAt?: number;
+  /** Friend-store raid: this player is the troublemaker. */
+  raider?: boolean; litterAt?: number;
   stats: { served: number; karens: number; cleaned: number; restocked: number; ejected: number };
 }
 
@@ -65,6 +67,8 @@ export interface Customer {
 export interface World {
   cfg: ShiftConfig;
   incidents: Incident[];
+  /** Friend-store raid progress: score, how long the staff has been watching you, counts. */
+  raid: { score: number; watched: number; caught: boolean; knocked: number; litter: number; heckled: number } | null;
   time: number; phase: Phase; phaseLeft: number; clock: number; day: number;
   money: number; rating: number; backstock: Record<Product, number>; shelves: Record<Product, number>;
   upgrades: Record<UpgradeId, number>; mopsOnRack: number;
@@ -144,7 +148,7 @@ export function createWorld(save: StoreSave = defaultSave(), seed = Date.now(), 
     nextId: 1, rng: mulberry32(seed), spawnTimer: 3, karenTimer: cfg.firstKaren, mopbotTimer: 20,
     dayStats: emptyStats(shift ? cfg.start.rating : s.rating), bonusPaidDay: 0, totals: { ...s.totals }, events: [], results: [],
     emptyShelfToastAt: -99, saveOut: null, difficultyPlayers: 1,
-    incidents: [], chaos: 0, chaosTimer: 0, burst: 0, combo: 0, comboUntil: 0, power: 1, event: null, nextEvent: cfg.firstEvent,
+    incidents: [], raid: cfg.raid ? { score: 0, watched: 0, caught: false, knocked: 0, litter: 0, heckled: 0 } : null, chaos: 0, chaosTimer: 0, burst: 0, combo: 0, comboUntil: 0, power: 1, event: null, nextEvent: cfg.firstEvent,
     guardTimer: guardInterval(cfg.mods.guard), hintQueue: cfg.hints.map((text, i) => ({ at: 1 + i * 16, text })), result: null,
     bossSpawned: false, bossDefeated: false, bossTimer: 0, rampTimer: 0, openTime: 0,
   };
@@ -169,6 +173,8 @@ export function addPlayer(w: World, id: string, name: string, color: number): Pl
     ready: false, busy: null, lastInputAt: w.time, recent: new Map(), grabbing: null, spinReadyAt: 0,
     stats: { served: 0, karens: 0, cleaned: 0, restocked: 0, ejected: 0 },
   };
+  // the first one in a raid is the troublemaker; they come in through the front door
+  if (w.raid && w.players.size === 0) { p.raider = true; p.x = ENTRANCE.x; p.z = ENTRANCE.z - 0.6; p.yaw = Math.PI; }
   w.players.set(id, p);
   return p;
 }
@@ -728,6 +734,7 @@ type Check = { ok: true; dur: number } | { ok: false; reason: string };
 /** Validates an action; returns its channel duration. Called at start and again at completion. */
 function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = false): Check {
   if (w.phase === 'summary') return { ok: false, reason: '已經結算' };
+  if (!!p.raider !== (kind === 'knock' || kind === 'heckle')) return { ok: false, reason: p.raider ? '你是來搗亂的，不是來上班的' : '店員不能搗亂' };
   if (targetDist(w, p, t) > SERVER_INTERACT_RANGE) return { ok: false, reason: '距離太遠' };
   if (p.grabbing != null && kind !== 'grab') return { ok: false, reason: '先把抓著的人丟出去或放下' };
   const m = w.cfg.mods;
@@ -810,6 +817,13 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
     case 'checkBag':
       if (!c || c.kind !== 'hog' || c.resolved) return { ok: false, reason: '不需要' };
       return { ok: true, dur: 1.0 };
+    case 'knock':
+      if (t.t !== 'shelf') return { ok: false, reason: '目標錯誤' };
+      if (w.shelves[t.product] <= 0) return { ok: false, reason: '架上已經空了' };
+      return { ok: true, dur: 0.6 };
+    case 'heckle':
+      if (!c || c.kind !== 'normal' || c.state === 'leaving') return { ok: false, reason: '沒人可以嗆' };
+      return { ok: true, dur: 0.8 };
     case 'repeatOrder':
       if (!c || c.kind !== 'custom' || c.resolved) return { ok: false, reason: '不需要' };
       return { ok: true, dur: 1.5 / m.calm };
@@ -964,6 +978,20 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
       resolveKaren(w, c!, p, 0.1, `🗑 ${p.name} 請亂丟客把垃圾帶走（口碑 +0.1）`);
       leave(w, c!, false);
       break;
+    case 'knock': {
+      if (t.t !== 'shelf' || !w.raid) return;
+      const n = Math.min(2, w.shelves[t.product]);
+      w.shelves[t.product] -= n; addSpill(w, p.x + Math.sin(p.yaw) * 0.8, p.z + Math.cos(p.yaw) * 0.8); adjChaos(w, 3);
+      w.raid.score += 12; w.raid.knocked++;
+      ev(w, { e: 'sfx', name: 'crash', x: p.x, z: p.z });
+      break;
+    }
+    case 'heckle':
+      if (!w.raid) return;
+      w.raid.score += 15; w.raid.heckled++;
+      toast(w, '😈 你嗆走了一位客人', 'info');
+      angryLeave(w, c!);
+      break;
     case 'repeatOrder':
       resolveKaren(w, c!, p, 0.1, `🍳 ${p.name} 複誦了一遍點單，客製魔人終於點頭了（口碑 +0.1）`);
       break;
@@ -1049,6 +1077,13 @@ export function requestDrop(w: World, playerId: string, rid: string) {
   if (!p || !once(p, rid)) return;
   if (p.busy) { cancelBusy(w, p); return; }
   if (p.grabbing != null) { releaseGrab(w, p); return; }
+  if (p.raider && w.raid && w.phase === 'open') {
+    // the troublemaker's drop key throws trash on the floor (short cooldown)
+    if (w.time - (p.litterAt ?? -9) < 1.5) return;
+    p.litterAt = w.time; addSpill(w, p.x, p.z); adjChaos(w, 1); w.raid.score += 5; w.raid.litter++;
+    ev(w, { e: 'sfx', name: 'splat', x: p.x, z: p.z });
+    return;
+  }
   if (!p.held && !p.held2) return;
   if (p.held2) { p.held2 = null; ev(w, { e: 'sfx', name: 'drop', x: p.x, z: p.z }); return; }
   if (isFood(p.held)) { p.held = null; adjChaos(w, 1); addSpill(w, p.x + Math.sin(p.yaw) * 0.6, p.z + Math.cos(p.yaw) * 0.6); ev(w, { e: 'sfx', name: 'drop', x: p.x, z: p.z }); return; }
@@ -1262,13 +1297,13 @@ export function finishShift(w: World, failReason: string) {
   if (!failReason && w.cfg.boss && !w.bossDefeated) failReason = '奧客之王還在店裡，沒能讓他退散';
   const survived = Math.round(w.time - w.openTime);
   const score = d.revenue + d.ejected * 10 + d.karensResolved * 15 + survived;
-  const won = w.cfg.endless ? true : !failReason && d.revenue >= w.cfg.goal;
+  const won = w.cfg.endless || w.raid ? true : !failReason && d.revenue >= w.cfg.goal;
   w.result = {
     shiftId: w.cfg.id, won, failReason: failReason || (won ? '' : `營業額未達目標 $${w.cfg.goal}`),
     revenue: d.revenue, goal: w.cfg.goal, rating: Math.round(w.rating * 100) / 100, chaos: Math.round(w.chaos),
     served: d.served, angryLeft: d.angryLeft, karensResolved: d.karensResolved, karensFailed: d.karensFailed,
     ejected: d.ejected, cleaned: d.spillsCleaned, maxCombo: d.maxCombo,
-    score: w.cfg.endless ? score : undefined, survived, bossDefeated: w.cfg.boss ? w.bossDefeated : undefined,
+    score: w.cfg.endless ? score : w.raid ? w.raid.score : undefined, survived, bossDefeated: w.cfg.boss ? w.bossDefeated : undefined,
     date: w.cfg.daily?.date, tips: d.tips, incidents: w.incidents.length ? [...w.incidents] : undefined,
   };
   if (w.cfg.endless) w.result.failReason = failReason ? `${failReason}・撐了 ${survived} 秒` : `主動下班・撐了 ${survived} 秒`;
@@ -1363,6 +1398,14 @@ export function tick(w: World, dt: number) {
           toast(w, '🌙 夜更深了，客人越來越多……', 'info');
         }
       }
+      if (w.raid) {
+        // staff who stand next to you for a while ask you to leave
+        const r = [...w.players.values()].find(p => p.raider);
+        const near = r && [...w.players.values()].some(p => !p.raider && Math.hypot(p.x - r.x, p.z - r.z) < 1.6);
+        w.raid.watched = Math.max(0, Math.min(2.5, w.raid.watched + (near ? dt : -dt * 0.5)));
+        if (w.raid.watched >= 2.5 && !w.raid.caught) { w.raid.caught = true; toast(w, '🧹 店員：「先生，請你出去。」你被請出店了', 'bad'); finishShift(w, '被店員請出去了'); break; }
+        if (w.phaseLeft <= 0) { finishShift(w, ''); break; }
+      }
       if (w.phaseLeft <= 0) {
         setPhase(w, 'closing'); w.phaseLeft = shift ? 10 : CLOSING_MAX_SECONDS; w.clock = CLOSE_MINUTE;
         w.event = null; w.power = 1;
@@ -1428,12 +1471,13 @@ export function snapshot(w: World, now: number): Snapshot {
   // 有背景 shows only up close (a gold watch, a bodyguard's phone call…)
   const near4 = (c: Customer) => { for (const p of w.players.values()) if (Math.hypot(p.x - c.x, p.z - c.z) < 4) return true; return false; };
   return {
-    t: now, phase: w.phase, phaseLeft: Math.max(0, w.phaseLeft), clock: w.clock, day: w.day,
+    t: now, raid: w.raid ? { score: w.raid.score, watched: r2(w.raid.watched / 2.5) } : undefined,
+    phase: w.phase, phaseLeft: Math.max(0, w.phaseLeft), clock: w.clock, day: w.day,
     money: w.money, rating: r2(w.rating), backstock: { ...w.backstock }, shelves: { ...w.shelves }, upgrades: { ...w.upgrades },
     mopsOnRack: w.mopsOnRack, playerCount: activePlayers(w),
     players: [...w.players.values()].map(p => ({
       id: p.id, name: p.name, color: p.color, x: r2(p.x), z: r2(p.z), yaw: r2(p.yaw), pitch: r2(p.pitch), held: p.held, held2: p.held2,
-      connected: p.connected, away: p.away, ready: p.ready, grabbing: p.grabbing, spinCd: r2(Math.max(0, p.spinReadyAt - w.time)),
+      connected: p.connected, away: p.away, ready: p.ready, grabbing: p.grabbing, spinCd: r2(Math.max(0, p.spinReadyAt - w.time)), raider: p.raider || undefined,
       busy: p.busy ? { kind: p.busy.kind, p: Math.min(1, (w.time - p.busy.start) / p.busy.dur) } : null,
     })),
     customers: w.customers.map(c => ({

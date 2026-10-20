@@ -214,6 +214,55 @@ test('five simulated players over the network run a full co-op day (time x6)', {
   cs.forEach(c => c.close());
 });
 
+const HTTP = `http://127.0.0.1:${PORT}`;
+async function api(method: string, p: string, body?: unknown, token?: string) {
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (token) headers['x-owner-token'] = token;
+  const r = await fetch(HTTP + p, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  return { status: r.status, data: await r.json().catch(() => ({})) as Record<string, unknown> };
+}
+
+test('rooms on different store types run side by side on one server', async () => {
+  const mk = async (map: string) => {
+    const h = new Client('h-' + map); await h.connect();
+    h.send({ type: 'create', name: 'Host', map } as ClientMsg);
+    await h.until(() => !!h.code, 5000, 'room code');
+    const j = new Client('j-' + map); await j.connect();
+    j.send({ type: 'join', code: h.code, name: 'P' });
+    await j.until(() => !!j.playerId, 5000, 'welcome');
+    return [h, j];
+  };
+  const boba = await mk('boba'), cloth = await mk('clothing');
+  assert.equal((await api('GET', `/api/room/${boba[0].code}`)).data.map, 'boba');
+  assert.equal((await api('GET', `/api/room/${cloth[0].code}`)).data.map, 'clothing');
+  assert.equal((await api('GET', '/api/room/ZZZZZ')).status, 404);
+  await start(boba); await start(cloth);
+  await sleep(3000);
+  // the clothing store sells no food; the boba shop does
+  assert.deepEqual(cloth[0].snap!.shift.foods, []);
+  assert.ok(boba[0].snap!.shift.foods.length > 0);
+  for (const c of [...boba, ...cloth]) c.close();
+});
+
+test('friend store API: upload, lock, raid, reports (owner token required)', async () => {
+  const up = await api('POST', '/api/stores', { name: '測試店', map: 'boba', money: 2000, rating: 3.5, shelves: { drinks: 4, snacks: 4, bento: 4 } });
+  assert.equal(up.status, 200);
+  const code = up.data.code as string, token = up.data.token as string;
+  assert.match(code, /^[A-Z0-9]{6}$/);
+  const view = await api('GET', `/api/stores/${code}`);
+  assert.equal(view.data.name, '測試店'); assert.equal(view.data.money, undefined);
+  assert.equal((await api('PUT', `/api/stores/${code}`, { locked: true }, 'wrong')).status, 403);
+  assert.equal((await api('PUT', `/api/stores/${code}`, { locked: true }, token)).status, 200);
+  assert.equal((await api('POST', `/api/stores/${code}/raid`, { raider: 'x', score: 300 })).status, 423);
+  const trash = await api('POST', `/api/stores/${code}/raid`, { raider: '小華', score: 20, outside: true });
+  assert.equal(trash.status, 200); assert.equal(trash.data.outside, true);
+  assert.equal((await api('POST', `/api/stores/${code}/raid`, { raider: '小華', score: 20, outside: true })).status, 429);
+  assert.equal((await api('GET', `/api/stores/${code}/reports`)).status, 403);
+  const reps = await api('GET', `/api/stores/${code}/reports`, undefined, token);
+  assert.equal(reps.status, 200); assert.equal((reps.data as unknown as unknown[]).length, 1);
+  assert.equal((await api('GET', '/api/stores/NOPE00')).status, 404);
+});
+
 test('server restart: room restored from checkpoint, player rejoins with token', { timeout: 40_000 }, async () => {
   const [a, b] = await room(2);
   await start([a, b]);
