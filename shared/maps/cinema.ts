@@ -20,7 +20,7 @@ export const CINEMA: MapDef = {
   coffee: { food: '爆米花', station: '爆米花機', verb: '爆一桶', icon: '🍿', price: 12, box: COFFEE_BOX },
   meal: { food: '熱狗', station: '熱狗機', verb: '烤熱狗', icon: '🌭', price: 14, uses: '熱狗麵包', box: MEAL_BOX },
   foodChance: 0.65, goalScale: 0.9,
-  decor: [box(13.8, 14.7, 16.6, 15.2, 0.6, 'bar'), box(3, 8.2, 8, 8.7, 0.6, 'bar'), box(3, 11.2, 8, 11.7, 0.6, 'bar'), CORNER_PLANT],
+  decor: [box(13.8, 14.7, 16.6, 15.2, 0.6, 'seats'), box(3, 8.2, 8, 8.7, 0.6, 'seats'), box(3, 11.2, 8, 11.7, 0.6, 'seats'), CORNER_PLANT],
   karens: ['kicker'],
   campSpots: [{ x: 14.6, z: 14.1 }, { x: 15.9, z: 14.1 }, { x: 5, z: 9.3 }, { x: 6.8, z: 12.3 }],
   playerSpawns: STD_SPAWNS,

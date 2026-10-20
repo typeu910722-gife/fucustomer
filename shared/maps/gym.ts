@@ -20,8 +20,8 @@ export const GYM: MapDef = {
   coffee: { food: '高蛋白飲', station: '搖搖杯台', verb: '搖一杯', icon: '🥤', price: 12, box: COFFEE_BOX },
   meal: null, foodChance: 0.35, goalScale: 1.1,
   decor: [
-    box(3, 7.8, 4.4, 9, 0.9, 'display'), box(3, 10.6, 4.4, 11.8, 0.9, 'display'),
-    box(6.2, 7.8, 7.6, 9, 0.9, 'display'), box(6.2, 10.6, 7.6, 11.8, 0.9, 'display'), CORNER_PLANT,
+    box(3, 7.8, 4.4, 9, 0.9, 'treadmill'), box(3, 10.6, 4.4, 11.8, 0.9, 'bench'),
+    box(6.2, 7.8, 7.6, 9, 0.9, 'bike'), box(6.2, 10.6, 7.6, 11.8, 0.9, 'dumbbells'), CORNER_PLANT,
   ],
   karens: ['benchhog'],
   campSpots: [{ x: 3.7, z: 9.6 }, { x: 6.9, z: 9.6 }, { x: 3.7, z: 12.4 }, { x: 6.9, z: 12.4 }],

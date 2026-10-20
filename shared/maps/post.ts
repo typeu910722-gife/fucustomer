@@ -18,7 +18,7 @@ export const POST: MapDef = {
   ],
   ...STD_FRONT,
   coffee: null, meal: null, foodChance: 0, goalScale: 0.8,
-  decor: [box(4, 8, 5.2, 9.2, 0.9, 'table'), box(4, 11, 5.2, 12.2, 0.9, 'table'), box(23.4, 9, 24, 11, 1.2, 'atm'), CORNER_PLANT],
+  decor: [box(4, 8, 5.2, 9.2, 0.9, 'writedesk'), box(4, 11, 5.2, 12.2, 0.9, 'parcel'), box(23.4, 9, 24, 11, 1.2, 'atm'), CORNER_PLANT],
   karens: ['coins'],
   playerSpawns: STD_SPAWNS,
   wander: [{ x: 7, z: 10 }, { x: 11, z: 8 }, { x: 18, z: 6 }, { x: 12, z: 12.5 }],

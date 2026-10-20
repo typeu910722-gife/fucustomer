@@ -1,6 +1,6 @@
 // 火鍋吃到飽: self-serve meat fridge and hot-pot ingredients, soup station and soft-serve machine, lots of tables.
 import { MapDef, box } from './types.ts';
-import { COFFEE_BOX, CORNER_PLANT, MEAL_BOX, STD_FRONT, STD_SPAWNS, WEST_TABLES } from './common.ts';
+import { COFFEE_BOX, CORNER_PLANT, MEAL_BOX, STD_FRONT, STD_SPAWNS, westTables } from './common.ts';
 
 export const HOTPOT: MapDef = {
   id: 'hotpot', name: '火鍋吃到飽', icon: '🍲', desc: '自助拿肉盤和火鍋料，湯底台現煮、冰淇淋機自己擠。小心有人偷偷打包。',
@@ -20,7 +20,7 @@ export const HOTPOT: MapDef = {
   coffee: { food: '冰淇淋', station: '冰淇淋機', verb: '擠冰淇淋', icon: '🍦', price: 6, box: COFFEE_BOX },
   meal: { food: '火鍋套餐', station: '湯底台', verb: '煮一鍋', icon: '🍲', price: 24, uses: '肉盤', box: MEAL_BOX },
   foodChance: 0.6, goalScale: 1.05,
-  decor: [...WEST_TABLES, CORNER_PLANT],
+  decor: [...westTables('hotpot'), CORNER_PLANT],
   karens: ['packer'],
   playerSpawns: STD_SPAWNS,
   wander: [{ x: 5.4, z: 9.3 }, { x: 11, z: 9 }, { x: 18, z: 6 }, { x: 10, z: 12.5 }],

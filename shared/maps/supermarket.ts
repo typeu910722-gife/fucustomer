@@ -20,7 +20,7 @@ export const SUPERMARKET: MapDef = {
   coffee: null,
   meal: { food: '熟食便當', station: '熟食櫃', verb: '裝便當', icon: '🍱', price: 16, uses: '生鮮', box: MEAL_BOX },
   foodChance: 0.3, goalScale: 1.05,
-  decor: [box(8.8, 6.6, 10, 7.6, 0.9, 'display'), box(12.6, 6.6, 13.8, 7.6, 0.9, 'display'), box(4.2, 9, 5.4, 10, 0.9, 'display'), CORNER_PLANT],
+  decor: [box(8.8, 6.6, 10, 7.6, 0.9, 'sample'), box(12.6, 6.6, 13.8, 7.6, 0.9, 'sample'), box(4.2, 9, 5.4, 10, 0.9, 'sample'), CORNER_PLANT],
   karens: ['taster'],
   campSpots: [{ x: 9.4, z: 8.2 }, { x: 13.2, z: 8.2 }, { x: 4.8, z: 10.6 }, { x: 11.2, z: 7.1 }],
   playerSpawns: STD_SPAWNS,

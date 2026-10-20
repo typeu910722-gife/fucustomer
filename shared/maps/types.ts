@@ -70,7 +70,13 @@ export interface MapDef {
   outlet: Pt; chargeSpot: Pt;
   /** Queue positions, first one nearest the registers. */
   queue: Pt[];
-  /** Extra furniture: kind 'table' | 'plant' | 'atm' | 'display' | 'fitting' | 'mannequin' | 'bar'. */
+  /**
+   * Extra furniture (solid: every box blocks movement). kind: 'table' | 'plant' | 'atm' | 'display' | 'fitting' | 'mannequin' | 'bar',
+   * or a store-specific prop drawn by client/src/decor.ts: 'beauty' (cosmetics tester), 'readtable', 'bakecase', 'sample' (試吃台),
+   * 'petpen', 'cages', 'cafetable', 'seats' (cinema row), 'hotpot', 'pump', 'treadmill', 'bench', 'bike', 'dumbbells', 'dining',
+   * 'demo' (3C demo table), 'tvwall', 'mirrors' (salon station), 'dryer', 'writedesk', 'parcel', 'bpmeter', 'medcase', 'lobby', 'luggage'.
+   * Chairs / sofas of table-like props are drawn just outside the box (like the stools of 'table') and do not block.
+   */
   decor: Box[];
   /** Optional queue rope: posts from x0 to x1 at z. */
   rope?: { x0: number; x1: number; z: number };

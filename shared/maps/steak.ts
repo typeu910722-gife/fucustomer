@@ -1,6 +1,6 @@
 // 牛排館: self-serve soup and bread bar, a griddle and a tea urn behind the counter, four tables.
 import { MapDef, box } from './types.ts';
-import { COFFEE_BOX, CORNER_PLANT, MEAL_BOX, STD_FRONT, STD_SPAWNS, WEST_TABLES, WEST_TABLE_SPOTS } from './common.ts';
+import { COFFEE_BOX, CORNER_PLANT, MEAL_BOX, STD_FRONT, STD_SPAWNS, westTables, WEST_TABLE_SPOTS } from './common.ts';
 
 export const STEAK: MapDef = {
   id: 'steak', name: '牛排館', icon: '🥩', desc: '平價牛排館：鐵板現煎，濃湯麵包自助。總有人說「這哪是五分熟」。',
@@ -20,7 +20,7 @@ export const STEAK: MapDef = {
   coffee: { food: '紅茶', station: '紅茶桶', verb: '倒紅茶', icon: '🥤', price: 6, box: COFFEE_BOX },
   meal: { food: '鐵板牛排', station: '鐵板', verb: '煎牛排', icon: '🥩', price: 28, uses: '冷凍牛排', box: MEAL_BOX },
   foodChance: 0.7, goalScale: 1.05,
-  decor: [...WEST_TABLES, CORNER_PLANT],
+  decor: [...westTables('dining'), CORNER_PLANT],
   karens: ['doneness'],
   campSpots: WEST_TABLE_SPOTS,
   playerSpawns: STD_SPAWNS,

@@ -19,7 +19,7 @@ export const BAKERY: MapDef = {
   ...STD_FRONT,
   coffee: { food: '咖啡', station: '咖啡機', verb: '煮咖啡', icon: '☕', price: 8, box: COFFEE_BOX },
   meal: null, foodChance: 0.3, goalScale: 0.85,
-  decor: [box(3.2, 8, 4.4, 9.2, 0.75, 'table'), box(3.2, 11, 4.4, 12.2, 0.75, 'table'), CORNER_PLANT],
+  decor: [box(3.2, 8, 4.4, 9.2, 0.75, 'bakecase'), box(3.2, 11, 4.4, 12.2, 0.75, 'bakecase'), CORNER_PLANT],
   karens: ['toucher'],
   playerSpawns: STD_SPAWNS,
   wander: [{ x: 7, z: 10 }, { x: 18, z: 6 }, { x: 5.5, z: 13 }, { x: 12, z: 12 }],

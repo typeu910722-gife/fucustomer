@@ -9,11 +9,12 @@ import {
 import { FOOD_INFO, PRODUCT_INFO, PRODUCTS, Product, shelfCapacity, EYE_HEIGHT } from '../../shared/constants.ts';
 import {
   AABB, COFFEE_MACHINE, MICROWAVE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DECOR, DOOR_X0, DOOR_X1, MOP_RACK, REGISTERS, SHELVES,
-  CURRENT_MAP, OUTLET, STORE_D, STORE_W, WALLS, shelfFacing, SOLIDS, QUEUE_SPOTS, PLAYER_SPAWNS, WANDER_SPOTS, TRYON_SPOTS, CHARGE_SPOT, distToAABB,
+  CURRENT_MAP, CAMP_SPOTS, OUTLET, STORE_D, STORE_W, WALLS, shelfFacing, SOLIDS, QUEUE_SPOTS, PLAYER_SPAWNS, WANDER_SPOTS, TRYON_SPOTS, CHARGE_SPOT, distToAABB,
 } from '../../shared/map.ts';
 import type { CustomerSnap, Held, PlayerSnap, Snapshot } from '../../shared/protocol.ts';
 import type { Quality } from './storage.ts';
 import { sigDef } from '../../shared/sigkarens.ts';
+import { DecorCtx, STORE_DECOR, buildStoreDecor, buildStoreExtras } from './decor.ts';
 import { INK, PillOpts, UI_FONT, isFontReady, labelTexture, pillCanvas, popCanvas, textTexture, whenFontReady } from './labels.ts';
 
 // ---------- helpers ----------
@@ -847,7 +848,15 @@ export class StoreView {
   /** Map decor (plants, ATM, tables, bars, fitting rooms, mannequins, displays) as chunky toy props. */
   private buildDecor() {
     const q = this.q, S = this.scene, TH = CURRENT_MAP.theme;
+    const glassGeos: THREE.BufferGeometry[] = [];
+    const ctx: DecorCtx = {
+      scene: S, q, theme: TH, campSpots: CAMP_SPOTS,
+      glow: c => this.glowMat(c),
+      glass: (g, m) => { const c = g.clone().applyMatrix4(m); for (const k of Object.keys(c.attributes)) if (!['position', 'normal', 'uv'].includes(k)) c.deleteAttribute(k); glassGeos.push(c.index ? c.toNonIndexed() : c); },
+      sign: (w, h, draw) => this.atlas.mesh(w, h, draw),
+    };
     for (const d of DECOR) {
+      if (STORE_DECOR.has(d.kind)) { buildStoreDecor(ctx, d); continue; }
       const cx = (d.x0 + d.x1) / 2, cz = (d.z0 + d.z1) / 2, w = d.x1 - d.x0, dp = d.z1 - d.z0;
       if (d.kind === 'plant') this.plant(cx, cz, Math.min(w, dp) * 0.9, 1.3);
       else if (d.kind === 'atm') {
@@ -910,10 +919,19 @@ export class StoreView {
           put(S, RB(0.24, 0.2, 0.24, 0.03), mat(pal[i++ % pal.length], q), x, 0.6 + lvl * 0.2, z);
         }
         put(S, CYL(0.015, 0.015, 0.6, 6), mat(0x495057, q), cx, 1.4, cz);
-        const sale = new THREE.Mesh(geo('saleSign', () => new THREE.PlaneGeometry(0.7, 0.35)), new THREE.MeshBasicMaterial({ map: textTexture(() => textCanvas([{ text: '特價 SALE', size: 60, color: '#fff' }], 512, 256, '#f03e3e')), side: THREE.DoubleSide }));
-        sale.position.set(cx, 1.75, cz); sale.rotation.y = 0.4; S.add(sale);
+        // two-sided sale sign from the shared sign atlas (no per-sign texture or draw call)
+        for (const back of [0, 1]) {
+          const sale = this.atlas.mesh(0.7, 0.35, () => textCanvas([{ text: '特價 SALE', size: 60, color: '#fff' }], 512, 256, '#f03e3e'));
+          sale.position.set(cx - Math.sin(0.4) * 0.005 * (back ? 1 : -1), 1.75, cz - Math.cos(0.4) * 0.005 * (back ? 1 : -1)); sale.rotation.y = 0.4 + back * Math.PI; S.add(sale);
+        }
       }
       else { put(S, RB(w, d.h, dp, 0.05), mat(0xfab005, q), cx, d.h / 2, cz); }
+    }
+    buildStoreExtras(ctx, CURRENT_MAP.id);
+    // all display-case glass in one transparent mesh (one draw call)
+    if (glassGeos.length) {
+      const gm = new THREE.Mesh(mergeGeometries(glassGeos, false)!, mat(0xd0ebff, q, { transparent: true, opacity: 0.22, rough: 0.05 }));
+      gm.renderOrder = 2; S.add(gm);
     }
   }
 
@@ -1038,8 +1056,10 @@ export class StoreView {
       const keep = m.vertexColors ? ['position', 'normal', 'uv', 'color'] : ['position', 'normal', 'uv'];
       for (const k of Object.keys(g.attributes)) if (!keep.includes(k)) g.deleteAttribute(k);
       // plain colours share one vertex-coloured material (glow materials keep theirs: they dim with the power)
-      const vc = glowSet.has(m) ? null : vertexColorMat(m);
-      if (vc) paint(g, (m as THREE.MeshBasicMaterial).color);
+      // untextured glow parts share one vertex-coloured unlit material too (it dims as a whole: base colour white)
+      const glowVC = glowSet.has(m) && !(m as THREE.MeshBasicMaterial).map ? this.glowVC() : null;
+      const vc = glowVC ?? (glowSet.has(m) ? null : vertexColorMat(m));
+      if (vc) paint(g, glowVC ? this.glow.find(x => x.m === m)!.base : (m as THREE.MeshBasicMaterial).color);
       const key = vc ?? m;
       (groups.get(key) ?? groups.set(key, []).get(key)!).push(g);
       remove.push(o);
@@ -1055,6 +1075,12 @@ export class StoreView {
     }
   }
 
+  private glowShared: THREE.MeshBasicMaterial | null = null;
+  /** The shared vertex-coloured unlit material that merged glow parts use (dims like the others). */
+  private glowVC() {
+    if (!this.glowShared) { this.glowShared = new THREE.MeshBasicMaterial({ vertexColors: true }); this.glow.push({ m: this.glowShared, base: new THREE.Color(0xffffff) }); }
+    return this.glowShared;
+  }
   /** Unlit material that follows the store's power level (outage dims it). */
   private glowMat(color: number) {
     const m = new THREE.MeshBasicMaterial({ color });

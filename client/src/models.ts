@@ -166,13 +166,13 @@ const onHead = (x: number, y: number, r = HEAD_R) => Math.sqrt(Math.max(0, r * r
 
 export class Human {
   group = new THREE.Group();
-  body: THREE.Mesh; head: THREE.Mesh; legL: THREE.Group; legR: THREE.Group; armL: THREE.Group; armR: THREE.Group;
+  body: THREE.Mesh; head: THREE.Object3D; legL: THREE.Object3D; legR: THREE.Object3D; armL: THREE.Object3D; armR: THREE.Object3D;
   hand: THREE.Group;
   /** Name tag (staff) and status / karen tag (customers); both shrink when close and fade right in front of the camera. */
   label = new Label({ k: 0.0026, maxScreen: 0.055, minScreen: 0.04, fade: [0.9, 1.9], fadeMin: 0.15 }); icon = new Label({ k: 0.0026, maxScreen: 0.065, minScreen: 0.042, fade: [0.9, 2.1], fadeMin: 0.15 });
   phase = 0; heldKey = ''; private t = Math.random() * 10;
   private face: THREE.Mesh; private faceKey = ''; private basket: THREE.Object3D | null = null;
-  private torso = new THREE.Group();
+  private torso: THREE.Object3D = new THREE.Group();
   constructor(q: Quality, opts: Look) {
     const g = this.group;
     const lo = q === 'low';
@@ -279,7 +279,7 @@ export class Human {
       for (const s of [-1, 1]) put(H, CYL(0.075, 0.075, 0.07, 10), mat(0xff6b6b, q), s * (HEAD_R + 0.02), -0.01, 0, 0, 0, Math.PI / 2);
     }
     if (opts.apron) staffHat(q, H);
-    this.mergeStaticParts();
+    this.skinStaticParts(q);
     // brows + mouth: one mesh whose (shared, cached) geometry is swapped per expression
     this.face = new THREE.Mesh(faceGeo('0|0|1|1'), vertexColorMat(basic(0))!);
     this.face.position.set(0, HEAD_Y, 0); this.torso.add(this.face);
@@ -290,17 +290,55 @@ export class Human {
     if (sc !== 1) g.scale.set(opts.scale ?? 1, sc, opts.scale ?? 1);
   }
   /**
-   * Merge the torso + head + hair + accessories into one mesh per material.
-   * Arms, legs and the face stay separate (they animate); `head` becomes an empty anchor for later accessories.
+   * Bake the whole body (torso, head, hair, hat/accessories, arms, legs) into ONE skinned mesh with five bones
+   * (torso, two legs, two arms) and one shared vertex-coloured material, so a character costs one draw call for its
+   * body instead of five or more. The bones take over the old part groups (same positions), so animate() is unchanged.
+   * Only the face (its geometry is swapped per expression), held items and karen props stay separate meshes.
    */
-  private mergeStaticParts() {
-    const t = this.torso;
+  private skinStaticParts(q: Quality) {
+    const g = this.group;
+    g.updateMatrixWorld(true);
+    const inv = new THREE.Matrix4().copy(g.matrixWorld).invert(), m4 = new THREE.Matrix4();
+    const parts: THREE.BufferGeometry[] = [], dead: THREE.Mesh[] = [];
+    const collect = (root: THREE.Object3D, bone: number, skip: THREE.Object3D[] = []) => {
+      root.traverse(o => {
+        const m = o as THREE.Mesh;
+        if (!m.isMesh || Array.isArray(m.material)) return;
+        for (let p: THREE.Object3D | null = m; p && p !== root; p = p.parent) if (skip.includes(p)) return;
+        const c = m.geometry.clone().applyMatrix4(m4.multiplyMatrices(inv, m.matrixWorld));
+        for (const k of Object.keys(c.attributes)) if (!['position', 'normal'].includes(k)) c.deleteAttribute(k);
+        const nc = c.index ? c.toNonIndexed() : c;
+        paint(nc, (m.material as THREE.MeshBasicMaterial).color);
+        const n = nc.attributes.position.count;
+        const si = new Uint16Array(n * 4), sw = new Float32Array(n * 4);
+        for (let i = 0; i < n; i++) { si[i * 4] = bone; sw[i * 4] = 1; }
+        nc.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
+        nc.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+        parts.push(nc); dead.push(m);
+      });
+    };
+    collect(this.torso, 0, [this.armL, this.armR]);
+    collect(this.legL, 1); collect(this.legR, 2); collect(this.armL, 3); collect(this.armR, 4);
+    for (const m of dead) m.parent?.remove(m);
+    // bones replace the part groups at the same spots
+    const bone = (from: THREE.Object3D, parent: THREE.Object3D) => {
+      const b = new THREE.Bone(); b.position.copy(from.position); b.rotation.copy(from.rotation);
+      from.parent?.remove(from); parent.add(b); return b;
+    };
     const headPos = this.head.position.clone();
-    // characters don't cast real shadows (a blob shadow under them is far cheaper); see StoreView
-    mergeInto(t, new Set([this.armL, this.armR]), false);
-    for (const lg of [this.legL, this.legR]) mergeInto(lg, new Set(), false);
-    for (const ag of [this.armL, this.armR]) mergeInto(ag, new Set(), false);
-    this.head = new THREE.Mesh(); this.head.position.copy(headPos); t.add(this.head);
+    const torso = bone(this.torso, g);
+    this.legL = bone(this.legL, g); this.legR = bone(this.legR, g);
+    this.armL = bone(this.armL, torso); this.armR = bone(this.armR, torso);
+    this.torso = torso;
+    g.updateMatrixWorld(true);
+    const skeleton = new THREE.Skeleton([torso as THREE.Bone, this.legL as THREE.Bone, this.legR as THREE.Bone, this.armL as THREE.Bone, this.armR as THREE.Bone]);
+    const body = new THREE.SkinnedMesh(mergeGeometries(parts, false)!, skinMat(q));
+    body.castShadow = false; body.receiveShadow = false;
+    g.add(body); g.updateMatrixWorld(true);
+    body.bind(skeleton, body.matrixWorld);
+    this.body = body;
+    // empty anchor at the head centre for accessories added later (karen marks, hats…)
+    this.head = new THREE.Object3D(); this.head.position.copy(headPos); torso.add(this.head);
   }
 
   /** Shopping basket in the left hand while the customer carries items. */
@@ -373,6 +411,15 @@ export class Human {
   }
 }
 
+const skinMats = new Map<Quality, THREE.Material>();
+/** The one vertex-coloured material every character body shares. */
+function skinMat(q: Quality) {
+  let m = skinMats.get(q);
+  // its own instance (not the static props' vertex-colour material): skinned and static meshes need different shader programs
+  if (!m) { m = q === 'low' ? new THREE.MeshLambertMaterial({ vertexColors: true }) : new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.8, metalness: 0 }); skinMats.set(q, m); }
+  return m;
+}
+
 type Face = [number, number, number, number];
 const EYE_X = 0.115;
 /** Brows + mouth for an expression "browL|browR|mouthX|mouthY", in torso space relative to the head centre. Shared by everyone. */
@@ -422,6 +469,109 @@ function staffHat(q: Quality, H: THREE.Object3D) {
       put(H, geo('garrison', () => new THREE.CylinderGeometry(0.0, R * 0.95, 0.2, 4, 1).rotateY(Math.PI / 4).scale(0.7, 1, 1.25)), wain, 0, R * 0.92, -0.02, -0.12);
       put(H, CYL(R * 1.02, R * 1.03, 0.07, 14, true), wain, 0, R * 0.64, -0.02, -0.15);
       put(H, CYL(R * 1.04, R * 1.04, 0.025, 14, true), mat(TH.accent, q), 0, R * 0.66, -0.02, -0.15);
+      break;
+    }
+    case 'drugstore': { // beauty-counter headband with a big bow
+      put(H, TOR(R * 1.03, 0.028, 4, 14, Math.PI), acc, 0, 0.02, -0.04, -0.35);
+      const bx = -0.17, by = R * 0.86;
+      for (const s of [-1, 1]) put(H, CONE(0.06, 0.13, 5), mat(0xf783ac, q), bx + s * 0.065, by, 0.02, 0, 0, s * Math.PI / 2);
+      put(H, SPH(0.035, 6, 4), acc, bx, by, 0.02);
+      break;
+    }
+    case 'bookstore': { // reader's beret + a pencil tucked behind the ear
+      put(H, SPH(R * 1.1, 12, 6), wain, -0.04, R * 0.78, -0.05, -0.2, 0, 0.16, 1.05, 0.34, 1.05);
+      put(H, CYL(0.016, 0.02, 0.05, 5), acc, -0.04, R * 1.18, -0.05, 0, 0, 0.2);
+      put(H, CYL(0.014, 0.014, 0.17, 6), mat(0xfcc419, q), R * 0.98, 0.1, 0.0, 0.25, 0, 0.55);
+      put(H, CONE(0.014, 0.035, 6), mat(0xf1c27d, q), R * 0.98 + 0.04, 0.03, 0.025, 0.25, 0, 0.55 + Math.PI);
+      break;
+    }
+    case 'bakery': { // tall puffy baker's hat with a brown band
+      put(H, CYL(R * 0.84, R * 0.88, 0.16, 12), white, 0, R * 0.86, -0.04, -0.18);
+      put(H, CYL(R * 0.89, R * 0.89, 0.05, 12), acc, 0, R * 0.74, -0.025, -0.18);
+      put(H, SPH(R * 1.12, 12, 7), white, 0, R * 1.3, -0.1, -0.18, 0, 0, 1, 0.62, 1);
+      break;
+    }
+    case 'supermarket': { // red visor, blue band, a little price-tag badge
+      put(H, CYL(R * 1.07, R * 1.07, 0.07, 14, true), mat(TH.wainscot, q), 0, R * 0.55, -0.02, -0.18);
+      put(H, geo('visorBrim', () => new THREE.CylinderGeometry(0.2, 0.2, 0.02, 14, 1, false, -1.2, 2.4).scale(1.3, 1, 1)), acc, 0, R * 0.52, R * 0.95, 0.12);
+      put(H, RB(0.1, 0.06, 0.015, 0.01), mat(0xffe066, q), 0.1, R * 0.6, R * 0.98, -0.2, 0.35, 0.25);
+      break;
+    }
+    case 'petshop': { // cap with floppy dog ears and a paw print
+      put(H, DOME(R * 1.1, Math.PI * 0.42, 12, 4), acc, 0, 0.03, 0, -0.12);
+      put(H, RB(0.32, 0.03, 0.19, 0.012), acc, 0, 0.15, R + 0.02, 0.18);
+      for (const s of [-1, 1]) put(H, CAP(0.055, 0.13, 6), mat(0x8d5524, q), s * R * 0.92, R * 0.55, -0.03, 0, 0, s * 0.5);
+      put(H, CYL(0.045, 0.045, 0.01, 8), white, 0, R * 0.8, R * 0.72, Math.PI / 2 - 0.75);
+      for (const t of [-1, 0, 1]) put(H, CYL(0.017, 0.017, 0.01, 6), white, t * 0.045, R * 0.8 + 0.06 - Math.abs(t) * 0.015, R * 0.72 - 0.045, Math.PI / 2 - 0.75);
+      break;
+    }
+    case 'cafe': { // barista knit beanie (no pompom) with a turned-up cuff and a bean patch
+      put(H, DOME(R * 1.1, Math.PI * 0.45, 12, 5), mat(0x5c3d2e, q), 0, 0.05, -0.02, -0.25, 0, 0, 1, 1.05, 1);
+      put(H, CYL(R * 1.12, R * 1.14, 0.08, 14, true), acc, 0, 0.07, -0.02, -0.25);
+      put(H, SPH(0.035, 6, 4), mat(0xc08552, q), 0.13, 0.1, R * 1.0, 0, 0, 0.5, 1, 0.7, 0.5);
+      break;
+    }
+    case 'cinema': { // striped popcorn-box paper hat with popcorn on top
+      put(H, CYL(R * 0.95, R * 0.7, 0.16, 8), white, 0, R * 0.95, -0.03, -0.15);
+      for (let i = 0; i < 4; i++) { const a = (i / 4) * Math.PI * 2 + Math.PI / 8; put(H, B(0.06, 0.162, 0.02), mat(0xe03131, q), Math.sin(a) * R * 0.83, R * 0.95, -0.03 + Math.cos(a) * R * 0.83, -0.15, a, 0); }
+      for (const [x, z] of [[0, 0], [-0.08, -0.06], [0.08, -0.04], [0.02, 0.08], [-0.06, 0.06]]) put(H, SPH(0.055, 6, 4), mat(0xfff3bf, q), x, R * 1.25, z - 0.06);
+      break;
+    }
+    case 'hotpot': { // red bandana tied at the back, white polka dots
+      put(H, DOME(R * 1.08, Math.PI * 0.42, 12, 4), wain, 0, 0.02, -0.02, -0.3);
+      for (const [x, y] of [[-0.12, 0.2], [0.1, 0.22], [0, 0.29], [0.2, 0.12], [-0.21, 0.1]]) put(H, SPH(0.022, 5, 3), white, x, y, onHead(x, y, R * 1.08) - 0.05);
+      for (const s of [-1, 1]) put(H, CONE(0.05, 0.14, 4), wain, s * 0.06, 0.02, -R - 0.03, -0.6, 0, s * 0.6);
+      break;
+    }
+    case 'gas': { // mesh-back trucker cap with a round oil-drop logo patch
+      put(H, DOME(R * 1.1, Math.PI * 0.42, 12, 4), wain, 0, 0.03, 0, -0.12);
+      put(H, RB(0.34, 0.03, 0.21, 0.012), acc, 0, 0.15, R + 0.02, 0.18);
+      put(H, CYL(0.07, 0.07, 0.012, 10), acc, 0, R * 0.78, R * 0.74, Math.PI / 2 - 0.75);
+      put(H, CONE(0.03, 0.06, 6), mat(0xe03131, q), 0, R * 0.8, R * 0.76, -0.75);
+      break;
+    }
+    case 'gym': { // terry sweatband round the forehead
+      put(H, TOR(R * 1.02, 0.045, 4, 16), acc, 0, 0.12, 0, Math.PI / 2 - 0.2);
+      put(H, TOR(R * 1.035, 0.012, 3, 16), white, 0, 0.12, 0, Math.PI / 2 - 0.2);
+      break;
+    }
+    case 'steak': { // tall pleated chef's toque with a coloured band
+      put(H, CYL(R * 0.8, R * 0.86, 0.32, 10), white, 0, R * 1.08, -0.05, -0.15);
+      put(H, CYL(R * 0.87, R * 0.87, 0.05, 10), wain, 0, R * 0.68, -0.02, -0.15);
+      put(H, SPH(R * 0.9, 10, 6), white, 0, R * 1.62, -0.13, -0.15, 0, 0, 1, 0.45, 1);
+      break;
+    }
+    case 'electronics': { // service headset: band, one ear cup, mic boom; blue polo-cap colours
+      put(H, TOR(R + 0.03, 0.018, 4, 14, Math.PI), mat(0x343a40, q), 0, 0.0, -0.02, -0.15);
+      put(H, CYL(0.08, 0.08, 0.06, 10), acc, R + 0.02, -0.02, 0, 0, 0, Math.PI / 2);
+      put(H, CYL(0.012, 0.012, 0.22, 5), mat(0x343a40, q), R * 0.75, -0.14, 0.17, 1.2, 0, -0.35);
+      put(H, SPH(0.03, 6, 4), mat(0x212529, q), R * 0.42, -0.19, R * 0.95);
+      break;
+    }
+    case 'salon': { // wide hair wrap with a knotted bow on top
+      put(H, CYL(R * 1.05, R * 1.07, 0.1, 14, true), acc, 0, 0.1, -0.02, -0.35);
+      put(H, SPH(0.05, 6, 4), acc, 0, R * 0.97, 0.06);
+      for (const s of [-1, 1]) put(H, SPH(0.07, 6, 4), mat(0xb197fc, q), s * 0.08, R * 1.02, 0.05, 0, 0, s * 0.5, 1.2, 0.6, 0.7);
+      break;
+    }
+    case 'post': { // postman's peaked cap: flat green crown, black peak, gold badge
+      put(H, CYL(R * 1.06, R * 0.95, 0.12, 14), acc, 0, R * 0.8, -0.03, -0.12);
+      put(H, CYL(R * 1.07, R * 1.07, 0.03, 14), mat(0x1b4d2b, q), 0, R * 0.7, -0.02, -0.12);
+      put(H, geo('visorBrim', () => new THREE.CylinderGeometry(0.2, 0.2, 0.02, 14, 1, false, -1.2, 2.4).scale(1.3, 1, 1)), mat(0x212529, q), 0, R * 0.62, R * 0.9, 0.2);
+      put(H, CYL(0.03, 0.03, 0.012, 8), mat(0xfcc419, q, { metal: 0.6, rough: 0.3 }), 0, R * 0.82, R * 0.98, Math.PI / 2 - 0.12);
+      break;
+    }
+    case 'pharmacy': { // little folded nurse-style cap with a teal cross
+      put(H, geo('nurseCap', () => new THREE.CylinderGeometry(0.15, 0.2, 0.12, 4, 1).rotateY(Math.PI / 4).scale(1.3, 1, 0.6)), white, 0, R * 0.98, 0.0, -0.3);
+      put(H, B(0.08, 0.025, 0.012), acc, 0, R * 1.0, 0.11, -0.3);
+      put(H, B(0.025, 0.08, 0.012), acc, 0, R * 1.0, 0.11, -0.3);
+      break;
+    }
+    case 'hotel': { // bellboy pillbox cap with a gold band and chin strap, worn at an angle
+      put(H, CYL(0.16, 0.17, 0.13, 12), wain, 0.06, R * 1.0, -0.02, -0.1, 0, -0.18);
+      put(H, CYL(0.172, 0.172, 0.03, 12), mat(0xfcc419, q, { metal: 0.6, rough: 0.3 }), 0.064, R * 0.92, -0.02, -0.1, 0, -0.18);
+      put(H, SPH(0.025, 6, 4), mat(0xfcc419, q, { metal: 0.6, rough: 0.3 }), 0.1, R * 1.21, -0.02);
+      put(H, TOR(R * 0.98, 0.008, 3, 12, Math.PI), mat(0x212529, q), 0, -0.02, 0.02, Math.PI, 0, 0);
       break;
     }
     default: { // convenience store: baseball cap in the store colour with a white front panel
@@ -566,7 +716,7 @@ export function karenAccessory(q: Quality, h: Human, kind: string) {
   }
   if (extra.children.length) { h.head.add(extra); mergeInto(extra, new Set(), false); }
   // props held in the hands: fold them into the arm meshes (one draw call per arm)
-  for (const a of [h.armL, h.armR]) if (a.children.length > 1) mergeInto(a, new Set(), false);
+  for (const a of [h.armL, h.armR]) if (a.children.length) mergeInto(a, new Set(), false);
 }
 
 // ---------- props ----------

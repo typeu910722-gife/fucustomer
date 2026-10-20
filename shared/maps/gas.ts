@@ -19,7 +19,7 @@ export const GAS: MapDef = {
   ...STD_FRONT,
   coffee: { food: '熱咖啡', station: '咖啡機', verb: '煮咖啡', icon: '☕', price: 9, box: COFFEE_BOX },
   meal: null, foodChance: 0.3, goalScale: 1.1,
-  decor: [box(0, 7.5, 0.6, 10.5, 1.2, 'atm'), box(7.2, 13.8, 8.2, 14.8, 0.9, 'display'), CORNER_PLANT],
+  decor: [box(0, 7.5, 0.6, 10.5, 1.2, 'atm'), box(7.2, 13.8, 8.2, 14.8, 0.9, 'pump'), CORNER_PLANT],
   karens: ['wiper'],
   playerSpawns: STD_SPAWNS,
   wander: [{ x: 8, z: 10 }, { x: 18, z: 6 }, { x: 5, z: 9 }, { x: 12, z: 12 }],

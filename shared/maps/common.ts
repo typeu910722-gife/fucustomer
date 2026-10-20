@@ -28,4 +28,6 @@ export const WEST_TABLES = [
   box(3.2, 7.4, 4.4, 8.6, 0.75, 'table'), box(3.2, 10.0, 4.4, 11.2, 0.75, 'table'),
   box(6.4, 7.4, 7.6, 8.6, 0.75, 'table'), box(6.4, 10.0, 7.6, 11.2, 0.75, 'table'),
 ];
+/** The same four tables drawn as another furniture kind (same footprints, so collisions and spots stay valid). */
+export const westTables = (kind: string) => WEST_TABLES.map(b => ({ ...b, kind }));
 export const WEST_TABLE_SPOTS = [{ x: 5.4, z: 8.0 }, { x: 5.4, z: 10.6 }, { x: 8.4, z: 8.0 }, { x: 8.4, z: 10.6 }];

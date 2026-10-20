@@ -21,7 +21,7 @@ export const SALON: MapDef = {
   coffee: { food: '洗頭', station: '洗頭台', verb: '洗頭', icon: '🚿', price: 14, box: COFFEE_BOX },
   meal: { food: '剪髮造型', station: '造型椅', verb: '剪頭髮', icon: '✂️', price: 26, uses: '髮蠟', box: MEAL_BOX },
   foodChance: 0.6, goalScale: 1.4,
-  decor: [box(3, 8, 7.5, 8.5, 0.9, 'bar'), box(5.6, 13.6, 6.4, 14.4, 1.8, 'mannequin'), box(7.6, 13.6, 8.4, 14.4, 1.8, 'mannequin'), CORNER_PLANT],
+  decor: [box(3, 8, 7.5, 8.5, 0.9, 'mirrors'), box(5.6, 13.6, 6.4, 14.4, 1.8, 'dryer'), box(7.6, 13.6, 8.4, 14.4, 1.8, 'dryer'), CORNER_PLANT],
   karens: ['photo'],
   playerSpawns: STD_SPAWNS,
   wander: [{ x: 5, z: 10 }, { x: 11, z: 8 }, { x: 18, z: 6 }, { x: 10, z: 12.5 }],

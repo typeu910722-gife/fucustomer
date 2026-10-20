@@ -19,7 +19,7 @@ export const BOOKSTORE: MapDef = {
   ...STD_FRONT,
   coffee: { food: '手沖咖啡', station: '咖啡吧', verb: '沖咖啡', icon: '☕', price: 9, box: COFFEE_BOX },
   meal: null, foodChance: 0.3, goalScale: 1.05,
-  decor: [box(3.4, 9.6, 4.6, 10.8, 0.75, 'table'), box(6.4, 9.6, 7.6, 10.8, 0.75, 'table'), CORNER_PLANT],
+  decor: [box(3.4, 9.6, 4.6, 10.8, 0.75, 'readtable'), box(6.4, 9.6, 7.6, 10.8, 0.75, 'readtable'), CORNER_PLANT],
   karens: ['reader'],
   playerSpawns: STD_SPAWNS,
   wander: [{ x: 5, z: 8 }, { x: 18, z: 6 }, { x: 11, z: 8.5 }, { x: 12, z: 12 }],

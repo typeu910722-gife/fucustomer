@@ -18,7 +18,7 @@ export const DRUGSTORE: MapDef = {
   ],
   ...STD_FRONT,
   coffee: null, meal: null, foodChance: 0, goalScale: 1.35,
-  decor: [box(7.2, 13.8, 8.2, 14.8, 0.9, 'display'), box(3.6, 8.4, 4.8, 9.6, 0.9, 'display'), CORNER_PLANT],
+  decor: [box(7.2, 13.8, 8.2, 14.8, 0.9, 'beauty'), box(3.6, 8.4, 4.8, 9.6, 0.9, 'beauty'), CORNER_PLANT],
   karens: ['sampler'],
   playerSpawns: STD_SPAWNS,
   wander: [{ x: 8, z: 10 }, { x: 18, z: 6 }, { x: 5, z: 11.5 }, { x: 12, z: 12 }],

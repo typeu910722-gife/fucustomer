@@ -38,7 +38,7 @@ await pg.evaluate(() => {
   const g = window.__game, w = g.conn.room.world, me = [...w.players.values()][0];
   const c = w.customers.find(k => k.kind === 'custom');
   for (const o of w.customers) if (o !== c && Math.hypot(o.x - 16.5, o.z - 12.5) < 2.5) o.gone = true;
-  c.x = 16.5; c.z = 12.5; c.state = 'atRegister'; c.path = []; c.items = ['drinks']; c.shopping = []; c.life = 999; w.registers[0] = c.id;
+  c.x = 16.5; c.z = 12.5; c.state = 'atRegister'; c.path = []; c.items = ['drinks']; c.shopping = []; c.life = 999; c.patience = c.patienceMax = 999; w.registers[0] = c.id;
   g.pos = { x: 16.5, z: 13.6 }; g.yaw = Math.PI; g.pitch = 0.05; me.x = 16.5; me.z = 13.6;
 });
 await pg.waitForFunction(() => /複誦/.test(document.getElementById('prompt')?.innerText ?? ''), null, { timeout: 4000 }).catch(() => {});

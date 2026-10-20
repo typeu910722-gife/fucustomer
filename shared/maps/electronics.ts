@@ -18,7 +18,7 @@ export const ELECTRONICS: MapDef = {
   ],
   ...STD_FRONT,
   coffee: null, meal: null, foodChance: 0, goalScale: 2.6,
-  decor: [box(3.4, 8, 4.6, 9.2, 0.9, 'display'), box(3.4, 11, 4.6, 12.2, 0.9, 'display'), box(0, 7.5, 0.6, 10.5, 1.2, 'atm'), CORNER_PLANT],
+  decor: [box(3.4, 8, 4.6, 9.2, 0.9, 'demo'), box(3.4, 11, 4.6, 12.2, 0.9, 'demo'), box(0, 7.5, 0.6, 10.5, 1.2, 'tvwall'), CORNER_PLANT],
   karens: ['unboxer'],
   playerSpawns: STD_SPAWNS,
   wander: [{ x: 8, z: 10 }, { x: 18, z: 6 }, { x: 6.5, z: 12.5 }, { x: 12, z: 12 }],

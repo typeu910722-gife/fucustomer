@@ -19,7 +19,7 @@ export const HOTEL: MapDef = {
   ...STD_FRONT,
   coffee: { food: '迎賓茶', station: '茶水台', verb: '泡迎賓茶', icon: '🍵', price: 8, box: COFFEE_BOX },
   meal: null, foodChance: 0.3, goalScale: 1.2,
-  decor: [box(3.4, 8.4, 4.6, 9.6, 0.75, 'table'), box(3.4, 11, 4.6, 12.2, 0.75, 'table'), box(0.2, 14.2, 0.9, 15.4, 1.3, 'plant'), box(6.4, 14.4, 7.2, 15.2, 1.3, 'plant'), CORNER_PLANT],
+  decor: [box(3.4, 8.4, 4.6, 9.6, 0.75, 'lobby'), box(3.4, 11, 4.6, 12.2, 0.75, 'lobby'), box(0.2, 14.2, 0.9, 15.4, 1.3, 'plant'), box(6.4, 14.4, 7.2, 15.2, 1.3, 'luggage'), CORNER_PLANT],
   karens: ['upgrader'],
   playerSpawns: STD_SPAWNS,
   wander: [{ x: 7, z: 10 }, { x: 18, z: 6 }, { x: 5.5, z: 13 }, { x: 12, z: 12 }],

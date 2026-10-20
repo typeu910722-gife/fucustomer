@@ -1,6 +1,6 @@
 // 咖啡廳: pour-over coffee and waffles made to order, cakes in the fridge, four tables and a window bar.
 import { MapDef, box } from './types.ts';
-import { COFFEE_BOX, CORNER_PLANT, MEAL_BOX, STD_FRONT, STD_SPAWNS, WEST_TABLES, WEST_TABLE_SPOTS } from './common.ts';
+import { COFFEE_BOX, CORNER_PLANT, MEAL_BOX, STD_FRONT, STD_SPAWNS, westTables, WEST_TABLE_SPOTS } from './common.ts';
 
 export const CAFE: MapDef = {
   id: 'cafe', name: '咖啡廳', icon: '☕', desc: '手沖咖啡、鬆餅現做，蛋糕在冰箱。桌子不多，有人點一杯就坐一整天。',
@@ -20,7 +20,7 @@ export const CAFE: MapDef = {
   coffee: { food: '手沖咖啡', station: '手沖吧台', verb: '沖咖啡', icon: '☕', price: 12, box: COFFEE_BOX },
   meal: { food: '鬆餅', station: '鬆餅機', verb: '烤鬆餅', icon: '🧇', price: 15, uses: '蛋糕', box: MEAL_BOX },
   foodChance: 0.65, goalScale: 0.95,
-  decor: [...WEST_TABLES, box(5, 15.3, 9.5, 15.7, 1.1, 'bar'), CORNER_PLANT],
+  decor: [...westTables('cafetable'), box(5, 15.3, 9.5, 15.7, 1.1, 'bar'), CORNER_PLANT],
   karens: ['squatter'],
   campSpots: [...WEST_TABLE_SPOTS, { x: 6, z: 14.7 }, { x: 8, z: 14.7 }],
   playerSpawns: STD_SPAWNS,
