@@ -215,7 +215,7 @@ export class Game {
       start: () => this.send({ type: 'start' }),
       leave: () => { saveLastSession(null); this.exit(); },
       copy: () => { void navigator.clipboard?.writeText(this.lobby!.code); this.toast('已複製房間碼', 'good'); },
-      config: (map, difficulty) => this.send({ type: 'lobbyCfg', map, difficulty }),
+      config: (map, difficulty, bots) => this.send({ type: 'lobbyCfg', map, difficulty, bots }),
     });
   }
 
@@ -696,7 +696,8 @@ export class Game {
     $('h-clock').textContent = s.phase === 'prep' ? `準備 ${fmtSec(s.phaseLeft)}` : s.phase === 'closing' ? `打烊中 ${fmtSec(s.phaseLeft)}` : s.phase === 'summary' ? '日結' : `🕒 ${fmtClock(s.clock)}`;
     $('h-money').textContent = `💰 $${s.money}`;
     $('h-rating').textContent = `★ ${s.rating.toFixed(1)}`;
-    $('h-players').textContent = `👥 ${s.players.filter(p => p.connected).length}/5`;
+    const nBots = s.players.filter(p => p.bot).length;
+    $('h-players').textContent = `👥 ${s.players.filter(p => p.connected && !p.bot).length}/5${nBots ? ` +🤖${nBots}` : ''}`;
     const cap = shelfCapacity(s.upgrades.shelves);
     $('h-stock').innerHTML = PRODUCTS.map(p => {
       const r = s.shelves[p] / cap;

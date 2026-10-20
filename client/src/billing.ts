@@ -58,7 +58,18 @@ export function devShop(search: string = typeof location === 'undefined' ? '' : 
   return new URLSearchParams(search).get('devshop') === '1';
 }
 
-/** Packs this player may use right now: bought ones (from the profile) plus the QA unlock. */
+/**
+ * Paid-edition builds (e.g. a paid Steam release, see desktop/steam.config.json `includeStorePacks`) are built with
+ * VITE_ALL_STORE_PACKS=1: every store-type pack is part of the purchase. The supporter pack is never included.
+ */
+export function storePacksIncluded(): boolean {
+  const env = (import.meta as unknown as { env?: Record<string, string> }).env ?? {};
+  return env.VITE_ALL_STORE_PACKS === '1';
+}
+
+/** Packs this player may use right now: bought ones (from the profile), packs included in a paid edition, plus the QA unlock. */
 export function entitlementsFor(p: CareerProfile): string[] {
-  return devShop() ? [...new Set([...p.shop.entitlements, ...PACKS.map(k => k.id)])] : p.shop.entitlements;
+  if (devShop()) return [...new Set([...p.shop.entitlements, ...PACKS.map(k => k.id)])];
+  if (storePacksIncluded()) return [...new Set([...p.shop.entitlements, ...PACKS.filter(k => k.stores.length > 0).map(k => k.id)])];
+  return p.shop.entitlements;
 }

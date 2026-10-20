@@ -28,7 +28,12 @@ const str = (v: unknown, max: number, d = '') => (typeof v === 'string' ? v.slic
 const num = (v: unknown, lo: number, hi: number, d: number) => (typeof v === 'number' && Number.isFinite(v) ? Math.min(hi, Math.max(lo, v)) : d);
 function cleanShelves(v: unknown) {
   const out: Record<string, number> = {};
-  if (v && typeof v === 'object') for (const k of ['drinks', 'snacks', 'bento']) out[k] = Math.round(num((v as Record<string, unknown>)[k], 0, 99, 0));
+  if (v && typeof v === 'object') {
+    const o = v as Record<string, unknown>;
+    for (const k of ['drinks', 'snacks', 'bento']) out[k] = Math.round(num(o[k], 0, 99, 0));
+    // the optional fourth product line (e.g. the gas station's drinks fridge) is kept only when the store has one
+    if (typeof o.extra === 'number') out.extra = Math.round(num(o.extra, 0, 99, 0));
+  }
   return out;
 }
 const view = (s: FriendStore): PublicStoreView => ({ code: s.code, name: s.name, map: s.map, rating: s.rating, locked: s.locked, shelves: s.shelves });

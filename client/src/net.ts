@@ -18,6 +18,8 @@ export interface LocalExtras {
   onSave?: (save: StoreSave) => void;
   /** Map for free play / own store (career shifts carry it in their config). */
   map?: string;
+  /** Free play with a hired clerk: wage charged at each nightly settlement. */
+  staffWage?: number;
 }
 
 export type NetStatus = 'connecting' | 'online' | 'reconnecting' | 'offline';
@@ -42,7 +44,7 @@ export class LocalConnection implements GameConnection {
   private staff: { bot: Bot; id: string; snap: Snapshot | null; rid: number } | null = null;
   constructor(name: string, save: StoreSave | null, shift?: ShiftConfig, seed?: number, extras: LocalExtras = {}) {
     applyMap(shift?.map ?? extras.map); // must happen before the world and the 3D view are built
-    this.room = new Room('SOLO', save, { solo: true, shift, seed, map: extras.map });
+    this.room = new Room('SOLO', save, { solo: true, shift, seed, map: extras.map, staffWage: extras.staffWage });
     this.onSave = extras.onSave;
     const conn = { send: (m: ServerMsg) => queueMicrotask(() => { if (m.type === 'save') this.onSave?.(m.save); this.onMessage(m); }), close: () => {} };
     const r = this.room.join(conn, name, undefined, 'solo', extras.outfit);

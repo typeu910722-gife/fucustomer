@@ -1,9 +1,10 @@
 // Transport-agnostic room: lobby, membership, reconnect, host transfer and the game loop.
 // Used by the dedicated server (WebSocket connections) and by solo play (in-memory connection).
 import {
-  MAX_PLAYERS, PLAYER_COLORS, QUICK_MESSAGES, RECONNECT_GRACE_GAME_S, RECONNECT_GRACE_LOBBY_S, SNAPSHOT_RATE, TICK_RATE,
+  MAX_FILL_BOTS, MAX_PLAYERS, PLAYER_COLORS, QUICK_MESSAGES, RECONNECT_GRACE_GAME_S, RECONNECT_GRACE_LOBBY_S, SNAPSHOT_RATE, TICK_RATE,
 } from './constants.ts';
-import type { ClientMsg, GameEvent, LobbyState, ServerMsg, StoreSave, Target } from './protocol.ts';
+import type { ClientMsg, GameEvent, LobbyState, ServerMsg, Snapshot, StoreSave, Target } from './protocol.ts';
+import { Bot, botMessages } from './bot.ts';
 import {
   World, addPing, addPlayer, applyInput, createWorld, playerDisconnected, removePlayer, requestAct, requestBuy, requestDrop,
   finishShift, requestSpin, requestHit, requestThrow, requestUltimate, sanitizeSave, setReady, snapshot, tick, dayConfig,
@@ -21,10 +22,16 @@ export interface Member {
   disconnectedAt: number; color: number; platform: string; joinOrder: number; lastQuickAt: number; lastPingAt: number;
   /** Cosmetics (hat / apron / name tag) the player chose; purely visual. */
   outfit?: Outfit;
+  /** 電腦店員補位: a server-run fill-in clerk (not a person: never host, not counted as a player, not checkpointed). */
+  bot?: boolean;
 }
+
+const BOT_NAMES = ['🤖小陳', '🤖阿美', '🤖阿豪', '🤖佳佳'];
 
 export interface RoomCheckpoint {
   code: string; save: StoreSave; hostId: string; started: boolean; savedAt: number; map?: string; difficulty?: Difficulty;
+  /** 電腦店員補位 switched on (the bots themselves are not saved; they are re-created on restore). */
+  bots?: boolean;
   members: { playerId: string; name: string; token: string; color: number; platform: string; joinOrder: number; outfit?: Outfit }[];
 }
 
@@ -41,6 +48,8 @@ export interface RoomOptions {
   map?: string;
   /** Difficulty of the business-day loop (multiplayer rooms). */
   difficulty?: Difficulty;
+  /** Free play with a hired clerk: day wage charged at each nightly settlement (own store passes it in `shift`). */
+  staffWage?: number;
 }
 
 const ACT_KINDS = new Set(['checkout', 'brew', 'deliver', 'takeBox', 'stock', 'returnBox', 'takeMop', 'returnMop', 'clean', 'calm', 'coupon', 'askQueue', 'stopFilm', 'checkBag', 'pickup', 'heat', 'grab', 'stopLitter', 'unplug', 'treat', 'repeatOrder', 'recommend', 'limitTry', 'knock', 'heckle', 'sigAct', 'sigAlt']);
@@ -90,6 +99,9 @@ export class Room {
   private opts: RoomOptions;
   /** This room's store type. The map state is shared by the whole process, so every entry point switches to it first. */
   mapId: string;
+  /** 電腦店員補位: the host lets bots fill empty slots (multiplayer business days only). */
+  botFill = false;
+  private bots = new Map<string, { bot: Bot; snap: Snapshot | null; rid: number }>();
 
   constructor(code: string, save: StoreSave | null | undefined, opts: RoomOptions = {}) {
     this.code = code;
@@ -103,12 +115,16 @@ export class Room {
   }
   difficulty: Difficulty;
   /** Business-day config for this room's map and difficulty (career shifts use their own config). */
-  private dayCfg() { return this.opts.shift ?? withDifficulty(dayConfig(), this.difficulty); }
+  private dayCfg(): ShiftConfig {
+    const base = this.opts.shift ?? withDifficulty(dayConfig(), this.difficulty);
+    return this.opts.staffWage ? { ...base, staffWage: this.opts.staffWage } : base;
+  }
   private useMap() { applyMap(this.mapId); }
 
   static restore(cp: RoomCheckpoint, opts: RoomOptions = {}) {
     const r = new Room(cp.code, cp.save, { ...opts, map: cp.map ?? opts.map, difficulty: cp.difficulty ?? opts.difficulty });
     r.hostId = cp.hostId;
+    r.botFill = !!cp.bots && !r.solo && !opts.shift;
     const now = r.now();
     for (const m of cp.members) {
       r.members.set(m.playerId, {
@@ -121,6 +137,7 @@ export class Room {
       r.useMap();
       r.world = createWorld(r.save, Date.now(), r.dayCfg()); // resume from the start of the checkpointed day
     }
+    r.syncBots(false);
     r.emptySince = now;
     r.log(`restored room ${cp.code} (day ${cp.save.day}, ${cp.members.length} members)`);
     return r;
@@ -129,12 +146,65 @@ export class Room {
   checkpoint(): RoomCheckpoint {
     return {
       code: this.code, save: this.save, hostId: this.hostId, started: this.started, savedAt: this.now(), map: this.mapId, difficulty: this.difficulty,
-      members: [...this.members.values()].map(m => ({ playerId: m.playerId, name: m.name, token: m.token, color: m.color, platform: m.platform, joinOrder: m.joinOrder, outfit: m.outfit })),
+      bots: this.botFill || undefined,
+      members: [...this.members.values()].filter(m => !m.bot).map(m => ({ playerId: m.playerId, name: m.name, token: m.token, color: m.color, platform: m.platform, joinOrder: m.joinOrder, outfit: m.outfit })),
     };
   }
 
   private log(s: string) { this.opts.log?.(s); }
-  get connectedCount() { let n = 0; for (const m of this.members.values()) if (m.connected) n++; return n; }
+  /** Connected people (fill-in bots are not players). */
+  get connectedCount() { let n = 0; for (const m of this.members.values()) if (m.connected && !m.bot) n++; return n; }
+  /** People holding a slot (connected or within their reconnect grace). */
+  get humanCount() { let n = 0; for (const m of this.members.values()) if (!m.bot) n++; return n; }
+  get botCount() { return this.bots.size; }
+
+  /** 電腦店員補位: add or remove bots so they fill free slots (up to MAX_FILL_BOTS) while at least one person is here. */
+  syncBots(announce = true) {
+    const humans = this.humanCount;
+    const target = this.botFill && humans > 0 && !this.solo && !this.opts.shift ? Math.min(MAX_FILL_BOTS, MAX_PLAYERS - humans) : 0;
+    let changed = false;
+    while (this.bots.size > target) { this.removeBot([...this.bots.keys()].pop()!, announce); changed = true; }
+    while (this.bots.size < target) { this.addBot(announce); changed = true; }
+    return changed;
+  }
+
+  private addBot(announce: boolean) {
+    const used = new Set([...this.members.values()].map(m => m.name));
+    const name = BOT_NAMES.find(n => !used.has(n)) ?? `🤖店員${this.bots.size + 1}`;
+    const usedColors = new Set([...this.members.values()].map(m => m.color));
+    const order = this.joinCounter++;
+    const st = { bot: new Bot('any', (order * 0.37) % 1), snap: null as Snapshot | null, rid: 0 };
+    const m: Member = {
+      playerId: 'b' + this.rid(8), name, token: this.rid(32), bot: true, ready: true, connected: true, disconnectedAt: 0,
+      color: PLAYER_COLORS.find(c => !usedColors.has(c)) ?? PLAYER_COLORS[order % PLAYER_COLORS.length], platform: 'bot', joinOrder: order, lastQuickAt: 0, lastPingAt: 0,
+      conn: { send: msg => { if (msg.type === 'snap') st.snap = msg.s; }, close: () => {} },
+    };
+    this.members.set(m.playerId, m);
+    this.bots.set(m.playerId, st);
+    if (this.world) addPlayer(this.world, m.playerId, m.name, m.color).bot = true;
+    if (announce && this.started) this.broadcastEvents([{ e: 'toast', text: `🤖 電腦店員 ${name} 來補位`, tone: 'info' }]);
+    this.log(`${this.code}: bot ${name} added`);
+  }
+
+  private removeBot(id: string, announce: boolean) {
+    const m = this.members.get(id);
+    this.members.delete(id); this.bots.delete(id);
+    if (this.world) removePlayer(this.world, id);
+    if (m && announce && this.started) this.broadcastEvents([{ e: 'toast', text: `🤖 ${m.name} 讓出位置`, tone: 'info' }]);
+  }
+
+  /** The bots look at their latest snapshot and send the same messages a client would. */
+  private driveBots(dt: number) {
+    if (!this.world || this.paused) return;
+    for (const [id, st] of [...this.bots]) {
+      if (!st.snap) continue;
+      const me = st.snap.players.find(p => p.id === id); if (!me) continue;
+      for (const msg of botMessages(st.bot.update(st.snap, me, dt), () => 'bot' + st.rid++)) {
+        if (!this.bots.has(id)) break;
+        this.handle(id, msg);
+      }
+    }
+  }
 
   /** Join or reconnect. Returns the member or an error code. */
   join(conn: Conn, name: unknown, token: unknown, platform = 'web', outfit?: unknown): { ok: true; member: Member } | { ok: false; code: string; message: string } {
@@ -159,6 +229,8 @@ export class Room {
         }
       }
     }
+    // a person always beats a fill-in bot to the last slot
+    if (this.members.size >= MAX_PLAYERS && this.bots.size) this.removeBot([...this.bots.keys()].pop()!, true);
     if (this.members.size >= MAX_PLAYERS) return { ok: false, code: 'room_full', message: `房間已滿（最多 ${MAX_PLAYERS} 人）` };
     const order = this.joinCounter++;
     const used = new Set([...this.members.values()].map(m => m.color));
@@ -172,6 +244,7 @@ export class Room {
     if (!this.hostId || !this.members.get(this.hostId)) this.hostId = m.playerId;
     if (this.world) addPlayer(this.world, m.playerId, m.name, m.color).outfit = m.outfit;
     conn.send({ type: 'welcome', playerId: m.playerId, token: m.token, code: this.code, reconnected: false, solo: this.solo });
+    this.syncBots();
     this.broadcastLobby();
     if (this.started) {
       this.sendSnapshotTo(m);
@@ -201,6 +274,8 @@ export class Room {
     if (this.world) removePlayer(this.world, playerId);
     m.conn?.close(reason);
     this.log(`${this.code}: ${m.name} removed (${reason})`);
+    if (m.bot) this.bots.delete(playerId);
+    else this.syncBots(); // a free slot gets a bot again; the last person leaving takes the bots along
     this.transferHostIfNeeded();
     this.broadcastLobby();
     this.broadcastEvents([{ e: 'toast', text: `🚪 ${m.name} 離開了房間`, tone: 'info' }]);
@@ -209,7 +284,7 @@ export class Room {
   private transferHostIfNeeded() {
     const host = this.members.get(this.hostId);
     if (host && host.connected) return;
-    const candidates = [...this.members.values()].filter(m => m.connected).sort((a, b) => a.joinOrder - b.joinOrder);
+    const candidates = [...this.members.values()].filter(m => m.connected && !m.bot).sort((a, b) => a.joinOrder - b.joinOrder);
     if (!candidates.length) return; // keep the old host id while nobody is online
     this.hostId = candidates[0].playerId;
     this.log(`${this.code}: host → ${candidates[0].name}`);
@@ -231,7 +306,8 @@ export class Room {
         if (this.started || this.solo || this.opts.shift || playerId !== this.hostId) return;
         if (typeof msg.map === 'string' && getMap(msg.map).id === msg.map) this.mapId = msg.map;
         if (isDifficulty(msg.difficulty)) this.difficulty = msg.difficulty;
-        for (const x of this.members.values()) if (x.playerId !== this.hostId) x.ready = false; // everyone re-confirms
+        if (typeof msg.bots === 'boolean') { this.botFill = msg.bots; this.syncBots(); }
+        for (const x of this.members.values()) if (x.playerId !== this.hostId && !x.bot) x.ready = false; // everyone re-confirms
         this.opts.onCheckpoint?.(this.checkpoint());
         this.broadcastLobby();
         break;
@@ -317,11 +393,12 @@ export class Room {
       const p = addPlayer(this.world, m.playerId, m.name, m.color);
       p.outfit = m.outfit;
       p.connected = m.connected;
+      if (m.bot) p.bot = true;
     }
     this.opts.onCheckpoint?.(this.checkpoint());
     this.broadcastLobby();
     this.broadcastEvents([{ e: 'phase', phase: 'prep', day: this.world.day }]);
-    this.log(`${this.code}: game started with ${this.members.size} players`);
+    this.log(`${this.code}: game started with ${this.humanCount} players${this.bots.size ? ` + ${this.bots.size} bots` : ''}`);
   }
 
   /** Advance one simulation tick. */
@@ -330,7 +407,7 @@ export class Room {
     const now = this.now();
     // reconnect grace
     for (const m of [...this.members.values()]) {
-      if (m.connected) continue;
+      if (m.connected || m.bot) continue;
       const grace = (this.started ? RECONNECT_GRACE_GAME_S : RECONNECT_GRACE_LOBBY_S) * 1000;
       if (now - m.disconnectedAt > grace) this.leave(m.playerId, 'timeout');
     }
@@ -349,6 +426,7 @@ export class Room {
       const s = snapshot(this.world, now);
       for (const mm of this.members.values()) if (mm.conn) mm.conn.send({ type: 'snap', s });
     }
+    this.driveBots(dt);
   }
 
   private flushResults() {
@@ -365,8 +443,9 @@ export class Room {
   lobbyState(): LobbyState {
     return {
       code: this.code, hostId: this.hostId, started: this.started, max: MAX_PLAYERS, day: this.world?.day ?? this.save.day, map: this.mapId, difficulty: this.difficulty,
+      bots: this.solo || this.opts.shift ? undefined : this.botFill,
       players: [...this.members.values()].sort((a, b) => a.joinOrder - b.joinOrder)
-        .map(m => ({ id: m.playerId, name: m.name, ready: m.ready, connected: m.connected, color: m.color, platform: m.platform, outfit: m.outfit })),
+        .map(m => ({ id: m.playerId, name: m.name, ready: m.ready, connected: m.connected, color: m.color, platform: m.platform, outfit: m.outfit, bot: m.bot || undefined })),
     };
   }
 

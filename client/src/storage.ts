@@ -34,6 +34,17 @@ const soloKey = (map: string) => (map === 'convenience' ? SOLO_KEY : `fucustomer
 export function loadSoloSave(map = 'convenience'): StoreSave | null { return read<StoreSave>(soloKey(map)); }
 export function saveSoloSave(s: StoreSave, map = 'convenience') { write(soloKey(map), s); }
 export function clearSoloSave(map = 'convenience') { try { localStorage.removeItem(soloKey(map)); } catch { /* ignore */ } }
+/** 自由營業: whether 小陳 is hired, per store save (map id). */
+const HIRE_KEY = 'fucustomer.freeplay.staff.v1';
+export function loadFreeplayHires(): Record<string, boolean> {
+  const v = read<Record<string, unknown>>(HIRE_KEY) ?? {};
+  return Object.fromEntries(Object.entries(v).filter(([, b]) => b === true)) as Record<string, boolean>;
+}
+export function saveFreeplayHire(map: string, hired: boolean) {
+  const v = loadFreeplayHires();
+  if (hired) v[map] = true; else delete v[map];
+  write(HIRE_KEY, v);
+}
 export function loadCoopSave(): StoreSave | null { return read<StoreSave>(COOP_KEY); }
 export function saveCoopSave(s: StoreSave) { write(COOP_KEY, s); }
 

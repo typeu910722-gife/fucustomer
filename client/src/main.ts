@@ -4,7 +4,7 @@ import { Game } from './game.ts';
 import { LocalConnection, GameConnection } from './net.ts';
 import type { Intent } from './net-ws.ts';
 import {
-  clearSoloSave, defaultServerUrl, detectPlatform, isTouch, loadCoopSave, loadLastSession, loadSettings, loadSoloSave, saveSettings,
+  clearSoloSave, loadFreeplayHires, saveFreeplayHire, defaultServerUrl, detectPlatform, isTouch, loadCoopSave, loadLastSession, loadSettings, loadSoloSave, saveSettings,
 } from './storage.ts';
 import * as UI from './ui.ts';
 import { careerScreen, loadProfile, resultScreen, saveProfile } from './career-ui.ts';
@@ -16,7 +16,7 @@ import { CHAPTERS } from '../../shared/career.ts';
 import { needsCourt, payFine } from '../../shared/court.ts';
 import { SCENES, sceneAfter, sceneBefore } from '../../shared/story.ts';
 import { courtScreen, playScene } from './story-ui.ts';
-import { ownStoreConfig, settleStoreDay, staffPace } from '../../shared/ownstore.ts';
+import { FREEPLAY_STAFF_WAGE, ownStoreConfig, settleStoreDay, staffPace } from '../../shared/ownstore.ts';
 import { dayConfig } from '../../shared/sim.ts';
 import { MAPS, getMap } from '../../shared/maps/index.ts';
 import { OUTSIDE_SCORE, buildRaidConfig, raidReward } from '../../shared/raid.ts';
@@ -250,7 +250,9 @@ function freePlay() {
   screenDepth = 1;
   const saves: Record<string, ReturnType<typeof loadSoloSave>> = {};
   for (const m of MAPS) saves[m.id] = loadSoloSave(m.id);
+  const hired = loadFreeplayHires();
   UI.mapPicker(saves, {
+    hire: { wage: FREEPLAY_STAFF_WAGE, hired, set: (map, on) => { hired[map] = on; saveFreeplayHire(map, on); } },
     back: () => career(),
     pack: id => career('shop', id),
     play: (map, fresh) => {
@@ -259,7 +261,9 @@ function freePlay() {
       if (fresh) clearSoloSave(map);
       const save = fresh ? null : loadSoloSave(map);
       const look = myLoadout();
-      startGame(() => new LocalConnection(playerName(), save, undefined, undefined, { map, outfit: outfitOf(look) }), () => freePlay(), look);
+      // 雇用小陳: the same employee bot as in your own store; the wage comes out of each day's settlement
+      const staff = hired[map] ? { name: '小陳', pace: 1 } : undefined;
+      startGame(() => new LocalConnection(playerName(), save, undefined, undefined, { map, outfit: outfitOf(look), staff, staffWage: staff ? FREEPLAY_STAFF_WAGE : undefined }), () => freePlay(), look);
     },
   });
 }

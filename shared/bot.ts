@@ -219,13 +219,17 @@ export class Bot {
     const topUp = restockBelow((cap - BOX_SIZE + 1) / cap);
     const item = nearest(me, s.items.filter(i => i.held.kind === 'box'));
     const clean: Goal[] = s.spills.length >= 2 && s.mopsOnRack > 0 ? [{ pos: { x: (MOP_RACK.x1) + 0.6, z: (MOP_RACK.z0 + MOP_RACK.z1) / 2 }, kind: 'takeMop', target: { t: 'mop' }, key: 'tm' }] : [];
-    const food = coffeeWaiting ? [coffeeGoal] : [];
+    // a waiting food order, unless a teammate is already making or carrying it
+    const foodCovered = !!waitingFood && others.some(p => p.held?.kind === waitingFood.want || p.held2?.kind === waitingFood.want
+      || p.busy?.kind === coffeeGoal.kind);
+    const food = coffeeWaiting && (this.role !== 'any' || !foodCovered) ? [coffeeGoal] : [];
     const order: Goal[][] =
       this.role === 'stocker' ? [restock, tasks, food, topUp, clean]
         : this.role === 'cleaner' ? [clean, tasks, restock, food]
           : this.role === 'cashier' ? [tasks, food, restock, clean]
-            // 'any' (the employee / fill-in bot): the till when nobody else is on it, then shelves, coffee, cleaning
-            : (process.env.V === "a" ? [tasks, restockBelow(0.2), food, restock, clean, topUp] : process.env.V === "b" ? [tasks, restock, food, clean] : [tasks, restockBelow(0.2), food, restock, topUp, clean]);
+            // 'any' (the employee / fill-in bot): the till when nobody else is on it, a food order nobody is making,
+            // shelves below 40 %, topping up shelves with room for a whole box, then cleaning
+            : [tasks, food, restock, topUp, clean];
     for (const list of order) if (list.length) return list === tasks || list === clean ? list[Math.floor(this.seed * list.length) % list.length] : list[0];
     if (item) return { pos: item, kind: 'pickup', target: { t: 'item', id: item.id }, key: 'pk' + item.id };
     return null;

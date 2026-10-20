@@ -16,6 +16,9 @@ export const WAGES: Record<WageMode, { label: string; pay: number; mood: number;
   stingy: { label: '🤑 黑心老闆', pay: 40, mood: -18, desc: '日薪 $40。省錢，但員工越做越慢，心情歸零就辭職' },
 };
 
+/** 自由營業: hiring 小陳 for the day costs the standard wage, taken out at the nightly settlement. */
+export const FREEPLAY_STAFF_WAGE = WAGES.fair.pay;
+
 export interface OwnStore {
   name: string; invested: number; save: StoreSave; days: number; negDays: number;
   staff: { name: string; mood: number; quit: boolean }; wage: WageMode; bestDay: number; withdrawn: number;

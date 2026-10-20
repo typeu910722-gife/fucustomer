@@ -266,6 +266,33 @@ test('the host can change store type and difficulty in the lobby; others must re
   h.close(); j.close();
 });
 
+test('電腦店員補位 over WebSocket: host toggles bots, they play on the server, a person takes a bot\'s slot', { timeout: 60_000 }, async () => {
+  const [h, j] = await room(2);
+  h.send({ type: 'lobbyCfg', bots: true } as ClientMsg);
+  await j.until(() => j.lobby?.bots === true && j.lobby.players.filter(p => p.bot).length === 2, 5000, 'bots in lobby');
+  assert.equal(j.lobby!.players.length, 4);
+  assert.equal((await api('GET', `/api/room/${h.code}`)).data.players, 2, 'bots are not counted as players');
+  j.send({ type: 'ready', ready: true });
+  await h.until(() => !!h.lobby?.players.find(p => p.id === j.playerId)?.ready, 5000, 'guest ready');
+  h.send({ type: 'start' });
+  for (const c of [h, j]) await c.until(() => !!c.me(), 5000, 'first snapshot');
+  const botIds = h.snap!.players.filter(p => p.bot).map(p => p.id);
+  assert.equal(botIds.length, 2);
+  const startPos = new Map(h.snap!.players.filter(p => p.bot).map(p => [p.id, { x: p.x, z: p.z }]));
+  await h.until(() => h.snap!.players.filter(p => p.bot).some(p => Math.hypot(p.x - startPos.get(p.id)!.x, p.z - startPos.get(p.id)!.z) > 1), 20000, 'a bot walking');
+  // two more people: the room is full (4 people + 1 bot); a fifth person still gets in and the last bot gives way
+  const extra: Client[] = [];
+  for (let i = 0; i < 3; i++) {
+    const c = new Client('x' + i); await c.connect();
+    c.send({ type: 'join', code: h.code, name: 'X' + i });
+    await c.until(() => !!c.playerId, 5000, 'welcome'); extra.push(c);
+  }
+  await h.until(() => h.lobby?.players.filter(p => p.bot).length === 0 && h.lobby.players.length === 5, 5000, 'bots gave way');
+  extra[2].send({ type: 'leave' });
+  await h.until(() => h.lobby?.players.filter(p => p.bot).length === 1, 5000, 'a bot fills the free slot again');
+  for (const c of [h, j, ...extra]) c.close();
+});
+
 test('friend store API: upload, lock, raid, reports (owner token required)', async () => {
   const up = await api('POST', '/api/stores', { name: '測試店', map: 'boba', money: 2000, rating: 3.5, shelves: { drinks: 4, snacks: 4, bento: 4 } });
   assert.equal(up.status, 200);

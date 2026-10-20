@@ -38,6 +38,8 @@ export interface PlayerState {
   raider?: boolean; litterAt?: number;
   /** Cosmetics others see (shared/shop.ts); purely visual. */
   outfit?: Outfit;
+  /** 電腦店員補位: a server-run fill-in clerk (shared/bot.ts), never a real player. */
+  bot?: boolean;
   stats: { served: number; karens: number; cleaned: number; restocked: number; ejected: number };
 }
 
@@ -246,7 +248,12 @@ function toast(w: World, text: string, tone: 'good' | 'bad' | 'info' = 'info') {
 function adjRating(w: World, d: number) { w.rating = Math.max(0, Math.min(5, w.rating + d)); }
 function adjChaos(w: World, d: number) { w.chaos = Math.max(0, Math.min(CHAOS_MAX, w.chaos + d)); }
 function adjBurst(w: World, d: number) { if (w.cfg.abilities.includes('ultimate')) w.burst = Math.max(0, Math.min(BURST_MAX, w.burst + d)); }
-function activePlayers(w: World) { let n = 0; for (const p of w.players.values()) if (p.connected) n++; return Math.max(1, n); }
+/** Crew size for workload scaling. Fill-in bots (電腦店員) count as half a person each, rounded down. */
+function activePlayers(w: World) {
+  let n = 0, bots = 0;
+  for (const p of w.players.values()) if (p.connected) { if (p.bot) bots++; else n++; }
+  return Math.max(1, n + Math.floor(bots / 2));
+}
 function cap(w: World) { return shelfCapacity(w.upgrades.shelves); }
 function customer(w: World, id: number) { return w.customers.find(c => c.id === id); }
 function pick<T>(w: World, arr: T[]): T { return arr[Math.floor(w.rng() * arr.length)]; }
@@ -1515,6 +1522,7 @@ function settleDay(w: World) {
     w.dayStats.bonus = bonus;
     const staff = w.cfg.staffWage ?? 0; // own store: your employee's day wage
     w.dayStats.expenses += DAILY_RENT + staff;
+    if (staff) w.dayStats.wage = staff;
     w.money += bonus - DAILY_RENT - staff;
   }
   w.saveOut = { ...toSave(w), day: w.day + 1 };
@@ -1707,7 +1715,7 @@ export function snapshot(w: World, now: number): Snapshot {
     mopsOnRack: w.mopsOnRack, playerCount: activePlayers(w),
     players: [...w.players.values()].map(p => ({
       id: p.id, name: p.name, color: p.color, x: r2(p.x), z: r2(p.z), yaw: r2(p.yaw), pitch: r2(p.pitch), held: p.held, held2: p.held2,
-      connected: p.connected, away: p.away, ready: p.ready, grabbing: p.grabbing, spinCd: r2(Math.max(0, p.spinReadyAt - w.time)), raider: p.raider || undefined, outfit: p.outfit,
+      connected: p.connected, away: p.away, ready: p.ready, grabbing: p.grabbing, spinCd: r2(Math.max(0, p.spinReadyAt - w.time)), raider: p.raider || undefined, outfit: p.outfit, bot: p.bot || undefined,
       busy: p.busy ? { kind: p.busy.kind, p: Math.min(1, (w.time - p.busy.start) / p.busy.dur) } : null,
     })),
     customers: w.customers.map(c => ({

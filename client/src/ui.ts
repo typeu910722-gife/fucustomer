@@ -1,6 +1,6 @@
 // DOM menus: main menu, lobby, settings, in-game overlays (pause, shop, summary, quick messages).
 import { MAPS } from '../../shared/maps/index.ts';
-import { KAREN_INFO, MAX_PLAYERS, PRODUCT_INFO, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, PRODUCTS, QUICK_MESSAGES, UPGRADES, UPGRADE_IDS, shelfCapacity } from '../../shared/constants.ts';
+import { KAREN_INFO, MAX_FILL_BOTS, MAX_PLAYERS, PRODUCT_INFO, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, PRODUCTS, QUICK_MESSAGES, UPGRADES, UPGRADE_IDS, shelfCapacity } from '../../shared/constants.ts';
 import type { LobbyState, Snapshot, StoreSave } from '../../shared/protocol.ts';
 import type { Settings } from './storage.ts';
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from '../../shared/difficulty.ts';
@@ -250,7 +250,11 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
   });
 }
 
-export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean): void; start(): void; leave(): void; copy(): void; config?(map: string, difficulty: string): void }) {
+/** Lobby share/copy feedback survives lobby redraws (someone readying up re-renders the screen) for ~2 s. */
+let lobbyNote: { text: string; until: number } | null = null;
+const LOBBY_NOTE_DEFAULT = '朋友點連結就會直接進這個房間。';
+
+export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean): void; start(): void; leave(): void; copy(): void; config?(map: string, difficulty: string, bots: boolean): void }) {
   const me = l.players.find(p => p.id === selfId);
   const isHost = l.hostId === selfId;
   const others = l.players.filter(p => p.id !== l.hostId && p.connected);
@@ -271,7 +275,7 @@ export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean
         ${canShare ? '<button class="btn small purple" id="l-share">📤 分享…</button>' : ''}
       </div>
       <input type="text" class="invitelink" id="l-invite" readonly value="${esc(link)}" aria-label="邀請連結">
-      <div class="muted" id="l-sharemsg">朋友點連結就會直接進這個房間。</div>
+      <div class="muted" id="l-sharemsg">${esc(lobbyNote && lobbyNote.until > Date.now() ? lobbyNote.text : LOBBY_NOTE_DEFAULT)}</div>
       </div><div class="lobbyside">
       <div class="muted">人數 ${l.players.length}/${l.max}・第 ${l.day} 天</div>
       ${l.map ? (() => {
@@ -279,13 +283,14 @@ export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean
         const d = DIFFICULTIES[(l.difficulty ?? 'normal') as Difficulty] ?? DIFFICULTIES.normal;
         return isHost && h.config
           ? `<div class="lobbycfg"><label>🏪 店面<select id="l-map">${MAPS.map(x => `<option value="${x.id}" ${x.id === m.id ? 'selected' : ''} ${storeLock(x.id) && x.id !== m.id ? 'disabled' : ''}>${storeLock(x.id) ? '🔒' : x.icon} ${esc(x.name)}</option>`).join('')}</select></label>
-             <label>🎚 難度<select id="l-diff">${DIFFICULTY_IDS.map(k => `<option value="${k}" ${k === (l.difficulty ?? 'normal') ? 'selected' : ''}>${DIFFICULTIES[k].icon} ${DIFFICULTIES[k].name}</option>`).join('')}</select></label></div>
+             <label>🎚 難度<select id="l-diff">${DIFFICULTY_IDS.map(k => `<option value="${k}" ${k === (l.difficulty ?? 'normal') ? 'selected' : ''}>${DIFFICULTIES[k].icon} ${DIFFICULTIES[k].name}</option>`).join('')}</select></label>
+             <label class="botfill"><input type="checkbox" id="l-bots" ${l.bots ? 'checked' : ''}> 🤖 電腦店員補位<span class="muted">（空位補最多 ${MAX_FILL_BOTS} 位，有人加入就讓位）</span></label></div>
              <div class="muted">換店面或難度後，其他人要重新按「準備」。</div>`
-          : `<div class="lobbycfg ro"><span class="tag">🏪 ${m.icon} ${esc(m.name)}</span><span class="tag">${d.icon} ${d.name}・${esc(d.desc)}</span></div>`;
+          : `<div class="lobbycfg ro"><span class="tag">${m.icon} ${esc(m.name)}</span><span class="tag">${d.icon} ${d.name}・${esc(d.desc)}</span>${l.bots ? '<span class="tag">🤖 電腦店員補位</span>' : ''}</div>`;
       })() : ''}
       <ul class="players">
         ${l.players.map(p => `<li><span class="dot" style="background:${hex(p.color)}"></span><b style="flex:1">${esc(p.name)}${p.id === selfId ? '（你）' : ''}</b>
-          ${p.id === l.hostId ? '<span class="tag">👑 房主</span>' : ''}<span class="tag">${PLATFORM_ICON[p.platform] ?? esc(p.platform)}</span>
+          ${p.id === l.hostId ? '<span class="tag">👑 房主</span>' : ''}<span class="tag">${p.bot ? '電腦店員' : PLATFORM_ICON[p.platform] ?? esc(p.platform)}</span>
           ${!p.connected ? '<span class="tag off">斷線</span>' : p.id === l.hostId ? '' : p.ready ? '<span class="tag ok">已準備</span>' : '<span class="tag">未準備</span>'}</li>`).join('')}
       </ul>
       ${isHost
@@ -294,16 +299,21 @@ export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean
       <button class="btn" id="l-leave">離開房間</button>
       </div></div>
     </div>`);
-  const shareMsg = (t: string) => { const el = document.getElementById('l-sharemsg'); if (el) el.textContent = t; };
+  const shareMsg = (t: string) => {
+    const el = document.getElementById('l-sharemsg'); if (el) el.textContent = t;
+    const note = { text: t, until: Date.now() + 2200 };
+    lobbyNote = note;
+    window.setTimeout(() => { if (lobbyNote !== note) return; lobbyNote = null; const e2 = document.getElementById('l-sharemsg'); if (e2 && e2.textContent === t) e2.textContent = LOBBY_NOTE_DEFAULT; }, 2300);
+  };
   on('l-link', 'click', () => { void copyText(link, document.getElementById('l-invite') as HTMLInputElement | null).then(ok => shareMsg(ok ? '✅ 已複製邀請連結，貼給朋友就行！' : '複製失敗：請長按上面的連結自己複製。')); });
   on('l-invite', 'focus', e => (e.target as HTMLInputElement).select());
   on('l-share', 'click', () => { void navigator.share({ title: '奧客退散', text: inviteText(l.code), url: link }).catch(() => { /* cancelled */ }); });
   on('l-start', 'click', () => h.start());
   on('l-ready', 'click', () => h.ready(!me?.ready));
   on('l-leave', 'click', () => h.leave());
-  on('l-copy', 'click', () => h.copy());
-  const cfg = () => h.config?.(val('l-map'), val('l-diff'));
-  on('l-map', 'change', cfg); on('l-diff', 'change', cfg);
+  on('l-copy', 'click', () => { void copyText(l.code).then(ok => shareMsg(ok ? `✅ 已複製房間碼 ${l.code}` : `複製失敗：房間碼是 ${l.code}`)); });
+  const cfg = () => h.config?.(val('l-map'), val('l-diff'), (document.getElementById('l-bots') as HTMLInputElement | null)?.checked ?? false);
+  on('l-map', 'change', cfg); on('l-diff', 'change', cfg); on('l-bots', 'change', cfg);
 }
 
 export function message(title: string, body: string, btn = '確定', onOk?: () => void) {
@@ -390,6 +400,7 @@ export function summaryHtml(s: Snapshot, selfId: string) {
         <div class="stat"><span>　其中小費</span><b>$${d.tips}</b></div>
         <div class="stat"><span>每日獎勵（評價＋奧客處理）</span><b>+$${d.bonus}</b></div>
         <div class="stat"><span>支出（進貨＋租金＋員工薪水）</span><b>-$${d.expenses}</b></div>
+        ${d.wage ? `<div class="stat"><span>　其中店員日薪</span><b>-$${d.wage}</b></div>` : ''}
         <div class="stat"><span>現金</span><b>$${s.money}</b></div>
       </div>
       <div>
@@ -407,7 +418,7 @@ export function summaryHtml(s: Snapshot, selfId: string) {
 }
 
 /** Free play: pick a store type. Each map keeps its own save. */
-export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map: string, fresh: boolean): void; back(): void; pack?(packId: string): void }) {
+export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map: string, fresh: boolean): void; back(): void; pack?(packId: string): void; hire?: { wage: number; hired: Record<string, boolean>; set(map: string, on: boolean): void } }) {
   show(`<div class="card wide"><div class="row" style="align-items:center"><h2 style="flex:1;margin:0">選擇店面</h2><button class="btn small" id="mp-back" style="flex:0">← 返回</button></div>
     <p class="muted">每種店賣的東西、擺設和工作站都不一樣。各自有獨立的存檔。</p>
     <div class="grid2">${MAPS.map(m => {
@@ -420,11 +431,13 @@ export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map
       return `<div class="shopitem mapcard" style="--mc:${hex(m.theme.accent)}"><b class="mapname"><span class="mapicon">${m.icon}</span>${esc(m.name)}</b>
         <span class="muted">${esc(m.desc)}</span>
         <span class="muted">商品：${[m.products.drinks, m.products.snacks, m.products.bento, m.products.extra].filter(Boolean).map(p => esc(p!.name)).join('、')}・現做：${esc(foods)}</span>
+        ${h.hire ? `<label class="hirebox"><input type="checkbox" data-hire="${m.id}" ${h.hire.hired[m.id] ? 'checked' : ''}> 🧑‍💼 雇用小陳（日薪 $${h.hire.wage}，從當天營收扣）</label>` : ''}
         <div class="row">${sv ? `<button class="btn primary" data-map-cont="${m.id}">繼續（第 ${sv.day} 天）</button>` : ''}
         <button class="btn ${sv ? '' : 'primary'}" data-map="${m.id}">${sv ? '重新開店' : '開店營業'}</button></div></div>`;
     }).join('')}</div></div>`);
   document.getElementById('mp-back')!.onclick = () => h.back();
   document.querySelectorAll<HTMLButtonElement>('[data-map-pack]').forEach(b => { b.onclick = () => h.pack?.(b.dataset.mapPack!); });
+  document.querySelectorAll<HTMLInputElement>('[data-hire]').forEach(c => { c.onchange = () => h.hire?.set(c.dataset.hire!, c.checked); });
   document.querySelectorAll<HTMLButtonElement>('[data-map-cont]').forEach(b => { b.onclick = () => h.play(b.dataset.mapCont!, false); });
   document.querySelectorAll<HTMLButtonElement>('[data-map]').forEach(b => {
     b.onclick = () => (saves[b.dataset.map!] ? confirmTwice(b, '再按一次：覆蓋這間店的進度', () => h.play(b.dataset.map!, true)) : h.play(b.dataset.map!, true));

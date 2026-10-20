@@ -3,6 +3,8 @@ import { SIG_KARENS, SIG_KINDS, type SigKind } from './sigkarens.ts';
 
 export const PROTOCOL_VERSION = 1;
 export const MAX_PLAYERS = 5;
+/** 電腦店員補位 (multiplayer lobby option): at most this many server-run bots fill free slots. */
+export const MAX_FILL_BOTS = 2;
 export const TICK_RATE = 20; // simulation ticks per second
 export const SNAPSHOT_RATE = 12; // snapshots per second sent to clients
 export const INPUT_RATE = 15; // client position updates per second

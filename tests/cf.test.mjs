@@ -258,6 +258,27 @@ test('friend store API: upload, lock, raid, cooldown, reports (owner token requi
   assert.equal((await api('GET', '/api/stores/ABCDEF')).status, 404);
 });
 
+test('電腦店員補位 in the RoomDO: bots fill free slots, play on the server, are not counted as players', { timeout: 60_000 }, async () => {
+  const [h, j] = await room(2);
+  h.send({ type: 'lobbyCfg', bots: true });
+  await j.until(() => j.lobby?.bots === true && j.lobby.players.filter(p => p.bot).length === 2, 8000, 'bots in lobby');
+  assert.equal((await api('GET', `/api/room/${h.code}`)).data.players, 2);
+  j.send({ type: 'ready', ready: true });
+  await h.until(() => !!h.lobby?.players.find(p => p.id === j.playerId)?.ready, 8000, 'guest ready');
+  h.send({ type: 'start' });
+  await h.until(() => !!h.me(), 8000, 'first snapshot');
+  const at = new Map(h.snap.players.filter(p => p.bot).map(p => [p.id, { x: p.x, z: p.z }]));
+  assert.equal(at.size, 2);
+  await h.until(() => h.snap.players.filter(p => p.bot).some(p => Math.hypot(p.x - at.get(p.id).x, p.z - at.get(p.id).z) > 1), 20000, 'a bot walking');
+  h.close(); j.close();
+});
+
+test('friend store keeps the fourth product line (gas station drinks fridge)', async () => {
+  const up = await api('POST', '/api/stores', { name: '油速', map: 'gas', shelves: { drinks: 3, snacks: 4, bento: 5, extra: 7 } });
+  assert.equal(up.status, 200);
+  assert.deepEqual((await api('GET', `/api/stores/${up.data.code}`)).data.shelves, { drinks: 3, snacks: 4, bento: 5, extra: 7 });
+});
+
 test('five simulated players run a full co-op day; day-end save reaches every client (time x6)', { timeout: 150_000 }, async () => {
   const { Bot, botMessages } = await import('../shared/bot.ts');
   const cs = await room(5);

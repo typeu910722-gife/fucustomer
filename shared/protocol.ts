@@ -45,6 +45,8 @@ export interface DayStats {
   revenue: number; served: number; angryLeft: number; karensResolved: number; karensFailed: number;
   spillsCleaned: number; tips: number; expenses: number; bonus: number; ratingStart: number;
   ejected: number; maxCombo: number;
+  /** Employee day wage charged at tonight's settlement (own store / a clerk hired in free play); part of expenses. */
+  wage?: number;
 }
 
 // ---- snapshot shapes (server → client) ----
@@ -55,6 +57,8 @@ export interface PlayerSnap {
   grabbing: number | null; spinCd: number;
   /** This player is raiding the store (friend-store mode). */
   raider?: boolean;
+  /** 電腦店員補位: a server-run fill-in clerk. */
+  bot?: boolean;
   /** Cosmetics others see (hat / apron / name tag); omitted = default staff look. */
   outfit?: Outfit;
 }
@@ -85,11 +89,13 @@ export interface Snapshot {
   result: ShiftResult | null;
 }
 
-export interface LobbyPlayer { id: string; name: string; ready: boolean; connected: boolean; color: number; platform: string; outfit?: Outfit }
+export interface LobbyPlayer { id: string; name: string; ready: boolean; connected: boolean; color: number; platform: string; outfit?: Outfit; bot?: boolean }
 export interface LobbyState {
   code: string; hostId: string; started: boolean; players: LobbyPlayer[]; max: number; day: number;
   /** Store type and difficulty of a multiplayer room (the host can change them in the lobby). */
   map?: string; difficulty?: string;
+  /** 電腦店員補位: the host lets server-run bots fill empty slots. */
+  bots?: boolean;
 }
 
 // ---- messages ----
@@ -99,7 +105,7 @@ export type ClientMsg =
   | { type: 'join'; code: string; name: string; token?: string; outfit?: Outfit }
   | { type: 'ready'; ready: boolean }
   | { type: 'start' }
-  | { type: 'lobbyCfg'; map?: string; difficulty?: string }
+  | { type: 'lobbyCfg'; map?: string; difficulty?: string; bots?: boolean }
   | { type: 'input'; x: number; z: number; yaw: number; pitch: number; seq: number }
   | { type: 'act'; rid: string; kind: ActKind; target: Target }
   | { type: 'drop'; rid: string }
