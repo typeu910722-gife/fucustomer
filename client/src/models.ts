@@ -118,8 +118,7 @@ export function mergeInto(root: THREE.Object3D, skip: Set<THREE.Object3D> = new 
       if (skip.has(c)) continue;
       const m = c as THREE.Mesh;
       if (m.isMesh && !Array.isArray(m.material) && !(m as THREE.InstancedMesh).isInstancedMesh) {
-        let g = m.geometry.clone().applyMatrix4(m4.multiplyMatrices(inv, m.matrixWorld));
-        if (g.index) g = g.toNonIndexed();
+        const g = m.geometry.clone().applyMatrix4(m4.multiplyMatrices(inv, m.matrixWorld));
         for (const k of Object.keys(g.attributes)) if (!['position', 'normal', 'uv'].includes(k)) g.deleteAttribute(k);
         if (!g.attributes.uv) g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(g.attributes.position.count * 2), 2));
         const key = m.material as THREE.Material;
@@ -131,7 +130,9 @@ export function mergeInto(root: THREE.Object3D, skip: Set<THREE.Object3D> = new 
   };
   collect(root);
   for (const p of parts) p.parent?.remove(p);
-  for (const [m, list] of groups) {
+  for (const [m, raw] of groups) {
+    // mergeGeometries needs all-indexed or all-non-indexed parts
+    const list = raw.some(g => !g.index) ? raw.map(g => g.index ? g.toNonIndexed() : g) : raw;
     const merged = mergeGeometries(list, false);
     if (!merged) continue;
     const mesh = new THREE.Mesh(merged, m); mesh.castShadow = shadow; mesh.receiveShadow = shadow; root.add(mesh);
@@ -421,7 +422,7 @@ export function karenAccessory(q: Quality, h: Human, kind: string) {
     put(extra, B(0.08, 0.025, 0.02), basic(0xe03131), 0.17, 0.2, onHead(0.17, 0.2) + 0.005, 0, 0, 0.8);
     put(extra, B(0.08, 0.025, 0.02), basic(0xe03131), 0.17, 0.2, onHead(0.17, 0.2) + 0.005, 0, 0, -0.8);
   }
-  if (kind === 'cutter') { // red cap worn backwards + sneaky side-eye
+  if (kind === 'cutter') { // red cap worn backwards
     const cm = mat(0xf03e3e, q);
     put(extra, DOME(R * 1.1, Math.PI * 0.42, 12, 4), cm, 0, 0.03, 0, -0.1);
     put(extra, RB(0.3, 0.03, 0.2, 0.012), cm, 0, 0.13, -R - 0.03, -0.25);
@@ -537,7 +538,7 @@ export function buildRegister(q: Quality, accent: number, screenMat: THREE.Mater
   put(cr, RB(0.1, 0.03, 0.15, 0.015), darkM);
   put(cr, B(0.07, 0.004, 0.04), basic(0x74c0fc), 0, 0.017, -0.03);
   for (let i = 0; i < 6; i++) put(cr, B(0.018, 0.006, 0.014), basic(0xdee2e6), -0.022 + (i % 3) * 0.022, 0.017, 0.02 + Math.floor(i / 3) * 0.025);
-  // handheld barcode scanner in its cradle, beside the base on the clerk's right... red window glowing
+  // handheld barcode scanner in its cradle, beside the base on the clerk's side, red window glowing
   const sc = new THREE.Group(); sc.position.set(0.38, 0.0, -0.14); g.add(sc);
   put(sc, RB(0.1, 0.03, 0.1, 0.012), darkM, 0, 0.015, 0);
   put(sc, RB(0.045, 0.14, 0.05, 0.015), mat(0xffd43b, q, { rough: 0.5 }), 0, 0.1, 0.0, 0.25);
