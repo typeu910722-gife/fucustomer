@@ -10,6 +10,8 @@ import type { Quality } from './storage.ts';
 import { INK, Label, UI_FONT, roundRect } from './labels.ts';
 import { buildKarenProp } from './karen-props.ts';
 import { isSig } from '../../shared/sigkarens.ts';
+import type { Outfit } from '../../shared/shop.ts';
+import { apronColor, wearOutfit } from './cosmetics.ts';
 
 // ---------- canvas text ----------
 export { Label, roundRect };
@@ -153,6 +155,8 @@ export type Pose = 'normal' | 'angry' | 'flail' | 'pay' | 'film' | 'sit' | 'sitA
 export interface Look {
   shirt: number; pants: number; skin: number; hair: number; hairStyle: number; scale?: number; apron?: boolean;
   build?: number; height?: number; accessory?: number; vip?: boolean;
+  /** Staff cosmetics from the 商城 (cosmetics.ts). */
+  outfit?: Outfit;
 }
 
 /** Chibi proportions: a big round head (~40 % of the height) on a short pear-shaped body. */
@@ -199,7 +203,7 @@ export class Human {
     put(this.torso, TOR(0.1, 0.03, 4, 12), shirtM, 0, 1.11, 0, Math.PI / 2, 0, 0, 1, zs / 0.78, 1);
     const front = (y: number) => (0.245 - (y - 0.54) * 0.11) * zs; // body surface z at height y
     if (opts.apron) {
-      const apM = mat(CURRENT_MAP.theme.wainscot, q);
+      const apM = mat(apronColor(opts.outfit) ?? CURRENT_MAP.theme.wainscot, q);
       put(this.torso, RB(0.36 * w, 0.5, 0.035, 0.015), apM, 0, 0.72, front(0.72) + 0.012, -0.1);
       put(this.torso, RB(0.2 * w, 0.1, 0.02, 0.01), apM, 0, 0.67, front(0.67) + 0.036, -0.1); // pocket
       for (const x of [-0.12, 0.12]) put(this.torso, B(0.035, 0.24, 0.02), apM, x * w, 1.0, front(1.0) - 0.01, -0.35); // straps
@@ -241,18 +245,31 @@ export class Human {
     }
     // hair
     const hs = opts.hairStyle;
+    // staff always wear a work hat (staffHat / 商城 hat): the hair is tucked under it so nothing pokes through —
+    // a slightly smaller hair cap, small fringe tufts kept below the hat line and close to the forehead, the top bun
+    // becomes a low bun at the back, and the spiky crest is left out (the hat covers it).
+    const hatted = opts.apron === true;
     if (hs !== 2) {
       // a cap of hair tilted back to show the forehead, plus a fringe of tufts
-      put(H, DOME(HEAD_R * 1.07, Math.PI * (hs === 1 ? 0.55 : 0.48), lo ? 10 : 14, 5), hairM, 0, 0.0, -0.01, -0.42);
-      const tufts = hs === 5 ? [] : [[-0.15, 0.17], [-0.05, 0.2], [0.06, 0.2], [0.16, 0.16]];
-      for (const [x, y] of tufts) put(H, SPH(0.075, 7, 5), hairM, x, y, onHead(x, y) - 0.035, 0, 0, x * -2, 1.2, 0.85, 0.7);
+      put(H, DOME(HEAD_R * (hatted ? 1.035 : 1.07), Math.PI * (hs === 1 ? 0.55 : 0.48), lo ? 10 : 14, 5), hairM, 0, 0.0, -0.01, -0.42);
+      if (hatted) {
+        // fringe: four small tufts hugging the forehead, under the brim / band (max radius ≈ HEAD_R, hats start at ≥ 1.03 R)
+        for (const [x, y] of [[-0.15, 0.13], [-0.05, 0.155], [0.06, 0.155], [0.16, 0.12]]) put(H, SPH(0.06, 7, 5), hairM, x, y, onHead(x, y) - 0.02, 0, 0, x * -2, 1.15, 0.7, 0.55);
+      } else {
+        const tufts = hs === 5 ? [] : [[-0.15, 0.17], [-0.05, 0.2], [0.06, 0.2], [0.16, 0.16]];
+        for (const [x, y] of tufts) put(H, SPH(0.075, 7, 5), hairM, x, y, onHead(x, y) - 0.035, 0, 0, x * -2, 1.2, 0.85, 0.7);
+      }
       if (hs === 1) { // long hair: back curtain + side locks
         put(H, RB(0.56, 0.46, 0.2, 0.09), hairM, 0, -0.16, -0.14);
         for (const s of [-1, 1]) put(H, CAP(0.06, 0.24, 6), hairM, s * 0.28, -0.17, 0.06);
       }
-      if (hs === 3) { put(H, SPH(0.12, 8, 6), hairM, 0, 0.28, -0.17); put(H, TOR(0.06, 0.02, 4, 10), basic(0xff8787), 0, 0.21, -0.12, -0.8); }
+      if (hs === 3) {
+        if (hatted) { put(H, SPH(0.1, 8, 6), hairM, 0, -0.1, -0.3); put(H, TOR(0.05, 0.018, 4, 10), basic(0xff8787), 0, -0.04, -0.27, -1.9); } // low bun
+        else { put(H, SPH(0.12, 8, 6), hairM, 0, 0.28, -0.17); put(H, TOR(0.06, 0.02, 4, 10), basic(0xff8787), 0, 0.21, -0.12, -0.8); }
+      }
       if (hs === 4) for (const s of [-1, 1]) { put(H, SPH(0.1, 8, 6), hairM, s * 0.33, -0.02, -0.08, 0, 0, 0, 0.9, 1.4, 0.9); put(H, SPH(0.035, 6, 4), basic(0xffd43b), s * 0.3, 0.1, -0.08); }
-      if (hs === 5) for (let i = 0; i < 4; i++) put(H, CONE(0.07, 0.2, 6), hairM, 0, 0.3 - Math.abs(i - 1.5) * 0.02, 0.15 - i * 0.11, -0.3 + i * 0.2); // spiky crest
+      if (hs === 5 && !hatted) for (let i = 0; i < 4; i++) put(H, CONE(0.07, 0.2, 6), hairM, 0, 0.3 - Math.abs(i - 1.5) * 0.02, 0.15 - i * 0.11, -0.3 + i * 0.2); // spiky crest
+      if (hs === 5 && hatted) for (const x of [-0.12, 0, 0.12]) put(H, CONE(0.05, 0.12, 6), hairM, x, -0.12, -0.27, -2.3); // short spikes at the nape
     }
     // accessories
     const acc = opts.accessory ?? 0;
@@ -279,7 +296,7 @@ export class Human {
       put(H, TOR(HEAD_R + 0.04, 0.02, 4, 16, Math.PI), hm, 0, 0.0, 0);
       for (const s of [-1, 1]) put(H, CYL(0.075, 0.075, 0.07, 10), mat(0xff6b6b, q), s * (HEAD_R + 0.02), -0.01, 0, 0, 0, Math.PI / 2);
     }
-    if (opts.apron) staffHat(q, H);
+    if (opts.apron && !wearOutfit(q, H, this.torso, opts.outfit, w, front)) staffHat(q, H);
     this.skinStaticParts(q);
     // brows + mouth: one mesh whose (shared, cached) geometry is swapped per expression
     this.face = new THREE.Mesh(faceGeo('0|0|1|1'), vertexColorMat(basic(0))!);

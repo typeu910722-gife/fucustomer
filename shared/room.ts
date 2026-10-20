@@ -12,17 +12,20 @@ import type { ShiftConfig } from './career.ts';
 import { applyMap } from './map.ts';
 import { getMap } from './maps/index.ts';
 import { Difficulty, isDifficulty, withDifficulty } from './difficulty.ts';
+import { Outfit, sanitizeOutfit } from './shop.ts';
 
 export interface Conn { send(msg: ServerMsg): void; close(reason: string): void }
 
 export interface Member {
   playerId: string; name: string; token: string; conn: Conn | null; ready: boolean; connected: boolean;
   disconnectedAt: number; color: number; platform: string; joinOrder: number; lastQuickAt: number; lastPingAt: number;
+  /** Cosmetics (hat / apron / name tag) the player chose; purely visual. */
+  outfit?: Outfit;
 }
 
 export interface RoomCheckpoint {
   code: string; save: StoreSave; hostId: string; started: boolean; savedAt: number; map?: string; difficulty?: Difficulty;
-  members: { playerId: string; name: string; token: string; color: number; platform: string; joinOrder: number }[];
+  members: { playerId: string; name: string; token: string; color: number; platform: string; joinOrder: number; outfit?: Outfit }[];
 }
 
 export interface RoomOptions {
@@ -109,7 +112,7 @@ export class Room {
     const now = r.now();
     for (const m of cp.members) {
       r.members.set(m.playerId, {
-        ...m, conn: null, ready: false, connected: false, disconnectedAt: now, lastQuickAt: 0, lastPingAt: 0,
+        ...m, conn: null, ready: false, connected: false, disconnectedAt: now, lastQuickAt: 0, lastPingAt: 0, outfit: sanitizeOutfit(m.outfit),
       });
       r.joinCounter = Math.max(r.joinCounter, m.joinOrder + 1);
     }
@@ -126,7 +129,7 @@ export class Room {
   checkpoint(): RoomCheckpoint {
     return {
       code: this.code, save: this.save, hostId: this.hostId, started: this.started, savedAt: this.now(), map: this.mapId, difficulty: this.difficulty,
-      members: [...this.members.values()].map(m => ({ playerId: m.playerId, name: m.name, token: m.token, color: m.color, platform: m.platform, joinOrder: m.joinOrder })),
+      members: [...this.members.values()].map(m => ({ playerId: m.playerId, name: m.name, token: m.token, color: m.color, platform: m.platform, joinOrder: m.joinOrder, outfit: m.outfit })),
     };
   }
 
@@ -134,7 +137,7 @@ export class Room {
   get connectedCount() { let n = 0; for (const m of this.members.values()) if (m.connected) n++; return n; }
 
   /** Join or reconnect. Returns the member or an error code. */
-  join(conn: Conn, name: unknown, token: unknown, platform = 'web'): { ok: true; member: Member } | { ok: false; code: string; message: string } {
+  join(conn: Conn, name: unknown, token: unknown, platform = 'web', outfit?: unknown): { ok: true; member: Member } | { ok: false; code: string; message: string } {
     if (this.closed) return { ok: false, code: 'room_closed', message: '房間已關閉' };
     this.useMap();
     if (typeof token === 'string' && token) {
@@ -142,8 +145,10 @@ export class Room {
         if (m.token === token) {
           if (m.conn && m.conn !== conn) m.conn.close('replaced');
           m.conn = conn; m.connected = true; m.platform = platform;
+          const fit = sanitizeOutfit(outfit); if (fit) m.outfit = fit;
           const wp = this.world?.players.get(m.playerId);
-          if (this.world && !wp) addPlayer(this.world, m.playerId, m.name, m.color);
+          if (this.world && !wp) addPlayer(this.world, m.playerId, m.name, m.color).outfit = m.outfit;
+          else if (wp && fit) wp.outfit = fit;
           else if (wp) { wp.connected = true; wp.away = false; }
           conn.send({ type: 'welcome', playerId: m.playerId, token: m.token, code: this.code, reconnected: true, solo: this.solo });
           this.broadcastLobby();
@@ -161,10 +166,11 @@ export class Room {
     const m: Member = {
       playerId: 'p' + this.rid(8), name: sanitizeName(name, `店員${order + 1}`), token: this.rid(32), conn,
       ready: false, connected: true, disconnectedAt: 0, color, platform, joinOrder: order, lastQuickAt: 0, lastPingAt: 0,
+      outfit: sanitizeOutfit(outfit),
     };
     this.members.set(m.playerId, m);
     if (!this.hostId || !this.members.get(this.hostId)) this.hostId = m.playerId;
-    if (this.world) addPlayer(this.world, m.playerId, m.name, m.color);
+    if (this.world) addPlayer(this.world, m.playerId, m.name, m.color).outfit = m.outfit;
     conn.send({ type: 'welcome', playerId: m.playerId, token: m.token, code: this.code, reconnected: false, solo: this.solo });
     this.broadcastLobby();
     if (this.started) {
@@ -309,6 +315,7 @@ export class Room {
     this.world = createWorld(this.save, this.opts.seed ?? Date.now(), this.dayCfg());
     for (const m of [...this.members.values()].sort((a, b) => a.joinOrder - b.joinOrder)) {
       const p = addPlayer(this.world, m.playerId, m.name, m.color);
+      p.outfit = m.outfit;
       p.connected = m.connected;
     }
     this.opts.onCheckpoint?.(this.checkpoint());
@@ -359,7 +366,7 @@ export class Room {
     return {
       code: this.code, hostId: this.hostId, started: this.started, max: MAX_PLAYERS, day: this.world?.day ?? this.save.day, map: this.mapId, difficulty: this.difficulty,
       players: [...this.members.values()].sort((a, b) => a.joinOrder - b.joinOrder)
-        .map(m => ({ id: m.playerId, name: m.name, ready: m.ready, connected: m.connected, color: m.color, platform: m.platform })),
+        .map(m => ({ id: m.playerId, name: m.name, ready: m.ready, connected: m.connected, color: m.color, platform: m.platform, outfit: m.outfit })),
     };
   }
 

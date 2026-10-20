@@ -12,6 +12,8 @@ import { MAPS, getMap } from '../../shared/maps/index.ts';
 import { KAREN_INFO } from '../../shared/constants.ts';
 import { confirmTwice, esc, show } from './ui.ts';
 import { takeReports, syncStore, uploadStore } from './friends.ts';
+import { lockedPack, ownStoreLockHtml, shopHtml, wireShop } from './shop-ui.ts';
+import { dexHtml, dexSwitch } from './dex-ui.ts';
 
 const KEY = 'fucustomer.career.v1';
 export function loadProfile(): CareerProfile {
@@ -19,7 +21,7 @@ export function loadProfile(): CareerProfile {
 }
 export function saveProfile(p: CareerProfile) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ignore */ } }
 
-type Tab = 'chapters' | 'store' | 'skills' | 'gear' | 'free' | 'achievements' | 'stats';
+type Tab = 'chapters' | 'store' | 'skills' | 'gear' | 'shop' | 'free' | 'achievements' | 'dex' | 'stats';
 export interface CareerHandlers { play(shiftId: string): void; back(): void; enterStore(): void; opened(): void; raid(code: string): void; freePlay(): void }
 
 const stars = (n: number, max = 3) => '★'.repeat(n) + '<span class="dim">' + '★'.repeat(max - n) + '</span>';
@@ -38,18 +40,20 @@ function rankCard(p: CareerProfile) {
     </div>`;
 }
 
-export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'chapters') {
-  const tabs: [Tab, string][] = [['chapters', '📖 主線'], ['store', p.store ? `🏪 ${esc(p.store.name)}` : '🏪 我的店'], ['skills', `🧠 技能${p.skillPoints ? ` (${p.skillPoints})` : ''}`], ['gear', '🧰 裝備'], ['free', '🗺 自由營業'], ['achievements', `🏆 成就 ${p.achievements.length}/${ACHIEVEMENTS.length}`], ['stats', '📊 紀錄']];
+/** `focus`: for the shop tab, a pack id (or filter) to jump to. */
+export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'chapters', focus?: string) {
+  const tabs: [Tab, string][] = [['chapters', '📖 主線'], ['store', p.store ? `🏪 ${esc(p.store.name)}` : '🏪 我的店'], ['skills', `🧠 技能${p.skillPoints ? ` (${p.skillPoints})` : ''}`], ['gear', '🧰 裝備'], ['shop', '🛍 商城'], ['free', '🗺 自由營業'], ['achievements', `🏆 成就 ${p.achievements.length}/${ACHIEVEMENTS.length}`], ['stats', '📊 紀錄']];
   show(`
     <div class="card wide career">
       <div class="c-side">
         ${rankCard(p)}
-        <div class="tabs">${tabs.map(([t, l]) => `<button class="tab ${t === tab ? 'on' : ''}" data-tab="${t}">${l}</button>`).join('')}</div>
+        <div class="tabs">${tabs.map(([t, l]) => `<button class="tab ${t === tab || (t === 'achievements' && tab === 'dex') ? 'on' : ''}" data-tab="${t}">${l}</button>`).join('')}</div>
         <button class="btn small" id="c-back">← 主選單</button>
       </div>
-      <div class="c-main" id="c-body">${tab === 'chapters' ? chaptersHtml(p) : tab === 'skills' ? skillsHtml(p) : tab === 'gear' ? gearHtml(p) : tab === 'store' ? storeHtml(p) : tab === 'achievements' ? achievementsHtml(p) : statsHtml(p)}</div>
+      <div class="c-main" id="c-body">${tab === 'chapters' ? chaptersHtml(p) : tab === 'skills' ? skillsHtml(p) : tab === 'gear' ? gearHtml(p) : tab === 'shop' ? shopHtml(p, focus) : tab === 'store' ? storeHtml(p) : tab === 'achievements' ? achievementsHtml(p) : tab === 'dex' ? dexHtml(p) : statsHtml(p)}</div>
     </div>`);
   document.getElementById('c-back')!.onclick = () => h.back();
+  if (tab === 'shop') wireShop(p, saveProfile, f => careerScreen(p, h, 'shop', f));
   document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(b => { b.onclick = () => (b.dataset.tab === 'free' ? h.freePlay() : careerScreen(p, h, b.dataset.tab as Tab)); });
   document.querySelectorAll<HTMLButtonElement>('[data-play]').forEach(b => { b.onclick = () => h.play(b.dataset.play!); });
   document.querySelectorAll<HTMLButtonElement>('[data-skill]').forEach(b => { b.onclick = () => { if (spendSkill(p, b.dataset.skill as SkillTree)) saveProfile(p); careerScreen(p, h, 'skills'); }; });
@@ -59,6 +63,7 @@ export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'ch
     const name = (document.getElementById('st-name') as HTMLInputElement).value;
     const all = (document.getElementById('st-all') as HTMLInputElement | null)?.checked;
     const map = (document.querySelector('input[name="st-map"]:checked') as HTMLInputElement | null)?.value ?? 'convenience';
+    const pack = lockedPack(p, map, 'own'); if (pack) return careerScreen(p, h, 'shop', pack.id); // premium store: go to its pack
     if (openStore(p, name, all ? p.wallet : STORE_FUND, defaultSave(), map)) { saveProfile(p); h.opened(); }
   });
   on('st-enter', () => h.enterStore());
@@ -159,7 +164,7 @@ function storeHtml(p: CareerProfile) {
       <p>夢想的時刻到了。用存款開一家自己的店——這次換你當老闆。</p>
       <label class="field">店名<input id="st-name" maxlength="16" placeholder="我的便利商店"></label>
       <p class="muted">要開哪一種店？</p>
-      <div class="grid2">${MAPS.map((m, i) => `<label class="shopitem"><b><input type="radio" name="st-map" value="${m.id}" ${i === 0 ? 'checked' : ''}> ${m.icon} ${esc(m.name)}</b><span class="muted">${esc(m.desc)}</span></label>`).join('')}</div>
+      <div class="grid2">${MAPS.map((m, i) => `<label class="shopitem"><b><input type="radio" name="st-map" value="${m.id}" ${i === 0 ? 'checked' : ''}> ${m.icon} ${esc(m.name)}${ownStoreLockHtml(p, m.id)}</b><span class="muted">${esc(m.desc)}</span></label>`).join('')}</div>
       <label class="muted"><input type="checkbox" id="st-all"> 投入全部存款（$${p.wallet}）；不勾選只投入開店基金 $${STORE_FUND}</label>
       <p class="muted">⚠ 有機會倒閉：連續 3 天打烊時現金為負或口碑見底 → 店收掉，投入的錢沒了。</p>
       <button class="btn primary" id="st-open">開店！</button></div>${friendsHtml(p)}${histLine}`;
@@ -215,7 +220,7 @@ function dailyHtml(p: CareerProfile) {
 
 function achievementsHtml(p: CareerProfile) {
   const have = new Set(p.achievements);
-  return `<p class="muted">已解鎖 ${have.size} / ${ACHIEVEMENTS.length}</p>
+  return `${dexSwitch(p, 'achievements')}<p class="muted">已解鎖 ${have.size} / ${ACHIEVEMENTS.length}</p>
     <div class="grid2">${ACHIEVEMENTS.map(a => `<div class="shopitem ach ${have.has(a.id) ? 'got' : 'locked'}"><b>${have.has(a.id) ? '🏆' : '🔒'} ${esc(a.name)}</b><span class="muted">${esc(a.desc)}</span></div>`).join('')}</div>`;
 }
 

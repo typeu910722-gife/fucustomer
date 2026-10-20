@@ -22,8 +22,16 @@ import { MAPS, getMap } from '../../shared/maps/index.ts';
 import { OUTSIDE_SCORE, buildRaidConfig, raidReward } from '../../shared/raid.ts';
 import { getStore, sendRaid, syncStore } from './friends.ts';
 import { desktop, initPlatform, isApp, onAppPause, onBack, quitApp, reportAchievements } from './platform.ts';
+import { effectiveLoadout, isSupporter, outfitOf, storeLocked, type Loadout } from '../../shared/shop.ts';
+import { entitlementsFor } from './billing.ts';
+import { setStoreDecor } from './cosmetics.ts';
 
 let settings = loadSettings();
+// 商城: stores from a paid pack are locked in free play / own store / hosting a room (never in the career story)
+UI.setStoreLock(map => storeLocked(map, 'host', entitlementsFor(loadProfile())));
+/** What you equipped in the 商城 (only items you really have). */
+function myLoadout(): Loadout { const p = loadProfile(); return effectiveLoadout(p, entitlementsFor(p)); }
+const myOutfit = () => outfitOf(myLoadout());
 const platform = detectPlatform();
 audio.setVolume(settings.volume);
 audio.setMusicVolume(settings.music);
@@ -53,8 +61,10 @@ const LOADING_TIPS = [
 let current: Game | null = null;
 let screenDepth = 0; // 0 = main menu; anything else = a sub screen (Android back button returns to the menu)
 
-function startGame(make: () => GameConnection, onDone?: (reason?: string, result?: ShiftResult | null) => void) {
+/** `decor`: 商城 store decorations to build (free play / your own store only). */
+function startGame(make: () => GameConnection, onDone?: (reason?: string, result?: ShiftResult | null) => void, decor: Loadout | null = null) {
   audio.unlock();
+  setStoreDecor(decor);
   freshCanvas();
   UI.show(`<div class="card loading"><div class="spinner">🛒</div><h2>開店準備中…</h2><p class="tip">💡 ${LOADING_TIPS[Math.floor(Math.random() * LOADING_TIPS.length)]}</p></div>`);
   tryFullscreenLandscape(); // needs the click that started the game
@@ -86,7 +96,7 @@ async function online(url: string, intent: Intent) {
 }
 
 // ---------------- career (single-player main story) ----------------
-function career(tab?: Parameters<typeof careerScreen>[2]) {
+function career(tab?: Parameters<typeof careerScreen>[2], focus?: string) {
   screenDepth = 1;
   const p = loadProfile();
   // progress made before achievements existed counts too (no pop-ups for these)
@@ -96,19 +106,24 @@ function career(tab?: Parameters<typeof careerScreen>[2]) {
     opened: () => sceneOnce('store-open', () => career('store')),
     raid: code => void raidFriend(code),
     freePlay: () => freePlay(),
-  }, tab);
+  }, tab, focus);
 }
 
 /** Your own store: business days with an employee; every nightly save may end in bankruptcy. */
 function playStore() {
   const p = loadProfile();
   if (!p.store) return career('store');
+  const lock = storeLocked(p.store.map, 'own', entitlementsFor(p));
+  if (lock) return career('shop', lock.id); // a store from a paid pack (e.g. opened during a QA unlock)
   const cfg = ownStoreConfig(p, dayConfig());
+  const look = myLoadout();
   const st = p.store.staff;
   let conn: LocalConnection | null = null;
   let bankrupt = '';
   startGame(() => (conn = new LocalConnection(playerName(), p.store!.save, cfg, undefined, {
-    staff: st.quit ? undefined : { name: st.name, pace: staffPace(st.mood) },
+    // your employee wears the store uniform you picked in the 商城 (hat + apron; the name tag is yours)
+    staff: st.quit ? undefined : { name: st.name, pace: staffPace(st.mood), outfit: outfitOf({ hat: look.hat, uniform: look.uniform }) },
+    outfit: outfitOf(look),
     onSave: save => {
       const prof = loadProfile();
       const out = settleStoreDay(prof, save);
@@ -121,7 +136,7 @@ function playStore() {
   })), () => {
     if (!bankrupt) return lockReminder();
     playScene('store-bankrupt', () => UI.message('倒閉了', `${bankrupt}。投入的錢全部賠光了，回去打工重新存吧。`, '回職涯', () => career('store')));
-  });
+  }, look);
 }
 
 /** Leaving your own store with the door unlocked: friends could walk right in. */
@@ -230,17 +245,22 @@ function freePlay() {
   for (const m of MAPS) saves[m.id] = loadSoloSave(m.id);
   UI.mapPicker(saves, {
     back: () => career(),
+    pack: id => career('shop', id),
     play: (map, fresh) => {
+      const p = loadProfile(), lock = storeLocked(map, 'free', entitlementsFor(p));
+      if (lock) return career('shop', lock.id);
       if (fresh) clearSoloSave(map);
       const save = fresh ? null : loadSoloSave(map);
-      startGame(() => new LocalConnection(playerName(), save, undefined, undefined, { map }), () => freePlay());
+      const look = myLoadout();
+      startGame(() => new LocalConnection(playerName(), save, undefined, undefined, { map, outfit: outfitOf(look) }), () => freePlay(), look);
     },
   });
 }
 
 function badge(): UI.CareerBadge {
   const p = loadProfile();
-  return { level: p.level, rank: rankOf(p.level), title: p.title, stars: Object.values(p.stars).reduce((a, b) => a + b, 0), achievements: p.achievements.length, storeName: p.store?.name ?? '' };
+  const ents = entitlementsFor(p), look = effectiveLoadout(p, ents);
+  return { level: p.level, rank: rankOf(p.level), title: p.title, stars: Object.values(p.stars).reduce((a, b) => a + b, 0), achievements: p.achievements.length, storeName: p.store?.name ?? '', hat: look.hat ?? '', supporter: isSupporter(p.shop.entitlements) };
 }
 
 function menu(error?: string) {
@@ -249,7 +269,7 @@ function menu(error?: string) {
   const canRejoin = last && Date.now() - last.at < 125_000 ? last.code : null;
   const account = loadAccount();
   const b = badge();
-  if (account) void syncLicense({ name: playerName(), avatar: UI.loadAvatar(), level: b.level, rank: b.rank, title: b.title, stars: b.stars, achievements: b.achievements, storeName: b.storeName });
+  if (account) void syncLicense({ name: playerName(), avatar: UI.loadAvatar(), level: b.level, rank: b.rank, title: b.title, stars: b.stars, achievements: b.achievements, storeName: b.storeName, hat: b.hat, supporter: b.supporter });
   audio.startMusic(8);
   const prof = loadProfile();
   let next: { id: string; title: string; map: string } | null = null;
@@ -265,7 +285,7 @@ function menu(error?: string) {
     multiplayer: () => multiplayer(),
     rejoin: () => {
       const l = loadLastSession(); if (!l) return menu();
-      online(l.url, { kind: 'join', code: l.code, name: playerName(), token: l.token });
+      online(l.url, { kind: 'join', code: l.code, name: playerName(), token: l.token, outfit: myOutfit() });
     },
     refresh: () => menu(),
     quit: isApp ? () => quitApp() : undefined,
@@ -279,8 +299,13 @@ function multiplayer(error?: string, code?: string) {
   screenDepth = 1;
   UI.multiplayerMenu({
     back: () => menu(),
-    create: (cont, map, difficulty) => online(serverUrl(), { kind: 'create', name: playerName(), save: cont ? loadCoopSave() : null, map, difficulty }),
-    join: c => online(serverUrl(), { kind: 'join', code: c, name: playerName() }),
+    create: (cont, map, difficulty) => {
+      const lock = storeLocked(map, 'host', entitlementsFor(loadProfile()));
+      if (lock) return career('shop', lock.id);
+      online(serverUrl(), { kind: 'create', name: playerName(), save: cont ? loadCoopSave() : null, map, difficulty, outfit: myOutfit() });
+    },
+    join: c => online(serverUrl(), { kind: 'join', code: c, name: playerName(), outfit: myOutfit() }),
+    pack: id => career('shop', id),
   }, { coopSave: loadCoopSave(), error });
   if (code) { const el = document.getElementById('m-code') as HTMLInputElement | null; if (el) el.value = code; }
 }
@@ -311,6 +336,6 @@ onBack(() => {
 onAppPause(() => current?.appPaused());
 desktop?.onJoinRequest(code => {
   if (current || !/^[A-Z0-9]{5}$/i.test(code)) return;
-  online(serverUrl(), { kind: 'join', code: code.toUpperCase(), name: playerName() });
+  online(serverUrl(), { kind: 'join', code: code.toUpperCase(), name: playerName(), outfit: myOutfit() });
 });
 if (isApp) { const p = loadProfile(); updateAchievements(p); saveProfile(p); reportAchievements(p.achievements); }

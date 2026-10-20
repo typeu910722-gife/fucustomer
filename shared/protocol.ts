@@ -1,6 +1,7 @@
 // Wire protocol (JSON over WebSocket). The same messages are used by the in-browser solo transport.
 import type { KarenKind, Product, UpgradeId } from './constants.ts';
 import type { Ability, Food, ShiftResult } from './career.ts';
+import type { Outfit } from './shop.ts';
 
 export type Held =
   | { kind: 'box'; product: Product; qty: number }
@@ -54,6 +55,8 @@ export interface PlayerSnap {
   grabbing: number | null; spinCd: number;
   /** This player is raiding the store (friend-store mode). */
   raider?: boolean;
+  /** Cosmetics others see (hat / apron / name tag); omitted = default staff look. */
+  outfit?: Outfit;
 }
 export interface CustomerSnap {
   id: number; kind: CustomerKind; x: number; z: number; yaw: number; state: string;
@@ -82,7 +85,7 @@ export interface Snapshot {
   result: ShiftResult | null;
 }
 
-export interface LobbyPlayer { id: string; name: string; ready: boolean; connected: boolean; color: number; platform: string }
+export interface LobbyPlayer { id: string; name: string; ready: boolean; connected: boolean; color: number; platform: string; outfit?: Outfit }
 export interface LobbyState {
   code: string; hostId: string; started: boolean; players: LobbyPlayer[]; max: number; day: number;
   /** Store type and difficulty of a multiplayer room (the host can change them in the lobby). */
@@ -92,8 +95,8 @@ export interface LobbyState {
 // ---- messages ----
 export type ClientMsg =
   | { type: 'hello'; v: number; platform: string }
-  | { type: 'create'; name: string; save?: StoreSave | null; map?: string; difficulty?: string }
-  | { type: 'join'; code: string; name: string; token?: string }
+  | { type: 'create'; name: string; save?: StoreSave | null; map?: string; difficulty?: string; outfit?: Outfit }
+  | { type: 'join'; code: string; name: string; token?: string; outfit?: Outfit }
   | { type: 'ready'; ready: boolean }
   | { type: 'start' }
   | { type: 'lobbyCfg'; map?: string; difficulty?: string }
@@ -114,7 +117,8 @@ export type ClientMsg =
   | { type: 'hb'; t: number };
 
 export type GameEvent =
-  | { e: 'toast'; text: string; tone?: 'good' | 'bad' | 'info' }
+  /** karen/kid/ok: set when the toast reports a karen being dealt with (kind, customer id, success) — older clients ignore them. */
+  | { e: 'toast'; text: string; tone?: 'good' | 'bad' | 'info'; karen?: string; kid?: number; ok?: boolean }
   | { e: 'sfx'; name: string; x?: number; z?: number }
   | { e: 'money'; amount: number; x: number; z: number }
   | { e: 'karen'; kind: KarenKind; id: number }

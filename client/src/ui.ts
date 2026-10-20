@@ -6,6 +6,13 @@ import type { Settings } from './storage.ts';
 import { DIFFICULTIES, DIFFICULTY_IDS, type Difficulty } from '../../shared/difficulty.ts';
 import { getLicense, renderGoogleButton, signOut } from './account.ts';
 import { NOTICES, randomQuote } from './quotes.ts';
+import { getCosmetic } from '../../shared/shop.ts';
+
+/** 商城: which paid pack (if any) blocks a store in free play / own store / hosting a room. Set by main.ts. */
+type StoreLock = (mapId: string) => { id: string; name: string; icon: string } | null;
+let storeLock: StoreLock = () => null;
+export function setStoreLock(fn: StoreLock) { storeLock = fn; }
+const lockBadge = (mapId: string) => { const k = storeLock(mapId); return k ? `<i class="lockbadge" title="${esc(k.name)}">🔒</i>` : ''; };
 
 const root = () => document.getElementById('ui')!;
 export const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -36,7 +43,7 @@ export interface MainMenuHandlers {
   playNext?(): void;
   playDaily?(): void;
 }
-export interface CareerBadge { level: number; rank: string; title: string; stars: number; achievements: number; storeName: string }
+export interface CareerBadge { level: number; rank: string; title: string; stars: number; achievements: number; storeName: string; hat?: string; supporter?: boolean }
 
 const AVATARS = ['🧑', '👩', '👨', '🧑‍🍳', '🧑‍💼', '🧔', '👩‍🦰', '👱', '🧑‍🎤', '🥷', '🐱', '🐶'];
 const AVATAR_KEY = 'fucustomer.avatar.v1';
@@ -44,14 +51,15 @@ export function loadAvatar() { try { const a = localStorage.getItem(AVATAR_KEY);
 function saveAvatar(a: string) { try { localStorage.setItem(AVATAR_KEY, a); } catch { /* ignore */ } }
 
 /** The 高級社畜證照 card (also used to show a friend's card). */
-export function licenseHtml(c: { name: string; avatar: string; level: number; rank: string; title?: string; no?: string | null; stars: number; achievements: number; storeName?: string }, editable: boolean) {
-  return `<div class="license">
+export function licenseHtml(c: { name: string; avatar: string; level: number; rank: string; title?: string; no?: string | null; stars: number; achievements: number; storeName?: string; hat?: string; supporter?: boolean }, editable: boolean) {
+  const hat = getCosmetic(c.hat);
+  return `<div class="license ${c.supporter ? 'supporter' : ''}">
     <div class="lic-head"><span>🪪 高級社畜證照</span><small>CERTIFIED WAGE WORKER</small></div>
     <div class="lic-body">
-      ${editable ? `<button class="lic-photo" id="m-avatar" title="換頭像">${c.avatar}</button>` : `<div class="lic-photo">${esc(c.avatar)}</div>`}
+      ${editable ? `<button class="lic-photo" id="m-avatar" title="換頭像">${c.avatar}</button>` : `<div class="lic-photo">${esc(c.avatar)}</div>`}${hat ? `<span class="lic-hat" title="${esc(hat.name)}">${hat.icon}</span>` : ''}
       <div class="lic-info">
         ${editable ? `<label class="lic-name">姓名<input type="text" id="m-name" maxlength="16" placeholder="你的名字" value="${esc(c.name)}"></label>` : `<div class="lic-name">姓名 <b>${esc(c.name)}</b></div>`}
-        <div class="lic-row"><span class="lic-lv">Lv.${c.level}</span><b>${esc(c.rank)}</b>${c.title ? `<span class="tag ok">${esc(c.title)}</span>` : ''}</div>
+        <div class="lic-row"><span class="lic-lv">Lv.${c.level}</span><b>${esc(c.rank)}</b>${c.title ? `<span class="tag ok">${esc(c.title)}</span>` : ''}${c.supporter ? '<span class="tag gold">💛 贊助者</span>' : ''}</div>
         <div class="lic-row muted">證號 <b class="lic-no">${c.no ? esc(c.no) : '未登入・只存在這台裝置'}</b></div>
         <div class="lic-row muted">★ ${c.stars}・🏆 ${c.achievements}${c.storeName ? `・🏪 ${esc(c.storeName)}` : ''}</div>
       </div>
@@ -75,7 +83,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
       <div class="ts-left">
         <div class="logo"><span class="l1">奧客</span><span class="l2">退散！</span><small>FUCUSTOMER</small></div>
         <button class="tagline" id="m-quote" title="再來一句">「${esc(randomQuote())}」</button>
-        ${licenseHtml({ name: s.name, avatar: loadAvatar(), level: b.level, rank: b.rank, title: b.title, no: info.account?.no ?? null, stars: b.stars, achievements: b.achievements, storeName: b.storeName }, true)}
+        ${licenseHtml({ name: s.name, avatar: loadAvatar(), level: b.level, rank: b.rank, title: b.title, no: info.account?.no ?? null, stars: b.stars, achievements: b.achievements, storeName: b.storeName, hat: b.hat, supporter: b.supporter }, true)}
         <div class="lic-actions">
           ${info.account ? '<button class="btn small" id="m-signout">登出</button>' : '<div id="m-google" class="gbtn"></div>'}
           <button class="btn small" id="m-friend">🔍 查好友證照</button>
@@ -121,12 +129,13 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
 }
 
 /** Multiplayer (打工人的號角): store type + difficulty, create a room or join one. */
-export function multiplayerMenu(h: { create(cont: boolean, map: string, difficulty: Difficulty): void; join(code: string): void; back(): void }, info: { coopSave: StoreSave | null; error?: string }) {
+export function multiplayerMenu(h: { create(cont: boolean, map: string, difficulty: Difficulty): void; join(code: string): void; back(): void; pack?(packId: string): void }, info: { coopSave: StoreSave | null; error?: string }) {
   show(`<div class="card wide mpcard">
     <div class="row" style="align-items:center"><h2>📯 打工人的號角</h2><span class="soon">籌備中</span><button class="btn small" id="mp-back" style="flex:0">← 主選單</button></div>
     <p class="muted">最多 ${MAX_PLAYERS} 人一起顧店。多人模式還在測試，可能會有問題，歡迎回報。</p>
     <div class="sectlabel">① 選店面</div>
-    <div class="pickgrid">${MAPS.map((m, i) => `<label class="pick"><input type="radio" name="mp-map" value="${m.id}" ${i === 0 ? 'checked' : ''}><span>${m.icon}</span><b>${esc(m.name)}</b></label>`).join('')}</div>
+    <div class="pickgrid">${MAPS.map((m, i) => `<label class="pick ${storeLock(m.id) ? 'locked' : ''}"><input type="radio" name="mp-map" value="${m.id}" ${i === 0 ? 'checked' : ''}><span>${m.icon}</span><b>${esc(m.name)}</b>${lockBadge(m.id)}</label>`).join('')}</div>
+    <div class="muted" id="mp-lockmsg"></div>
     <div class="sectlabel">② 選難度</div>
     <div class="pickgrid">${DIFFICULTY_IDS.map(d => `<label class="pick"><input type="radio" name="mp-diff" value="${d}" ${d === 'normal' ? 'checked' : ''}><span>${DIFFICULTIES[d].icon}</span><b>${DIFFICULTIES[d].name}</b><small>${esc(DIFFICULTIES[d].desc)}</small></label>`).join('')}</div>
     ${info.coopSave ? `<label class="muted"><input type="checkbox" id="m-coop-cont" checked> 延續上次合作店面（第 ${info.coopSave.day} 天）</label>` : ''}
@@ -137,7 +146,13 @@ export function multiplayerMenu(h: { create(cont: boolean, map: string, difficul
   </div>`);
   const pick = (n: string) => (document.querySelector(`input[name="${n}"]:checked`) as HTMLInputElement | null)?.value;
   on('mp-back', 'click', () => h.back());
-  on('m-create', 'click', () => h.create(!!(document.getElementById('m-coop-cont') as HTMLInputElement | null)?.checked, pick('mp-map') ?? 'convenience', (pick('mp-diff') ?? 'normal') as Difficulty));
+  // 🔒 stores from a paid pack: say which pack (joining a friend's room stays free)
+  document.querySelectorAll<HTMLInputElement>('input[name="mp-map"]').forEach(r => r.addEventListener('change', () => {
+    const k = storeLock(r.value), el = document.getElementById('mp-lockmsg');
+    if (el) el.innerHTML = k ? `🔒 這家店在「${esc(k.icon)} ${esc(k.name)}」裡：開房要先解鎖（加入朋友的房間免費、主線上班也免費）。<button class="btn small purple" id="mp-pack">🛍 看擴充包</button>` : '';
+    if (k) on('mp-pack', 'click', () => h.pack?.(k.id));
+  }));
+  on('m-create', 'click', () => { const k = storeLock(pick('mp-map') ?? 'convenience'); if (k && h.pack) { h.pack(k.id); return; } h.create(!!(document.getElementById('m-coop-cont') as HTMLInputElement | null)?.checked, pick('mp-map') ?? 'convenience', (pick('mp-diff') ?? 'normal') as Difficulty); });
   on('m-join', 'click', () => { const c = val('m-code').trim().toUpperCase(); if (c.length < 5) { document.getElementById('m-err')!.textContent = '請輸入 5 碼房間碼'; return; } h.join(c); });
   on('m-code', 'keydown', e => { if ((e as KeyboardEvent).key === 'Enter') document.getElementById('m-join')!.click(); });
 }
@@ -207,7 +222,7 @@ export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean
         const m = MAPS.find(x => x.id === l.map) ?? MAPS[0];
         const d = DIFFICULTIES[(l.difficulty ?? 'normal') as Difficulty] ?? DIFFICULTIES.normal;
         return isHost && h.config
-          ? `<div class="lobbycfg"><label>🏪 店面<select id="l-map">${MAPS.map(x => `<option value="${x.id}" ${x.id === m.id ? 'selected' : ''}>${x.icon} ${esc(x.name)}</option>`).join('')}</select></label>
+          ? `<div class="lobbycfg"><label>🏪 店面<select id="l-map">${MAPS.map(x => `<option value="${x.id}" ${x.id === m.id ? 'selected' : ''} ${storeLock(x.id) && x.id !== m.id ? 'disabled' : ''}>${storeLock(x.id) ? '🔒' : x.icon} ${esc(x.name)}</option>`).join('')}</select></label>
              <label>🎚 難度<select id="l-diff">${DIFFICULTY_IDS.map(k => `<option value="${k}" ${k === (l.difficulty ?? 'normal') ? 'selected' : ''}>${DIFFICULTIES[k].icon} ${DIFFICULTIES[k].name}</option>`).join('')}</select></label></div>
              <div class="muted">換店面或難度後，其他人要重新按「準備」。</div>`
           : `<div class="lobbycfg ro"><span class="tag">🏪 ${m.icon} ${esc(m.name)}</span><span class="tag">${d.icon} ${d.name}・${esc(d.desc)}</span></div>`;
@@ -331,12 +346,16 @@ export function summaryHtml(s: Snapshot, selfId: string) {
 }
 
 /** Free play: pick a store type. Each map keeps its own save. */
-export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map: string, fresh: boolean): void; back(): void }) {
+export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map: string, fresh: boolean): void; back(): void; pack?(packId: string): void }) {
   show(`<div class="card wide"><div class="row" style="align-items:center"><h2 style="flex:1;margin:0">選擇店面</h2><button class="btn small" id="mp-back" style="flex:0">← 返回</button></div>
     <p class="muted">每種店賣的東西、擺設和工作站都不一樣。各自有獨立的存檔。</p>
     <div class="grid2">${MAPS.map(m => {
       const sv = saves[m.id];
       const foods = [m.coffee && `${m.coffee.icon}${m.coffee.food}`, m.meal && `${m.meal.icon}${m.meal.food}`].filter(Boolean).join('、') || '不賣吃的';
+      const k = storeLock(m.id);
+      if (k) return `<div class="shopitem mapcard locked-pack" style="--mc:${hex(m.theme.accent)}"><b class="mapname"><span class="mapicon">${m.icon}</span>${esc(m.name)}${lockBadge(m.id)}</b>
+        <span class="muted">${esc(m.desc)}</span><span class="muted">🔒 ${esc(k.icon)} ${esc(k.name)}・主線上班可以免費玩到</span>
+        <div class="row"><button class="btn purple" data-map-pack="${k.id}">🛍 看擴充包</button></div></div>`;
       return `<div class="shopitem mapcard" style="--mc:${hex(m.theme.accent)}"><b class="mapname"><span class="mapicon">${m.icon}</span>${esc(m.name)}</b>
         <span class="muted">${esc(m.desc)}</span>
         <span class="muted">商品：${(['drinks', 'snacks', 'bento'] as const).map(p => esc(m.products[p].name)).join('、')}・現做：${esc(foods)}</span>
@@ -344,6 +363,7 @@ export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map
         <button class="btn ${sv ? '' : 'primary'}" data-map="${m.id}">${sv ? '重新開店' : '開店營業'}</button></div></div>`;
     }).join('')}</div></div>`);
   document.getElementById('mp-back')!.onclick = () => h.back();
+  document.querySelectorAll<HTMLButtonElement>('[data-map-pack]').forEach(b => { b.onclick = () => h.pack?.(b.dataset.mapPack!); });
   document.querySelectorAll<HTMLButtonElement>('[data-map-cont]').forEach(b => { b.onclick = () => h.play(b.dataset.mapCont!, false); });
   document.querySelectorAll<HTMLButtonElement>('[data-map]').forEach(b => {
     b.onclick = () => (saves[b.dataset.map!] ? confirmTwice(b, '再按一次：覆蓋這間店的進度', () => h.play(b.dataset.map!, true)) : h.play(b.dataset.map!, true));

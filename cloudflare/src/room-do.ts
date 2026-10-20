@@ -148,7 +148,7 @@ export class RoomDO extends DurableObject<Env> {
         const map = typeof msg.map === 'string' ? msg.map.slice(0, 24) : undefined;
         const difficulty = isDifficulty(msg.difficulty) ? msg.difficulty : undefined;
         this.room = new Room(this.code, msg.save as never, { ...this.roomOpts(), map, difficulty });
-        const r = this.room.join(s.conn, msg.name, undefined, s.platform);
+        const r = this.room.join(s.conn, msg.name, undefined, s.platform, msg.outfit);
         if (r.ok) { s.inRoom = true; s.playerId = r.member.playerId; }
         this.startLoop();
         break;
@@ -157,7 +157,7 @@ export class RoomDO extends DurableObject<Env> {
         const code = typeof msg.code === 'string' ? msg.code.trim().toUpperCase() : '';
         const room = this.room;
         if (!room || room.closed || code !== this.code) return fail('no_room', '找不到房間，請確認房間碼');
-        const r = room.join(s.conn, msg.name, msg.token, s.platform);
+        const r = room.join(s.conn, msg.name, msg.token, s.platform, msg.outfit);
         if (!r.ok) return fail(r.code, r.message);
         s.inRoom = true; s.playerId = r.member.playerId;
         break;

@@ -234,7 +234,7 @@ wss.on('connection', (ws: WebSocket) => {
         if (rooms.size >= MAX_ROOMS) return fail('server_full', '伺服器房間已滿，請稍後再試');
         const room = makeRoom(newCode(), msg.save, msg.map, msg.difficulty);
         rooms.set(room.code, room);
-        const r = room.join(conn, msg.name, undefined, s.platform);
+        const r = room.join(conn, msg.name, undefined, s.platform, msg.outfit);
         if (r.ok) { s.room = room; s.playerId = r.member.playerId; }
         break;
       }
@@ -242,7 +242,7 @@ wss.on('connection', (ws: WebSocket) => {
         const code = typeof msg.code === 'string' ? msg.code.trim().toUpperCase() : '';
         const room = rooms.get(code);
         if (!room) return fail('no_room', '找不到房間，請確認房間碼');
-        const r = room.join(conn, msg.name, msg.token, s.platform);
+        const r = room.join(conn, msg.name, msg.token, s.platform, msg.outfit);
         if (!r.ok) return fail(r.code, r.message);
         s.room = room; s.playerId = r.member.playerId;
         break;

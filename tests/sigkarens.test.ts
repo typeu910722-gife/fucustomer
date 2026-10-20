@@ -114,6 +114,8 @@ for (const k of SIG_KINDS) {
     }
     assert.equal(c.resolved, true, 'settled');
     assert.equal(w.dayStats.karensResolved, 1); assert.equal(w.dayStats.karensFailed, 0);
+    assert.equal(w.handled[k], 1, 'counted for the 奧客圖鑑');
+    assert.ok(w.events.some(e => e.e === 'toast' && e.karen === k && e.kid === c.id && e.ok === true), 'the success toast names the karen (after-story line)');
     if (d.need === 'coffee' || d.need === 'meal') assert.equal(p.held, null, 'the food was handed over');
     if (d.buys || d.tpl === 'sneak') assert.ok(['queue', 'toRegister', 'atRegister'].includes(c.state), `goes to pay (${c.state})`);
     if (d.tpl === 'till' || d.tpl === 'haggle') {
@@ -130,6 +132,8 @@ for (const k of SIG_KINDS) {
     w2.shelves = { drinks: 10, snacks: 10, bento: 10 };
     run(w2, d.tpl === 'haggle' ? 60 : 3);
     assert.equal(w2.dayStats.karensFailed, 1, 'fails when ignored'); assert.equal(c2.state, 'leaving');
+    assert.equal(w2.handled[k], undefined, 'a failure is not counted as handled');
+    assert.ok(w2.events.some(e => e.e === 'toast' && e.karen === k && e.ok === false), 'the failure toast names the karen');
     assert.ok(w2.rating < rating, 'rating drops');
     if (d.failMoney || d.tpl === 'sneak' || d.effects?.includes('money')) assert.ok(w2.money < money, 'costs money');
     if (d.effects?.includes('stock')) assert.ok(w2.shelves.drinks + w2.shelves.snacks + w2.shelves.bento < 30, 'took goods off the shelves');

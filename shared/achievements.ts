@@ -1,6 +1,8 @@
 // Achievements are derived from the career profile, so they can be (re)checked at any time and
 // reported to a store platform (Steam, Game Center, Play Games) without a separate save format.
 import { CHAPTERS, ENDLESS_ID, type CareerProfile, type ShiftResult } from './career.ts';
+import { dexCount } from './karendex.ts';
+import { SIG_KINDS } from './sigkarens.ts';
 
 export interface Achievement { id: string; name: string; desc: string; check: (p: CareerProfile, r?: ShiftResult) => boolean }
 
@@ -19,6 +21,7 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'CH5', name: '區域督導', desc: '通關第 5 章', check: p => chapterDone(p, 5) },
   { id: 'BOSS', name: '奧客剋星', desc: '擊敗奧客之王', check: p => cleared(p, '6-3') },
   { id: 'ATLAS', name: '全台奧客圖鑑', desc: '通關第 10 章，見過每一種店的招牌奧客', check: p => chapterDone(p, 10) },
+  { id: 'DEX_ALL', name: '圖鑑全收集', desc: `每一種店的招牌奧客（${SIG_KINDS.length} 種）都至少處理過一次`, check: p => dexCount(p.dex, true) >= SIG_KINDS.length },
   { id: 'LV10', name: '熟練店員', desc: '職級達到 Lv10', check: p => p.level >= 10 },
   { id: 'LV20', name: '資深店員', desc: '職級達到 Lv20', check: p => p.level >= 20 },
   { id: 'LV30', name: '終極打工人', desc: '職級達到 Lv30', check: p => p.level >= 30 },

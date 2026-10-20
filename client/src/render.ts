@@ -16,7 +16,8 @@ import type { Quality } from './storage.ts';
 import { sigDef } from '../../shared/sigkarens.ts';
 import { DecorCtx, STORE_DECOR, buildStoreDecor, buildStoreExtras } from './decor.ts';
 import { StationInfo, buildStation, stationGlowMesh } from './stations.ts';
-import { buildShelfStyle } from './shelves.ts';
+import { buildShelfStyle, dressFridge } from './shelves.ts';
+import { buildShopDecor, tagPrefix } from './cosmetics.ts';
 import { INK, PillOpts, UI_FONT, isFontReady, labelTexture, pillCanvas, popCanvas, textTexture, whenFontReady } from './labels.ts';
 
 // ---------- helpers ----------
@@ -374,6 +375,7 @@ export class StoreView {
     this.scene.add(this.highlight);
     const before = new Set(this.scene.children);
     this.build();
+    buildShopDecor(this.scene, this.q); // 商城 decorations (free play / own store only)
     this.atlas.pack();
     this.mergeStatic(before);
     this.resize();
@@ -494,6 +496,7 @@ export class StoreView {
         S.add(boxMesh(face < 0 ? { ...b, x0: b.x1 - 0.12 } : { ...b, x1: b.x0 + 0.12 }, b.h, frame));
         S.add(boxMesh(b, 0.1, frame, b.h - 0.1));
         if (isFridge) {
+          dressFridge(this.decorCtx(), CURRENT_MAP, info.name, b, face); // store-themed header, handles, decals
           const glass = boxMesh(face < 0 ? { ...b, x1: b.x0 + 0.04 } : { ...b, x0: b.x1 - 0.04 }, b.h - 0.15, mat(0xa5d8ff, q, { transparent: true, opacity: 0.18, rough: 0.05 }), 0.1); glass.castShadow = false; S.add(glass);
           const glow = new THREE.Mesh(new THREE.PlaneGeometry(b.z1 - b.z0 - 0.4, 0.06), this.glowMat(0xe7f5ff)); glow.rotation.y = face < 0 ? -Math.PI / 2 : Math.PI / 2; glow.position.set(openX - face * 0.06, b.h - 0.2, (b.z0 + b.z1) / 2); S.add(glow);
           const backGlow = new THREE.Mesh(new THREE.PlaneGeometry(b.z1 - b.z0 - 0.2, b.h - 0.3), this.glowMat(0xd0ebff)); backGlow.rotation.y = face < 0 ? -Math.PI / 2 : Math.PI / 2; backGlow.position.set(backX + face * 0.13, b.h / 2 + 0.05, (b.z0 + b.z1) / 2); S.add(backGlow);
@@ -1285,7 +1288,7 @@ export class StoreView {
       seenP.add(p.id);
       let e = this.players.get(p.id);
       if (!e) {
-        const h = new Human(q, { shirt: p.color, pants: 0x343a40, skin: SKIN[p.id.charCodeAt(1) % SKIN.length], hair: HAIR[p.id.charCodeAt(2) % HAIR.length], hairStyle: p.id.charCodeAt(3) % 4, apron: true });
+        const h = new Human(q, { shirt: p.color, pants: 0x343a40, skin: SKIN[p.id.charCodeAt(1) % SKIN.length], hair: HAIR[p.id.charCodeAt(2) % HAIR.length], hairStyle: p.id.charCodeAt(3) % 4, apron: true, outfit: p.outfit });
         e = { h, s: { x: p.x, z: p.z, yaw: p.yaw } };
         // player models get their own material copies: disconnect fading must not touch shared materials
         e.h.group.traverse(o => { const mm = o as THREE.Mesh; if (mm.isMesh && !Array.isArray(mm.material)) mm.material = (mm.material as THREE.Material).clone(); });
@@ -1298,8 +1301,9 @@ export class StoreView {
       e.h.animate(dt, moving);
       e.h.setHeld(q, p.held);
       const status = !p.connected ? ' 📶斷線' : p.away ? ' 💤' : '';
-      const lkey = p.name + status + (p.busy ? '…' : '');
-      e.h.label.set(lkey, () => pillCanvas({ text: p.name + status, dot: hex(p.color), size: 42 }));
+      const tagged = tagPrefix(p.outfit) + p.name; // 商城 name tag shows as an emoji before the name
+      const lkey = tagged + status + (p.busy ? '…' : '');
+      e.h.label.set(lkey, () => pillCanvas({ text: tagged + status, dot: hex(p.color), size: 42 }));
       e.h.group.traverse(o => { const m = (o as THREE.Mesh).material as THREE.Material | undefined; if (m && 'opacity' in m && o !== e!.h.label.sprite) { m.transparent = !p.connected; m.opacity = p.connected ? 1 : 0.4; } });
       if (Math.abs(e.s.x - 12) < 2.2 && Math.abs(e.s.z - 16) < 2.2) doorNear = true;
     }

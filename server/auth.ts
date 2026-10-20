@@ -2,6 +2,7 @@
 // No secrets: the ID token is checked against Google's public keys and the OAuth client ID (which is public).
 // We keep only a SHA-256 hash of the Google account id, never the e-mail address.
 import { createHash, createPublicKey, randomBytes, randomInt, verify, type JsonWebKeyInput } from 'node:crypto';
+import { getCosmetic } from '../shared/shop.ts';
 type JsonWebKey = JsonWebKeyInput['key'];
 
 export interface GoogleClaims { sub: string; aud: string; iss: string; exp: number; name?: string }
@@ -46,6 +47,8 @@ export async function verifyGoogleIdToken(token: unknown, clientId: string, keys
 export interface LicenseCard {
   no: string; name: string; level: number; rank: string; title: string; avatar: string;
   stars: number; achievements: number; storeName: string; quote: string; updatedAt: number;
+  /** 商城: equipped hat id and the supporter badge (cosmetic only; not verified against a store receipt yet). */
+  hat?: string; supporter?: boolean;
 }
 interface LicenseRecord extends LicenseCard { owner: string; sessions: string[]; createdAt: number }
 
@@ -98,6 +101,8 @@ export class LicenseRegistry {
     if ('stars' in b) r.stars = int(b.stars, 0, 9999, r.stars);
     if ('achievements' in b) r.achievements = int(b.achievements, 0, 999, r.achievements);
     if ('storeName' in b) r.storeName = str(b.storeName, 16, r.storeName);
+    if ('hat' in b) r.hat = typeof b.hat === 'string' && getCosmetic(b.hat)?.slot === 'hat' ? b.hat : '';
+    if ('supporter' in b) r.supporter = b.supporter === true;
     if ('quote' in b) r.quote = str(b.quote, 40, r.quote);
     r.updatedAt = this.now(); this.persist(r);
     return { ok: true, value: this.view(r) };
@@ -105,7 +110,7 @@ export class LicenseRegistry {
   logout(session: unknown) { const r = this.bySession(session); if (r) { const h = hash(String(session)); r.sessions = r.sessions.filter(s => s !== h); this.persist(r); } }
   get(no: string): R<LicenseCard> { const r = this.byNo.get(no); return r ? { ok: true, value: this.view(r) } : { ok: false, status: 404, error: '查無此證照' }; }
   view(r: LicenseRecord): LicenseCard {
-    const { no, name, level, rank, title, avatar, stars, achievements, storeName, quote, updatedAt } = r;
-    return { no, name, level, rank, title, avatar, stars, achievements, storeName, quote, updatedAt };
+    const { no, name, level, rank, title, avatar, stars, achievements, storeName, quote, updatedAt, hat, supporter } = r;
+    return { no, name, level, rank, title, avatar, stars, achievements, storeName, quote, updatedAt, hat: hat ?? '', supporter: supporter === true };
   }
 }

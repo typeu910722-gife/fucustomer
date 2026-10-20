@@ -4,6 +4,8 @@ import { KarenKind, Product } from './constants.ts';
 import type { OwnStore, StoreHistory, WageMode } from './ownstore.ts';
 import type { StoreSave } from './protocol.ts';
 import { MAPS } from './maps/index.ts';
+import { ShopState, newShop, sanitizeShop } from './shop.ts';
+import { addHandled, sanitizeDex } from './karendex.ts';
 
 export type Ability = 'hit' | 'grab' | 'spin' | 'ultimate';
 
@@ -106,6 +108,10 @@ export interface CareerProfile {
   /** Your own store (after the main story), or null. */
   store: OwnStore | null;
   storeHistory: StoreHistory;
+  /** 全台奧客圖鑑: how many of each karen kind you have handled (karendex.ts). */
+  dex: Record<string, number>;
+  /** 商城: cosmetics bought with 薪資點數, what is equipped, and paid packs (shared/shop.ts). */
+  shop: ShopState;
 }
 export function newProfile(): CareerProfile {
   return {
@@ -114,7 +120,7 @@ export function newProfile(): CareerProfile {
     stars: {}, clears: {}, stats: { shifts: 0, wins: 0, served: 0, ejected: 0, karens: 0, revenue: 0 }, endlessBest: 0, title: '',
     achievements: [], daily: { date: '', best: 0, rewarded: false, streak: 0, lastWin: '', wins: 0 },
     court: { trials: 0, fines: 0, acquittals: 0 }, story: [],
-    store: null, storeHistory: { opened: 0, closed: 0, lost: 0, lastReason: '' },
+    store: null, storeHistory: { opened: 0, closed: 0, lost: 0, lastReason: '' }, shop: newShop(), dex: {},
   };
 }
 export function sanitizeProfile(v: unknown): CareerProfile {
@@ -142,6 +148,8 @@ export function sanitizeProfile(v: unknown): CareerProfile {
   const sh = o.storeHistory;
   if (sh && typeof sh === 'object') p.storeHistory = { opened: int(sh.opened, 0, 1e5, 0), closed: int(sh.closed, 0, 1e5, 0), lost: int(sh.lost, 0, 1e9, 0), lastReason: typeof sh.lastReason === 'string' ? sh.lastReason.slice(0, 40) : '' };
   p.store = sanitizeStore(o.store, int);
+  p.dex = sanitizeDex(o.dex); // saves from before the 圖鑑 existed start empty
+  p.shop = sanitizeShop(o.shop); // saves from before the shop existed get an empty shop
   if (Array.isArray(o.achievements)) p.achievements = [...new Set(o.achievements.filter((a): a is string => typeof a === 'string' && /^[A-Z0-9_]{1,24}$/.test(a)))].slice(0, 64);
   const d = o.daily, isDate = (x: unknown): x is string => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x);
   if (d && typeof d === 'object') {
@@ -458,6 +466,8 @@ export interface ShiftResult {
   incidents?: Incident[];
   /** Daily challenge date (YYYY-MM-DD). */
   date?: string;
+  /** Karens handled this shift, by kind (for the 奧客圖鑑). */
+  handled?: Record<string, number>;
 }
 export function starsFor(r: ShiftResult) {
   if (r.shiftId === ENDLESS_ID) { const sc = r.score ?? 0; return sc >= 3000 ? 3 : sc >= 1600 ? 2 : sc >= 800 ? 1 : 0; }
@@ -500,6 +510,7 @@ export function shiftPay(chapter: number, r: ShiftResult, stars: number): Pay {
 export const payTotal = (p: Pay) => p.wage + p.bonus - p.cut + p.tips + p.extra;
 /** Applies a finished shift to the profile. EXP: full on first clear, 60% on replays, 35% on a failed attempt. */
 export function applyResult(p: CareerProfile, r: ShiftResult): Reward {
+  addHandled(p.dex, r.handled);
   if (r.shiftId === ENDLESS_ID) {
     const score = r.score ?? 0;
     const prevBest = p.endlessBest;

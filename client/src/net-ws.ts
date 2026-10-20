@@ -4,10 +4,11 @@ import { applyMap } from '../../shared/map.ts';
 import { PROTOCOL_VERSION } from '../../shared/constants.ts';
 import type { ClientMsg, ServerMsg, StoreSave } from '../../shared/protocol.ts';
 import type { GameConnection, NetStatus } from './net.ts';
+import type { Outfit } from '../../shared/shop.ts';
 
-export interface JoinIntent { kind: 'create'; name: string; save: StoreSave | null; map?: string; difficulty?: string }
+export interface JoinIntent { kind: 'create'; name: string; save: StoreSave | null; map?: string; difficulty?: string; outfit?: Outfit }
 /** `map` for a join is the room's store type, looked up before connecting (see roomMap). */
-export type Intent = JoinIntent | { kind: 'join'; code: string; name: string; token?: string; map?: string };
+export type Intent = JoinIntent | { kind: 'join'; code: string; name: string; token?: string; map?: string; outfit?: Outfit };
 
 /** Asks the server which store type a room uses, so the 3D view is built for the right map. */
 export async function roomMap(wsUrl: string, code: string): Promise<string | undefined> {
@@ -69,9 +70,9 @@ export class WsConnection implements GameConnection {
     ws.onopen = () => {
       this.attempts = 0; this.lastRx = performance.now();
       this.raw({ type: 'hello', v: PROTOCOL_VERSION, platform: this.platform });
-      if (this.everJoined && this.token) this.raw({ type: 'join', code: this.code, name: '', token: this.token });
-      else if (this.intent.kind === 'create') this.raw({ type: 'create', name: this.intent.name, save: this.intent.save, map: this.intent.map, difficulty: this.intent.difficulty });
-      else this.raw({ type: 'join', code: this.intent.code, name: this.intent.name, token: this.intent.token });
+      if (this.everJoined && this.token) this.raw({ type: 'join', code: this.code, name: '', token: this.token, outfit: this.intent.outfit });
+      else if (this.intent.kind === 'create') this.raw({ type: 'create', name: this.intent.name, save: this.intent.save, map: this.intent.map, difficulty: this.intent.difficulty, outfit: this.intent.outfit });
+      else this.raw({ type: 'join', code: this.intent.code, name: this.intent.name, token: this.intent.token, outfit: this.intent.outfit });
     };
     ws.onmessage = (ev) => {
       this.lastRx = performance.now();

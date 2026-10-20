@@ -8,6 +8,7 @@ import { applyMap, CURRENT_MAP, COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REG
 import type { ShiftResult } from '../../shared/career.ts';
 import { BOSS_HOW, BOSS_PHASES } from '../../shared/constants.ts';
 import { NEED_LABEL, SIG_KARENS, SigNeed, isSig, sigWaitReason } from '../../shared/sigkarens.ts';
+import { DEX_SPEAKER, aftermathLine } from '../../shared/karendex.ts';
 import { Tutorial, TutorialView } from './tutorial.ts';
 import type { ActKind, ClientMsg, CustomerSnap, GameEvent, LobbyState, ServerMsg, Snapshot, Target } from '../../shared/protocol.ts';
 import { audio } from './audio.ts';
@@ -254,7 +255,7 @@ export class Game {
 
   private onEvent(e: GameEvent) {
     switch (e.e) {
-      case 'toast': this.toast(e.text, e.tone ?? 'info'); break;
+      case 'toast': this.toast(e.text, e.tone ?? 'info'); if (e.karen) this.aftermath(e.karen, e.ok !== false, e.kid ?? 0); break;
       case 'sfx': audio.play(e.name, e.x, e.z); if (e.name === 'clean' && e.x !== undefined) this.view.burst(e.x, e.z!, 0x99e9f2); break;
       case 'money': this.view.floatText(`+$${e.amount}`, e.x, e.z); this.view.burst(e.x, e.z, 0xffd43b, 10); break;
       case 'karen': audio.play('karen'); audio.karenSting(e.kind); this.introduceKaren(e.kind); break;
@@ -283,6 +284,27 @@ export class Game {
     box.appendChild(d);
     while (box.childElementCount > 3) box.firstElementChild!.remove();
     setTimeout(() => d.remove(), ms);
+  }
+  private afTimers: number[] = [];
+  /** After-story bubble (錢董 / 阿芬姐 / 記者小林) a moment after a signature karen is dealt with. */
+  private aftermath(kind: string, ok: boolean, seed: number) {
+    const l = aftermathLine(kind, ok, seed);
+    if (!l) return;
+    for (const t of this.afTimers) clearTimeout(t);
+    const el = $('aftermath');
+    this.afTimers = [window.setTimeout(() => {
+      const sp = DEX_SPEAKER[l.who];
+      el.innerHTML = '';
+      const ico = document.createElement('div'); ico.className = 'af-ico'; ico.textContent = sp.icon;
+      const txt = document.createElement('div'); txt.className = 'af-txt';
+      const who = document.createElement('b'); who.className = 'af-who'; who.textContent = sp.name;
+      txt.append(who, document.createTextNode(l.text));
+      el.append(ico, txt);
+      el.className = ok ? '' : 'fail';
+      // restart the pop-in animation
+      el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
+      this.afTimers.push(window.setTimeout(() => el.classList.add('fade'), 5200), window.setTimeout(() => el.classList.add('hidden'), 5700));
+    }, 1100)];
   }
   private showHint(text: string) {
     const el = $('hintbar'); el.textContent = '💡 ' + text; el.classList.remove('hidden');
@@ -820,6 +842,8 @@ export class Game {
     document.removeEventListener('pointerlockchange', this.onLockChange);
     window.removeEventListener('keydown', this.onKey);
     for (const t of this.introTimers) clearTimeout(t);
+    for (const t of this.afTimers) clearTimeout(t);
+    $('aftermath').classList.add('hidden');
     $('introcard').classList.add('hidden'); $('tutskip').classList.add('hidden');
     this.input.unlock();
     this.conn.close();

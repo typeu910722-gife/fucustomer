@@ -5,6 +5,8 @@ import { apiBase } from './friends.ts';
 export interface LicenseCard {
   no: string; name: string; level: number; rank: string; title: string; avatar: string;
   stars: number; achievements: number; storeName: string; quote: string; updatedAt: number;
+  /** 商城: equipped hat id and supporter badge. */
+  hat?: string; supporter?: boolean;
 }
 interface Account { no: string; session: string }
 const KEY = 'fucustomer.account.v1';

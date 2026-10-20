@@ -1,5 +1,6 @@
 // Authoritative game simulation. Runs on the dedicated server for multiplayer and inside the
 // browser for solo/career play. All transactions (money, stock, items, karen outcomes) happen here.
+import type { Outfit } from './shop.ts';
 import {
   BOSS_PHASES, BOX_SIZE, BURST_MAX, CHAOS_MAX, CLOSE_MINUTE, CLOSING_MAX_SECONDS, FOOD_INFO, DAILY_RENT, DAY_OPEN_SECONDS, KAREN_INFO,
   KarenKind, OPEN_MINUTE, PREP_SECONDS, PRODUCTS, PRODUCT_INFO, Product, RUN_SPEED, SERVER_INTERACT_RANGE,
@@ -35,6 +36,8 @@ export interface PlayerState {
   grabbing: number | null; spinReadyAt: number; hitReadyAt?: number;
   /** Friend-store raid: this player is the troublemaker. */
   raider?: boolean; litterAt?: number;
+  /** Cosmetics others see (shared/shop.ts); purely visual. */
+  outfit?: Outfit;
   stats: { served: number; karens: number; cleaned: number; restocked: number; ejected: number };
 }
 
@@ -88,6 +91,8 @@ export interface World {
   power: number; event: { kind: 'rush' | 'outage'; left: number; pulse: number } | null; nextEvent: number;
   guardTimer: number; hintQueue: { at: number; text: string }[]; result: ShiftResult | null;
   bossSpawned: boolean; bossDefeated: boolean; bossTimer: number; rampTimer: number; openTime: number;
+  /** Karens handled today, by kind (goes into the shift result for the 奧客圖鑑). */
+  handled: Record<string, number>;
 }
 
 /** Default multiplayer "business day" configuration: every mechanic enabled. */
@@ -154,7 +159,7 @@ export function createWorld(save: StoreSave = defaultSave(), seed = Date.now(), 
     emptyShelfToastAt: -99, saveOut: null, difficultyPlayers: 1,
     incidents: [], raid: cfg.raid ? { score: 0, watched: 0, caught: false, knocked: 0, litter: 0, heckled: 0 } : null, chaos: 0, chaosTimer: 0, burst: 0, combo: 0, comboUntil: 0, power: 1, event: null, nextEvent: cfg.firstEvent,
     guardTimer: guardInterval(cfg.mods.guard), hintQueue: cfg.hints.map((text, i) => ({ at: 1 + i * 16, text })), result: null,
-    bossSpawned: false, bossDefeated: false, bossTimer: 0, rampTimer: 0, openTime: 0,
+    bossSpawned: false, bossDefeated: false, bossTimer: 0, rampTimer: 0, openTime: 0, handled: {},
   };
   // shifts start with one visible spill so cleaning is discoverable (as in v0.4)
   if (shift && cfg.chapter === 1) w.spills.push({ id: w.nextId++, x: 11.4, z: 9.2, born: 0 });
@@ -273,15 +278,24 @@ function addSpill(w: World, x: number, z: number) {
   ev(w, { e: 'sfx', name: 'splat', x: c.x, z: c.z });
 }
 
+/** Counts a karen as handled (day stats, store totals and the per-kind tally for the 奧客圖鑑). */
+function countHandled(w: World, kind: string) {
+  w.dayStats.karensResolved++; w.totals.karens++;
+  w.handled[kind] = (w.handled[kind] ?? 0) + 1;
+}
+/** A toast that also says which karen was dealt with (clients show the after-story line for signature karens). */
+function karenToast(w: World, c: Customer, text: string, ok: boolean, tone: 'good' | 'bad' | 'info' = ok ? 'good' : 'bad') {
+  ev(w, { e: 'toast', text, tone, karen: c.kind, kid: c.id, ok });
+}
 function resolveKaren(w: World, c: Customer, p: PlayerState | null, rating: number, text: string) {
   c.resolved = true; adjRating(w, rating); adjChaos(w, -5);
-  w.dayStats.karensResolved++; w.totals.karens++;
+  countHandled(w, c.kind);
   if (p) p.stats.karens++;
-  toast(w, text, 'good');
+  karenToast(w, c, text, true);
 }
 function failKaren(w: World, c: Customer, rating: number, chaos: number, text: string) {
   c.resolved = true; adjRating(w, rating); adjChaos(w, chaos); w.dayStats.karensFailed++;
-  toast(w, text, 'bad');
+  karenToast(w, c, text, false);
 }
 
 // ---------------- customers ----------------
@@ -440,7 +454,7 @@ function bossAdvance(w: World, c: Customer, p: PlayerState | null, how: string) 
 function bossDefeat(w: World, c: Customer, by: PlayerState | null) {
   w.bossDefeated = true; c.resolved = true;
   adjRating(w, 0.5); adjChaos(w, -30);
-  w.dayStats.karensResolved++; w.totals.karens++;
+  countHandled(w, 'boss');
   toast(w, `🏆 ${by?.name ?? '你'} 讓奧客之王退散了！你就是終極打工人！`, 'good');
   for (const id of c.minions) { const m = customer(w, id); if (m && !m.resolved) { m.resolved = true; leave(w, m, false); } }
 }
@@ -467,10 +481,11 @@ function eject(w: World, c: Customer, by: PlayerState | null, how: 'throw' | 'gu
   c.downT = 2.2; c.yaw = Math.PI; // facing the store: lying on the back, head toward the street
   c.path = [{ x: c.x, z: STORE_D + 1.6 }, { x: c.x < 12 ? -3 : 27, z: STORE_D + 1.7 }];
   if (c.kind === 'boss') { w.dayStats.ejected++; if (by) by.stats.ejected++; bossDefeat(w, c, by); ev(w, { e: 'fx', name: 'ultimate', x, z, by: by?.name }); }
+  const wasResolved = c.resolved;
   if (c.kind !== 'normal' && c.kind !== 'boss') {
-    const was = c.resolved;
+    const was = wasResolved;
     w.dayStats.ejected++; if (by) by.stats.ejected++;
-    if (!was) { w.dayStats.karensResolved++; w.totals.karens++; if (by) by.stats.karens++; }
+    if (!was) { countHandled(w, c.kind); if (by) by.stats.karens++; }
     c.resolved = true;
     adjChaos(w, -7); adjRating(w, 0.05);
     if (how !== 'ultimate') adjBurst(w, 25);
@@ -481,8 +496,8 @@ function eject(w: World, c: Customer, by: PlayerState | null, how: 'throw' | 'gu
   }
   if (c.kind !== 'normal') {
     if (c.kind === 'boss') { /* announced by bossDefeat */ }
-    else if (how === 'guard') toast(w, `🛡 保全請走了${KAREN_INFO[c.kind as KarenKind].name}`, 'good');
-    else if (how === 'throw') toast(w, w.combo > 1 ? `🚪 ${w.combo} 連送！奧客退散！` : `🚪 ${by?.name ?? ''} 把${KAREN_INFO[c.kind as KarenKind].name}請出門了！`, 'good');
+    else if (how === 'guard') { const t = `🛡 保全請走了${KAREN_INFO[c.kind as KarenKind].name}`; if (wasResolved) toast(w, t, 'good'); else karenToast(w, c, t, true); }
+    else if (how === 'throw') { const t = w.combo > 1 ? `🚪 ${w.combo} 連送！奧客退散！` : `🚪 ${by?.name ?? ''} 把${KAREN_INFO[c.kind as KarenKind].name}請出門了！`; if (wasResolved) toast(w, t, 'good'); else karenToast(w, c, t, true); }
   } else {
     w.dayStats.angryLeft++;
     adjChaos(w, 20); adjRating(w, -0.6);
@@ -662,8 +677,8 @@ function updateCustomer(w: World, c: Customer, dt: number) {
     case 'charge': {
       // squats at the socket: every few seconds the electricity bill ticks up and the store gets messier
       if (w.power < 1) {
-        c.resolved = true; w.dayStats.karensResolved++; w.totals.karens++;
-        toast(w, '🔌 停電了，充電霸王摸摸鼻子走人', 'info');
+        c.resolved = true; countHandled(w, c.kind);
+        karenToast(w, c, '🔌 停電了，充電霸王摸摸鼻子走人', true, 'info');
         leave(w, c, false); break;
       }
       c.life -= dt; c.knockTimer -= dt;
@@ -1513,6 +1528,7 @@ export function finishShift(w: World, failReason: string) {
     ejected: d.ejected, cleaned: d.spillsCleaned, maxCombo: d.maxCombo,
     score: w.cfg.endless ? score : w.raid ? w.raid.score : undefined, survived, bossDefeated: w.cfg.boss ? w.bossDefeated : undefined,
     date: w.cfg.daily?.date, tips: d.tips, incidents: w.incidents.length ? [...w.incidents] : undefined,
+    handled: Object.keys(w.handled).length ? { ...w.handled } : undefined,
   };
   if (w.cfg.endless) w.result.failReason = failReason ? `${failReason}・撐了 ${survived} 秒` : `主動下班・撐了 ${survived} 秒`;
   clearFloor(w);
@@ -1567,7 +1583,7 @@ export function tick(w: World, dt: number) {
       w.phaseLeft -= dt;
       if (w.phaseLeft <= 0 || allReady(w)) {
         setPhase(w, 'open'); w.clock = OPEN_MINUTE; w.phaseLeft = w.cfg.length;
-        w.dayStats = emptyStats(w.rating); w.spawnTimer = 2; w.karenTimer = w.cfg.firstKaren; w.saveOut = null; w.nextEvent = w.cfg.firstEvent;
+        w.dayStats = emptyStats(w.rating); w.handled = {}; w.spawnTimer = 2; w.karenTimer = w.cfg.firstKaren; w.saveOut = null; w.nextEvent = w.cfg.firstEvent;
         w.openTime = w.time; w.bossTimer = w.cfg.bossAt; w.rampTimer = 0;
         toast(w, shift ? `🏪 ${w.cfg.title}：開始上班！目標營業額 $${w.cfg.goal}` : `🏪 第 ${w.day} 天開始營業！`, 'good');
         ev(w, { e: 'sfx', name: 'open' });
@@ -1634,7 +1650,7 @@ export function tick(w: World, dt: number) {
     case 'summary':
       if (!shift && allReady(w)) {
         w.day++; setPhase(w, 'prep'); w.phaseLeft = PREP_SECONDS; w.clock = OPEN_MINUTE;
-        w.dayStats = emptyStats(w.rating);
+        w.dayStats = emptyStats(w.rating); w.handled = {};
       }
       break;
   }
@@ -1685,7 +1701,7 @@ export function snapshot(w: World, now: number): Snapshot {
     mopsOnRack: w.mopsOnRack, playerCount: activePlayers(w),
     players: [...w.players.values()].map(p => ({
       id: p.id, name: p.name, color: p.color, x: r2(p.x), z: r2(p.z), yaw: r2(p.yaw), pitch: r2(p.pitch), held: p.held, held2: p.held2,
-      connected: p.connected, away: p.away, ready: p.ready, grabbing: p.grabbing, spinCd: r2(Math.max(0, p.spinReadyAt - w.time)), raider: p.raider || undefined,
+      connected: p.connected, away: p.away, ready: p.ready, grabbing: p.grabbing, spinCd: r2(Math.max(0, p.spinReadyAt - w.time)), raider: p.raider || undefined, outfit: p.outfit,
       busy: p.busy ? { kind: p.busy.kind, p: Math.min(1, (w.time - p.busy.start) / p.busy.dur) } : null,
     })),
     customers: w.customers.map(c => ({

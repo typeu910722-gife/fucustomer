@@ -7,10 +7,13 @@ import { applyMap } from '../../shared/map.ts';
 import type { ShiftConfig } from '../../shared/career.ts';
 import { Bot, botMessages } from '../../shared/bot.ts';
 import type { Snapshot } from '../../shared/protocol.ts';
+import type { Outfit } from '../../shared/shop.ts';
 
 export interface LocalExtras {
   /** An employee played by the simulated player (own store). */
-  staff?: { name: string; pace: number };
+  staff?: { name: string; pace: number; outfit?: Outfit };
+  /** Your own cosmetics (you play first-person, so in solo this only keeps the snapshot consistent). */
+  outfit?: Outfit;
   /** Receives each nightly save instead of the free-play save slot. */
   onSave?: (save: StoreSave) => void;
   /** Map for free play / own store (career shifts carry it in their config). */
@@ -42,12 +45,12 @@ export class LocalConnection implements GameConnection {
     this.room = new Room('SOLO', save, { solo: true, shift, seed, map: extras.map });
     this.onSave = extras.onSave;
     const conn = { send: (m: ServerMsg) => queueMicrotask(() => { if (m.type === 'save') this.onSave?.(m.save); this.onMessage(m); }), close: () => {} };
-    const r = this.room.join(conn, name, undefined, 'solo');
+    const r = this.room.join(conn, name, undefined, 'solo', extras.outfit);
     if (r.ok) this.playerId = r.member.playerId;
     if (extras.staff) {
       const bot = new Bot('any', 0.5); bot.pace = extras.staff.pace;
       const st = { bot, id: '', snap: null as Snapshot | null, rid: 0 };
-      const sr = this.room.join({ send: (m: ServerMsg) => { if (m.type === 'snap') st.snap = m.s; }, close: () => {} }, extras.staff.name, undefined, 'staff');
+      const sr = this.room.join({ send: (m: ServerMsg) => { if (m.type === 'snap') st.snap = m.s; }, close: () => {} }, extras.staff.name, undefined, 'staff', extras.staff.outfit);
       if (sr.ok) { st.id = sr.member.playerId; this.staff = st; }
     }
     this.timer = window.setInterval(() => {

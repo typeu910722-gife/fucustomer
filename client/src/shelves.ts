@@ -42,6 +42,18 @@ export function buildShelfStyle(ctx: DecorCtx, mapId: string, product: Product, 
   const key = `${mapId}:${product}`;
   const builder = STYLES[key];
   if (!builder) return null;
+  return buildFixture(ctx, shape, b, face, builder);
+}
+
+/**
+ * Store-themed dressing for the generic glass-door fridge (render.ts draws the fridge itself): a lit header in the
+ * store's sign colour, door handles, a kick plate and promo decals on the doors. Purely decorative, inside the footprint.
+ */
+export function dressFridge(ctx: DecorCtx, map: { id: string; icon: string; sign: { bg: string } }, productName: string, b: AABB, face: number) {
+  buildFixture(ctx, 'can', b, face, k => fridgeDress(k, map, productName));
+}
+
+function buildFixture(ctx: DecorCtx, shape: string, b: AABB, face: number, builder: Builder): ShelfStyle {
   const { q } = ctx;
   const G = new THREE.Group();
   G.position.set((b.x0 + b.x1) / 2, 0, (b.z0 + b.z1) / 2);
@@ -548,7 +560,298 @@ const envelopeRack: Builder = k => {
   return {};
 };
 
+// ---------- gas station, east-wall units, supermarket chillers, fridge dressing ----------
+let oilGeo: THREE.BufferGeometry | null = null;
+/** Motor-oil jug: squarish bottle with a pale label band, sloped shoulder, dark cap and a carry handle, bottom at y 0. */
+function oilJug() {
+  return oilGeo ??= shaded([
+    [new THREE.BoxGeometry(0.15, 0.22, 0.09).translate(0, 0.11, 0), 1],
+    [new THREE.BoxGeometry(0.152, 0.09, 0.092).translate(0, 0.1, 0), 1.7],
+    [new THREE.BoxGeometry(0.12, 0.04, 0.08).translate(0.012, 0.24, 0), 0.9],
+    [new THREE.CylinderGeometry(0.022, 0.022, 0.04, 6).translate(-0.042, 0.275, 0), 0.3],
+    [new THREE.BoxGeometry(0.06, 0.018, 0.03).translate(0.035, 0.3, 0), 0.85],
+    [new THREE.BoxGeometry(0.016, 0.05, 0.03).translate(0.058, 0.275, 0), 0.85],
+  ]);
+}
+let wiperGeo: THREE.BufferGeometry | null = null;
+/** Wiper blade on a hanging blister card (centred): coloured card, black blade, pale header with the hang hole. */
+function wiper() {
+  return wiperGeo ??= shaded([
+    [new THREE.BoxGeometry(0.11, 0.48, 0.012).translate(0, -0.02, 0), 1],
+    [new THREE.BoxGeometry(0.11, 0.07, 0.014).translate(0, 0.25, 0), 1.7],
+    [new THREE.BoxGeometry(0.028, 0.5, 0.03).translate(0, -0.02, 0.02), 0.22],
+    [new THREE.BoxGeometry(0.05, 0.05, 0.016).translate(0, -0.12, 0.014), 1.6],
+  ]);
+}
+let produceGeo: THREE.BufferGeometry | null = null;
+/** Produce tray: pale tray with three fruits / veg and a leaf, bottom at y 0. */
+function produce() {
+  return produceGeo ??= shaded([
+    [new THREE.BoxGeometry(0.26, 0.035, 0.2).translate(0, 0.0175, 0), 1.6],
+    [new THREE.SphereGeometry(0.06, 7, 5).translate(-0.07, 0.085, 0.02), 1],
+    [new THREE.SphereGeometry(0.058, 7, 5).translate(0.06, 0.085, -0.03), 0.85],
+    [new THREE.SphereGeometry(0.055, 7, 5).translate(0.0, 0.09, 0.06), 1.12],
+    [new THREE.ConeGeometry(0.02, 0.06, 4).translate(-0.06, 0.16, 0.02), 0.45],
+  ]);
+}
+const hex = (css: string) => parseInt(css.replace('#', ''), 16) || 0x495057;
+
+/** Gas-station motor-oil gondola: dark steel, hazard-stripe kick plate, black drip-tray lips, a lit "機油" header. */
+const oilRack: Builder = k => {
+  const { L, D, H, p, RB } = k;
+  const steel = mat(0x495057, k.q, { metal: 0.4, rough: 0.45 }), yellow = k.ctx.theme.accent;
+  p(B(L, 0.14, D), 0x212529, 0, 0.07, 0);
+  for (const s of [1, -1]) for (let x = -L / 2 + 0.15; x < L / 2 - 0.1; x += 0.28) p(B(0.06, 0.12, 0.01), yellow, x, 0.07, s * (D / 2 + 0.004), 0, 0, 0.55);
+  p(B(L - 0.04, H, 0.05), steel, 0, H / 2, 0);
+  for (const x of [-L / 2 + 0.03, L / 2 - 0.03]) p(B(0.06, H + 0.05, D), 0x343a40, x, (H + 0.05) / 2, 0);
+  const tiers = [0.14, 0.62, 1.1].filter(t => t < H - 0.3);
+  for (const t of tiers.slice(1)) p(B(L - 0.08, 0.03, D - 0.02), steel, 0, t, 0);
+  for (const s of [1, -1]) for (const t of tiers) {
+    p(B(L - 0.08, 0.05, 0.02), 0x212529, 0, t + 0.03, s * (D / 2 - 0.01));
+    for (const x of along(L, 0.75, 0.4)) p(B(0.12, 0.04, 0.006), Math.round(x * 3) % 4 === 0 ? 0xe03131 : 0xffe066, x, t + 0.03, s * (D / 2 + 0.003));
+    for (const x of along(L, 0.4, 0.3)) k.slot(x, t + 0.04, s * (D / 2 - 0.2), undefined, 0, (s > 0 ? 0 : Math.PI) + ((x * 7) % 0.3) - 0.15);
+  }
+  // lit header with the oil-drop logo, a funnel and spare oil cases on top
+  p(RB(L * 0.5, 0.3, 0.12, 0.03), 0x212529, 0, H + 0.17, 0);
+  for (const s of [1, -1]) k.sign(L * 0.46, 0.22, () => signCanvas('🛢 機油專區', '#fab005', '#212529', 768, 160), 0, H + 0.17, s * 0.063, s > 0 ? 0 : Math.PI);
+  for (const x of [-L / 2 + 0.5, L / 2 - 0.5]) {
+    p(B(0.46, 0.22, 0.34), x < 0 ? 0xe03131 : yellow, x, H + 0.11, 0, 0, 0.15);
+    p(B(0.47, 0.05, 0.345), 0x212529, x, H + 0.13, 0, 0, 0.15);
+  }
+  p(CONE(0.09, 0.16, 8), yellow, L / 2 - 1.1, H + 0.09, 0, Math.PI);
+  p(CYL(0.014, 0.014, 0.1, 5), yellow, L / 2 - 1.1, H - 0.02 + 0.01, 0);
+  return { geometry: oilJug(), labelY: H + 0.6 };
+};
+
+/** Gas-station snack gondola: green metal, yellow price channels, car air-fresheners on the end caps, a road-trip header. */
+const roadGondola: Builder = k => {
+  const { L, D, H, p, RB } = k;
+  const green = k.ctx.theme.wainscot, yellow = k.ctx.theme.accent;
+  p(B(L, 0.14, D), green, 0, 0.07, 0);
+  p(B(L - 0.04, H, 0.05), 0xdee2e6, 0, H / 2, 0);
+  for (const x of [-L / 2 + 0.03, L / 2 - 0.03]) p(B(0.06, H + 0.05, D), green, x, (H + 0.05) / 2, 0);
+  const tiers = [0.14, 0.6, 1.06].filter(t => t < H - 0.3);
+  for (const t of tiers.slice(1)) p(B(L - 0.08, 0.025, D - 0.02), 0xf1f3f5, 0, t, 0);
+  for (const s of [1, -1]) for (const t of tiers) {
+    p(B(L - 0.08, 0.06, 0.02), yellow, 0, t + 0.01, s * (D / 2 - 0.0));
+    for (const x of along(L, 0.6, 0.35)) p(B(0.12, 0.045, 0.006), Math.round(x * 2) % 3 === 0 ? 0xe03131 : 0xffffff, x, t + 0.01, s * (D / 2 + 0.012));
+    for (const x of along(L, 0.48, 0.3)) k.slot(x, t + 0.04 + k.half * 0.9, s * (D / 2 - 0.2), [0.9, 0.9, 0.9], 0, (x * 7) % 0.25);
+  }
+  // end caps: a hook strip of little tree-shaped car air fresheners
+  const tree = [0x40c057, 0xfab005, 0xe64980, 0x228be6];
+  for (const ex of [-L / 2 - 0.005, L / 2 + 0.005]) {
+    p(B(0.012, 0.03, D - 0.2), 0xadb5bd, ex, H - 0.15, 0);
+    along(D - 0.2, 0.17, 0.08).forEach((z, i) => {
+      p(B(0.006, 0.12, 0.004), 0xf8f9fa, ex, H - 0.24, z);
+      p(CONE(0.045, 0.14, 3), tree[i % tree.length], ex, H - 0.37, z, 0, Math.PI / 2, 0, 1, 1, 0.25);
+    });
+  }
+  // header and a few shrink-wrapped water packs on top
+  p(RB(L * 0.5, 0.28, 0.12, 0.03), green, 0, H + 0.16, 0);
+  for (const s of [1, -1]) k.sign(L * 0.46, 0.2, () => signCanvas('🚗 公路補給站', '#2b8a3e', '#ffe066', 768, 160), 0, H + 0.16, s * 0.063, s > 0 ? 0 : Math.PI);
+  for (const x of [-L / 2 + 0.55, L / 2 - 0.55]) {
+    p(B(0.5, 0.24, 0.34), 0xa5d8ff, x, H + 0.12, 0, 0, 0.1);
+    for (const dx of [-0.17, 0, 0.17]) for (const dz of [-0.09, 0.09]) p(CYL(0.035, 0.035, 0.03, 6), 0x1c7ed6, x + dx, H + 0.255, dz);
+  }
+  return { labelY: H + 0.6 };
+};
+
+/** Gas-station east wall: dark slatwall with wiper blades on pegs, two stacks of tyres, a car-supplies header. */
+const wiperWall: Builder = k => {
+  const { L, D, H, p } = k;
+  const back = -D / 2;
+  p(B(L, H, 0.08), 0x495057, 0, H / 2, back + 0.04);
+  for (let y = 0.55; y < H - 0.2; y += 0.12) p(B(L - 0.1, 0.012, 0.01), 0x343a40, 0, y, back + 0.085);
+  p(B(L, 0.12, D), 0x212529, 0, 0.06, 0);
+  for (const x of [-L / 2 + 0.03, L / 2 - 0.03]) p(B(0.06, H, D), 0x343a40, x, H / 2, 0);
+  p(B(L, 0.1, 0.12), k.ctx.theme.accent, 0, H - 0.05, back + 0.1);
+  // tyre stacks at both ends (silver hubs)
+  const tyreX = [-L / 2 + 0.6, L / 2 - 0.6];
+  for (const x of tyreX) for (let i = 0; i < 3; i++) {
+    p(TOR(0.22, 0.1, 5, 12), 0x212529, x, 0.22 + i * 0.205, 0.04, Math.PI / 2, 0, 0);
+    p(CYL(0.13, 0.13, 0.12, 10), mat(0xadb5bd, k.q, { metal: 0.6, rough: 0.3 }), x, 0.22 + i * 0.205, 0.04);
+  }
+  for (const x of tyreX) k.sign(0.62, 0.18, () => signCanvas('輪胎免費檢查', '#e03131', '#fff', 640, 160), x, 1.22, back + 0.09);
+  // wiper blades hanging on pegs between the tyre stacks
+  const span = L - 2.5;
+  for (const y of [0.92, 1.5]) for (const x of along(span, 0.22, 0.1)) {
+    p(CYL(0.007, 0.007, 0.16, 4), 0xced4da, x, y + 0.26, back + 0.16, Math.PI / 2);
+    k.slot(x, y, back + 0.17);
+  }
+  k.sign(1.5, 0.24, () => signCanvas('雨刷・汽車百貨', '#2b8a3e', '#ffe066', 768, 128), 0, H - 0.22, back + 0.09);
+  return { geometry: wiper() };
+};
+
+/** Bookstore east wall: wooden stationery cubbies above a drawer cabinet, pen cups, washi tape and gift-wrap rolls. */
+const stationeryWall: Builder = k => {
+  const { L, D, H, p, RB } = k;
+  const wood = k.ctx.theme.shelf, dark = 0x6d4c41, back = -D / 2, cd = 0.48, cz = back + 0.06 + cd / 2;
+  p(B(L, H, 0.06), wood, 0, H / 2, back + 0.03);
+  // drawer cabinet along the bottom (its top is a display ledge)
+  p(B(L, 0.5, D - 0.14), dark, 0, 0.25, -0.07);
+  for (const x of along(L, 0.75, 0.38)) {
+    p(B(0.66, 0.16, 0.01), 0xa1887f, x, 0.32, D / 2 - 0.135);
+    p(SPH(0.02, 5, 3), 0xfab005, x, 0.32, D / 2 - 0.125);
+  }
+  p(B(L, 0.03, D - 0.12), 0xa1887f, 0, 0.515, -0.06);
+  // cubbies
+  const rows = [0.53, 0.93, 1.33, 1.73].filter(t => t < H - 0.1);
+  for (const t of rows.slice(1)) p(B(L - 0.06, 0.03, cd), wood, 0, t, cz);
+  const cols = along(L, 0.6, 0.3);
+  const edges = [-L / 2 + 0.03, ...cols.slice(1).map((x, i) => (x + cols[i]) / 2), L / 2 - 0.03];
+  for (const x of edges) p(B(0.04, rows[rows.length - 1] - rows[0], cd), dark, x, (rows[0] + rows[rows.length - 1]) / 2, cz);
+  for (const t of rows.slice(0, -1)) for (const x of cols) for (const dx of [-0.14, 0.14]) k.slot(x + dx, t + 0.03 + k.half * 0.7, cz + 0.06, [0.7, 0.7, 0.7], 0, ((x + dx) * 9) % 0.3 - 0.15);
+  // on top: pen cups, washi tape rolls and a sign
+  const top = rows[rows.length - 1];
+  along(L, 0.9, 0.5).forEach((x, i) => {
+    p(CYL(0.06, 0.055, 0.14, 8), [0xffffff, 0xffe066, 0x74c0fc][i % 3], x, top + 0.085, cz + 0.08);
+    for (let j = 0; j < 4; j++) p(CYL(0.008, 0.008, 0.2, 4), [0xe03131, 0x1c7ed6, 0x2f9e44, 0x212529][j], x - 0.03 + j * 0.02, top + 0.2, cz + 0.08 + (j % 2) * 0.02 - 0.01, 0.15 * (j - 1.5), 0, 0.1 * (j - 1.5));
+    p(TOR(0.045, 0.02, 4, 8), [0xffa8a8, 0x8ce99a, 0xffd43b, 0xb197fc][i % 4], x + 0.3, top + 0.065, cz + 0.05, -0.1);
+  });
+  // gift-wrap rolls lying on the cabinet ledge
+  along(L, 1.5, 0.6).forEach((x, i) => {
+    for (let j = 0; j < 3; j++) p(CYL(0.04, 0.04, 0.7, 8), [0xff8787, 0x74c0fc, 0xffe066, 0x8ce99a][(i + j) % 4], x, 0.57 + (j === 2 ? 0.065 : 0), D / 2 - 0.25 + (j === 2 ? -0.04 : j * 0.085 - 0.04), 0, 0, Math.PI / 2);
+  });
+  k.sign(1.2, 0.22, () => signCanvas('✏️ 文具・禮品', '#5c940d'), 0, H - 0.11, back + 0.065);
+  return { labelY: H + 0.25 };
+};
+
+/** Pharmacy east wall: white mask wall with wire baskets on teal-edged shelves, a lit header, sanitizer on the cabinet. */
+const maskWall: Builder = k => {
+  const { L, D, H, p, RB } = k;
+  const teal = k.ctx.theme.accent, back = -D / 2, front = D / 2 - 0.18, sd = front - back - 0.08, sz = (front + back + 0.08) / 2;
+  const wire = mat(0xced4da, k.q, { metal: 0.4, rough: 0.4 });
+  p(B(L, H, 0.08), 0xffffff, 0, H / 2, back + 0.04);
+  p(RB(L, 0.42, D - 0.1, 0.03), 0xf8f9fa, 0, 0.21, -0.05);
+  p(B(L, 0.08, 0.02), teal, 0, 0.04, D / 2 - 0.09);
+  for (const x of [-L / 2 + 0.03, L / 2 - 0.03]) p(B(0.06, H, D), 0xe3fafc, x, H / 2, 0);
+  const tiers = [0.43, 0.83, 1.23].filter(t => t < H - 0.4);
+  for (const t of tiers) {
+    p(B(L - 0.06, 0.025, sd), 0xffffff, 0, t, sz);
+    p(B(L - 0.06, 0.05, 0.015), teal, 0, t + 0.01, front);
+    for (const x of along(L, 0.6, 0.35)) {
+      p(B(0.5, 0.13, 0.012), wire, x, t + 0.08, front - 0.03);
+      for (const sx of [-1, 1]) p(B(0.012, 0.13, sd - 0.1), wire, x + sx * 0.25, t + 0.08, sz);
+      for (const dx of [-0.1, 0.1]) k.slot(x + dx, t + 0.025 + 0.045, front - 0.28, [0.6, 0.75, 0.75], 0, (x * 5) % 0.2);
+    }
+  }
+  // lit header box
+  p(RB(L * 0.6, 0.3, 0.12, 0.03), teal, 0, H - 0.2, back + 0.14);
+  k.sign(L * 0.56, 0.22, () => signCanvas('😷 口罩・防疫專區', '#0c8599', '#fff', 1024, 160), 0, H - 0.2, back + 0.205);
+  k.glow(B(L * 0.58, 0.02, 0.02), 0xe3fafc, 0, H - 0.36, back + 0.2);
+  // hand sanitizer pumps on the cabinet top
+  for (const x of along(L, 1.6, 0.5)) {
+    p(CYL(0.045, 0.045, 0.16, 8), 0xe7f5ff, x, 0.5, D / 2 - 0.25);
+    p(CYL(0.012, 0.012, 0.05, 5), 0xffffff, x, 0.6, D / 2 - 0.25);
+    p(B(0.06, 0.015, 0.02), 0xffffff, x + 0.02, 0.625, D / 2 - 0.25);
+    p(B(0.06, 0.06, 0.004), teal, x, 0.5, D / 2 - 0.2);
+  }
+  return { labelY: H + 0.25 };
+};
+
+/** Post-office east wall: a wall of postcards (white-bordered) above green-edged shelves of gift boxes. */
+const postcardWall: Builder = k => {
+  const { L, D, H, p } = k;
+  const green = k.ctx.theme.accent, back = -D / 2;
+  p(B(L, H, 0.06), 0xe8b04b, 0, H / 2, back + 0.03);
+  for (const x of [-L / 2 + 0.03, L / 2 - 0.03]) p(B(0.06, H, D), green, x, H / 2, 0);
+  p(B(L, 0.1, D), green, 0, 0.05, 0);
+  p(B(L, 0.06, 0.1), green, 0, H - 0.03, back + 0.08);
+  // postcards
+  const cardC = [0x74c0fc, 0xffa8a8, 0x8ce99a, 0xffe066, 0xffc078, 0xb197fc, 0x63e6be];
+  let i = 0;
+  for (const y of [1.25, 1.44, 1.63]) for (const x of along(L, 0.24, 0.2)) {
+    const tilt = ((i * 37) % 7 - 3) * 0.02;
+    p(B(0.18, 0.13, 0.006), 0xffffff, x, y, back + 0.065, 0, 0, tilt);
+    p(B(0.15, 0.1, 0.006), cardC[i++ % cardC.length], x, y, back + 0.07, 0, 0, tilt);
+  }
+  p(B(L - 0.1, 0.02, 0.05), 0xa47148, 0, 1.13, back + 0.085);
+  // shelves of gift boxes
+  const tiers = [0.1, 0.56].filter(t => t < H - 0.8);
+  p(B(L - 0.06, 0.03, D - 0.2), 0xf1f3f5, 0, tiers[1], -0.1 + 0.0);
+  p(B(L - 0.06, 0.05, 0.02), green, 0, tiers[1] + 0.01, D / 2 - 0.2);
+  for (const t of tiers) for (const x of along(L, 0.48, 0.3)) k.slot(x, t + 0.03 + k.half * 0.85, D / 2 - 0.4, [0.85, 0.85, 0.85], 0, (x * 3) % 0.3 - 0.15);
+  k.sign(1.3, 0.24, () => signCanvas('📮 明信片・禮盒', '#2b8a3e', '#fff', 768, 144), 0, 0.98, back + 0.075);
+  return { labelY: H + 0.25 };
+};
+
+/** Supermarket open multideck chiller: stepped open shelves with red price rails, a cold-lit back, air-curtain canopy. */
+const multideck: Builder = k => {
+  const { L, D, H, p, RB } = k;
+  const blue = k.ctx.theme.wainscot, red = k.ctx.theme.accent, back = -D / 2;
+  p(B(L, H, 0.12), 0xdee2e6, 0, H / 2, back + 0.06);
+  for (const x of [-L / 2 + 0.04, L / 2 - 0.04]) p(RB(0.08, H, D, 0.03), blue, x, H / 2, 0);
+  p(B(L, 0.3, D), 0xf1f3f5, 0, 0.15, 0);
+  for (let j = 0; j < 3; j++) p(B(L - 0.2, 0.02, 0.01), 0x495057, 0, 0.08 + j * 0.06, D / 2 + 0.003);
+  k.glow(B(L - 0.3, H - 0.75, 0.01), 0xe7f5ff, 0, 0.3 + (H - 0.75) / 2 + 0.05, back + 0.125);
+  // canopy with the air curtain and a header
+  p(B(L, 0.3, D - 0.15), 0xf8f9fa, 0, H - 0.15, -0.075);
+  p(B(L, 0.3, 0.04), blue, 0, H - 0.15, D / 2 - 0.17);
+  k.glow(B(L - 0.2, 0.02, 0.05), 0xd0ebff, 0, H - 0.31, D / 2 - 0.22);
+  k.sign(L * 0.4, 0.22, () => signCanvas('❄ 冰涼飲料', '#1971c2', '#fff', 768, 160), 0, H - 0.15, D / 2 - 0.148);
+  const tiers = [0.3, 0.68, 1.06, 1.44].filter(t => t < H - 0.45);
+  tiers.forEach((t, i) => {
+    const front = D / 2 - 0.08 - i * 0.07;
+    if (i > 0) p(B(L - 0.16, 0.025, front - back - 0.12), 0xced4da, 0, t, (front + back + 0.12) / 2);
+    p(B(L - 0.16, 0.05, 0.015), red, 0, t + 0.02, front);
+    for (const x of along(L, 0.75, 0.4)) p(B(0.11, 0.04, 0.006), 0xffffff, x, t + 0.02, front + 0.009);
+    for (const x of along(L, 0.3, 0.25)) k.slot(x, t + 0.02 + k.half * 0.95, front - 0.18, [0.95, 0.95, 0.95], 0, (x * 7) % 0.3);
+  });
+  return {};
+};
+
+/** Supermarket produce stand: three tilted tiers of wooden crates with green liners, a mist bar and a farm header. */
+const produceStand: Builder = k => {
+  const { L, D, H, p } = k;
+  const back = -D / 2, wood = 0xc68642;
+  p(B(L, H, 0.08), 0x2b8a3e, 0, H / 2, back + 0.04);
+  p(B(L, 0.36, D - 0.05), 0x8d6e63, 0, 0.18, -0.025);
+  for (const x of [-L / 2 + 0.03, L / 2 - 0.03]) p(B(0.06, H - 0.3, D - 0.05), 0x8d6e63, x, (H - 0.3) / 2, -0.025);
+  const tiers: [number, number][] = [[0.44, D / 2 - 0.2], [0.76, D / 2 - 0.44], [1.08, D / 2 - 0.66]];
+  const tilt = 0.3;
+  for (const [y, z] of tiers) {
+    p(B(L - 0.1, y - 0.36, 0.2), 0x6d4c41, 0, 0.36 + (y - 0.36) / 2, z - 0.05);
+    for (const x of along(L, 0.62, 0.32)) {
+      p(B(0.56, 0.12, 0.3), wood, x, y + 0.03, z, tilt);
+      p(B(0.5, 0.015, 0.26), 0x8ce99a, x, y + 0.075, z, tilt);
+      for (const dx of [-0.13, 0.13]) k.slot(x + dx, y + 0.08, z, [0.95, 0.95, 0.95], tilt, (dx * 9) % 0.5);
+    }
+  }
+  // mist bar + header
+  p(CYL(0.015, 0.015, L - 0.2, 6), 0xced4da, 0, H - 0.4, back + 0.2, 0, 0, Math.PI / 2);
+  for (const x of along(L, 0.5, 0.3)) p(CYL(0.012, 0.02, 0.03, 5), 0xadb5bd, x, H - 0.43, back + 0.2);
+  k.sign(1.6, 0.3, () => signCanvas('🥬 產地直送', '#2f9e44', '#fff', 768, 144), 0, H - 0.18, back + 0.085);
+  return { geometry: produce(), labelY: H + 0.3 };
+};
+
+/** Dressing for a generic glass-door fridge (local frame: x along the unit, +z = the doors). */
+function fridgeDress(k: Kit, map: { icon: string; sign: { bg: string } }, name: string) {
+  const { L, D, H, p, RB } = k;
+  const col = hex(map.sign.bg), steel = mat(0xced4da, k.q, { metal: 0.6, rough: 0.3 });
+  // lit header box on top, in the store's sign colour
+  p(RB(L - 0.1, 0.3, 0.16, 0.03), col, 0, H + 0.15, D / 2 - 0.09);
+  k.sign(Math.min(L * 0.6, 2.4), 0.22, () => signCanvas(`❄ 冰涼${name}`, map.sign.bg, '#fff', 768, 160), 0, H + 0.15, D / 2 - 0.008);
+  // coloured top rail and kick plate on the door frame
+  p(B(L, 0.07, 0.02), col, 0, H - 0.05, D / 2 + 0.002);
+  p(B(L, 0.1, 0.02), k.ctx.theme.accent, 0, 0.05, D / 2 + 0.002);
+  // four doors: a handle on each and promo decals on two of them
+  for (let i = 0; i < 4; i++) {
+    const cx = -L / 2 + (i + 0.5) * L / 4, hx = cx + (i % 2 ? -1 : 1) * (L / 8 - 0.12);
+    p(B(0.03, 0.55, 0.025), steel, hx, 1.05, D / 2 + 0.014);
+    if (i === 0 || i === 2) k.sign(0.34, 0.17, () => signCanvas(i === 0 ? `${map.icon} 冰` : '第二件6折', i === 0 ? '#ffffff' : '#ffe066', i === 0 ? map.sign.bg : '#e03131', 384, 192), cx, 1.55, D / 2 + 0.006);
+  }
+  return {};
+}
+
 const STYLES: Record<string, Builder> = {
+  'gas:drinks': oilRack,
+  'gas:snacks': roadGondola,
+  'gas:bento': wiperWall,
+  'bookstore:bento': stationeryWall,
+  'pharmacy:bento': maskWall,
+  'post:bento': postcardWall,
+  'supermarket:drinks': multideck,
+  'supermarket:bento': produceStand,
   'bookstore:snacks': bookcase,
   'bookstore:drinks': magazineRack,
   'petshop:drinks': kennelRack,
