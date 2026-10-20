@@ -27,18 +27,17 @@
       "steam.cjs",
       "steam.config.json",
       "web/**/*",
-      "package.json"
+      "package.json",
+      "!node_modules/steamworks.js/dist/osx/**",
+      "!node_modules/steamworks.js/dist/linux64/**",
+      "!node_modules/steamworks.js/dist/win64/*.lib"
     ],
     "asar": true,
     "win": {
       "icon": "icon.png",
-      "signAndEditExecutable": false,
+      "signAndEditExecutable": true,
       "artifactName": "FUCustomer-${version}-win-x64.${ext}",
-      "files": [
-        "!node_modules/steamworks.js/dist/osx/**",
-        "!node_modules/steamworks.js/dist/linux64/**",
-        "!node_modules/steamworks.js/dist/win64/*.lib"
-      ]
+      "signExecutable": false
     },
     "nsis": {
       "oneClick": false,
@@ -47,13 +46,6 @@
     "asarUnpack": [
       "node_modules/steamworks.js/dist/**"
     ],
-    "linux": {
-      "target": "dir",
-      "files": [
-        "!node_modules/steamworks.js/dist/osx/**",
-        "!node_modules/steamworks.js/dist/win64/**"
-      ]
-    },
     "electronLanguages": [
       "zh-TW",
       "en-US"

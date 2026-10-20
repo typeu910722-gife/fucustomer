@@ -1,6 +1,6 @@
 // Simulated player ("模擬玩家") used by automated tests and load tests. It only sees the same
 // snapshot a real client sees and sends the same messages, so it exercises the real protocol.
-import { PRODUCTS, Product, SERVER_INTERACT_RANGE, WALK_SPEED, shelfCapacity } from './constants.ts';
+import { BOX_SIZE, PRODUCTS, Product, SERVER_INTERACT_RANGE, WALK_SPEED, shelfCapacity } from './constants.ts';
 import { COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, findPath, shelfBrowseSpots } from './map.ts';
 import type { ActKind, ClientMsg, CustomerSnap, PlayerSnap, Snapshot, Target } from './protocol.ts';
 import { SIG_KARENS, SigNeed, isSig, sigWaitReason } from './sigkarens.ts';
@@ -197,23 +197,36 @@ export class Bot {
       if (k.kind === 'tryhard' && k.state === 'tryon') return cust(k, 'limitTry');
     }
     const regs = s.upgrades.register2 > 0 ? REGISTERS : [REGISTERS[0]];
+    // someone else (a person or another bot) is already standing at that till
+    const others = s.players.filter(p => p.id !== me.id && p.connected && !p.raider);
+    const manned = (r: (typeof REGISTERS)[number]) => others.some(p => Math.hypot(p.x - r.cashier.x, p.z - r.cashier.z) < 1.3);
     const tasks: Goal[] = [];
     for (const r of regs) {
       const waiting = C.find(c => c.state === 'atRegister' && Math.abs(c.x - r.customer.x) < 0.6 && Math.abs(c.z - r.customer.z) < 0.6);
-      if (waiting) tasks.push({ pos: r.cashier, kind: 'checkout', target: { t: 'register', idx: r.idx }, key: 'co' + r.idx });
+      if (waiting && (this.role === 'cashier' || !manned(r))) tasks.push({ pos: r.cashier, kind: 'checkout', target: { t: 'register', idx: r.idx }, key: 'co' + r.idx });
     }
     const waitingFood = C.find(c => c.state === 'waitFood' && c.want);
     const coffeeWaiting = !!waitingFood;
     const coffeeGoal: Goal = waitingFood ? foodGoal(waitingFood.want!) : foodGoal('coffee');
-    const lowShelf = PRODUCTS.filter(p => s.shelves[p] < shelfCapacity(s.upgrades.shelves) * 0.5 && s.backstock[p] > 0);
-    const restock: Goal[] = lowShelf.map(p => { const cr = CRATES.find(c => c.product === p)!; return { pos: { x: (cr.box.x0 + cr.box.x1) / 2, z: cr.box.z1 + 0.7 }, kind: 'takeBox' as ActKind, target: { t: 'crate', product: p } as Target, key: 'tb' + p }; });
+    // restocking covers every product line of the current map (including a fourth 'extra' line), emptiest shelf first
+    const cap = shelfCapacity(s.upgrades.shelves);
+    const restockBelow = (frac: number): Goal[] => PRODUCTS
+      .filter(p => s.shelves[p] < cap * frac && s.backstock[p] > 0)
+      .sort((a, b) => s.shelves[a] - s.shelves[b])
+      .map(p => { const cr = CRATES.find(c => c.product === p)!; return { pos: { x: (cr.box.x0 + cr.box.x1) / 2, z: cr.box.z1 + 0.7 }, kind: 'takeBox' as ActKind, target: { t: 'crate', product: p } as Target, key: 'tb' + p }; });
+    const restock = restockBelow(0.4);
+    /** Nothing urgent: top up any shelf that has room for a whole box. */
+    const topUp = restockBelow((cap - BOX_SIZE + 1) / cap);
     const item = nearest(me, s.items.filter(i => i.held.kind === 'box'));
     const clean: Goal[] = s.spills.length >= 2 && s.mopsOnRack > 0 ? [{ pos: { x: (MOP_RACK.x1) + 0.6, z: (MOP_RACK.z0 + MOP_RACK.z1) / 2 }, kind: 'takeMop', target: { t: 'mop' }, key: 'tm' }] : [];
+    const food = coffeeWaiting ? [coffeeGoal] : [];
     const order: Goal[][] =
-      this.role === 'stocker' ? [restock, tasks, coffeeWaiting ? [coffeeGoal] : [], clean]
-        : this.role === 'cleaner' ? [clean, tasks, restock, coffeeWaiting ? [coffeeGoal] : []]
-          : [tasks, coffeeWaiting ? [coffeeGoal] : [], restock, clean];
-    for (const list of order) if (list.length) return list[Math.floor(this.seed * list.length) % list.length];
+      this.role === 'stocker' ? [restock, tasks, food, topUp, clean]
+        : this.role === 'cleaner' ? [clean, tasks, restock, food]
+          : this.role === 'cashier' ? [tasks, food, restock, clean]
+            // 'any' (the employee / fill-in bot): the till when nobody else is on it, then shelves, coffee, cleaning
+            : (process.env.V === "a" ? [tasks, restockBelow(0.2), food, restock, clean, topUp] : process.env.V === "b" ? [tasks, restock, food, clean] : [tasks, restockBelow(0.2), food, restock, topUp, clean]);
+    for (const list of order) if (list.length) return list === tasks || list === clean ? list[Math.floor(this.seed * list.length) % list.length] : list[0];
     if (item) return { pos: item, kind: 'pickup', target: { t: 'item', id: item.id }, key: 'pk' + item.id };
     return null;
   }

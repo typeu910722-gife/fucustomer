@@ -69,7 +69,7 @@ app.on('window-all-closed', () => app.quit());
 app.whenReady().then(() => {
   steam.init();
   createWindow();
-  // Smoke-test hook (used by scripts/desktop-smoke.sh): report status, then quit.
+  // Smoke-test hook (used by desktop/smoke.sh): report status, then quit.
   if (process.env.FU_DESKTOP_SMOKE) {
     win.webContents.once('did-finish-load', () => setTimeout(async () => {
       const page = await win.webContents.executeJavaScript('({ title: document.title, bridge: !!window.fuDesktop, steam: window.fuDesktop && window.fuDesktop.steam, menu: !!document.querySelector("#m-career") })').catch(e => String(e));
