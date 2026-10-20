@@ -139,7 +139,8 @@ export type ServerMsg =
   | { type: 'snap'; s: Snapshot }
   | { type: 'events'; list: GameEvent[] }
   | { type: 'actResult'; rid: string; ok: boolean; reason?: string }
-  | { type: 'save'; save: StoreSave }
+  /** kind: 'night' = the nightly settlement; 'purchase' = something bought between days (older servers omit it = night). */
+  | { type: 'save'; save: StoreSave; kind?: 'night' | 'purchase' }
   | { type: 'error'; code: string; message: string }
   | { type: 'closed'; reason: string }
   | { type: 'hb'; t: number };

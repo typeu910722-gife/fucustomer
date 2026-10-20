@@ -54,6 +54,9 @@ export function openStore(p: CareerProfile, name: string, capital: number, base:
 }
 
 /** How fast the employee works (bot movement multiplier) at a given mood. */
+/** 員工休息室: staff mood gained each night per level. */
+export function loungeMood(level: number) { return 3 * Math.max(0, Math.min(2, level)); }
+
 export function staffPace(mood: number) { return mood >= 70 ? 1.1 : mood >= 40 ? 1 : mood >= 20 ? 0.7 : 0.5; }
 
 /** Business-day config for your own store (career skills and gear still apply; staff wage is charged each night). */
@@ -77,7 +80,8 @@ export function settleStoreDay(p: CareerProfile, save: StoreSave): DayOutcome {
   st.bestDay = Math.max(st.bestDay, profit);
   let quit = false;
   if (!st.staff.quit) {
-    st.staff.mood = Math.max(0, Math.min(100, st.staff.mood + WAGES[st.wage].mood));
+    // 員工休息室: a place to sit down makes every day a bit better
+    st.staff.mood = Math.max(0, Math.min(100, st.staff.mood + WAGES[st.wage].mood + loungeMood(save.upgrades?.lounge ?? 0)));
     if (st.staff.mood <= 0) { st.staff.quit = true; quit = true; }
   }
   // a bad night: the till is in the red or nobody wants to shop here any more; three in a row and it's over

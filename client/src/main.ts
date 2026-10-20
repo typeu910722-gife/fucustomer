@@ -16,6 +16,10 @@ import { CHAPTERS } from '../../shared/career.ts';
 import { needsCourt, payFine } from '../../shared/court.ts';
 import { SCENES, sceneAfter, sceneBefore } from '../../shared/story.ts';
 import { courtScreen, playScene } from './story-ui.ts';
+import { WEEKLY_ID, WEEKLY_TWISTS, applyWeekly, buildWeeklyConfig, isoWeek, weekBadge, weeklyPlan, weeklySeed, weeklyUnlocked } from '../../shared/weekly.ts';
+import { type ArcLine, type ArcPick, arcConfig, arcSpeaker, finishArc, pickArc, takePreScene } from '../../shared/regulars.ts';
+import { setShiftRegular } from './game.ts';
+import { getCosmetic } from '../../shared/shop.ts';
 import { FREEPLAY_STAFF_WAGE, ownStoreConfig, settleStoreDay, staffPace } from '../../shared/ownstore.ts';
 import { dayConfig } from '../../shared/sim.ts';
 import { MAPS, getMap } from '../../shared/maps/index.ts';
@@ -135,8 +139,10 @@ function playStore() {
     // your employee wears the store uniform you picked in the 商城 (hat + apron; the name tag is yours)
     staff: st.quit ? undefined : { name: st.name, pace: staffPace(st.mood), outfit: outfitOf({ hat: look.hat, uniform: look.uniform }) },
     outfit: outfitOf(look),
-    onSave: save => {
+    onSave: (save, kind) => {
       const prof = loadProfile();
+      // bought something between days: just keep the till / upgrades (no settlement)
+      if (kind === 'purchase') { if (prof.store) { prof.store.save = save; saveProfile(prof); } return; }
       const out = settleStoreDay(prof, save);
       saveProfile(prof);
       if (prof.store?.online) void syncStore(prof.store); // friends see today's shelves and rating
@@ -198,19 +204,30 @@ async function raidFriend(code: string) {
 
 function playShift(id: string) {
   const p = loadProfile();
-  const ok = id === ENDLESS_ID ? endlessUnlocked(p) : id === DAILY_ID ? dailyUnlocked(p) : shiftUnlocked(p, id).ok;
+  const ok = id === ENDLESS_ID ? endlessUnlocked(p) : id === DAILY_ID ? dailyUnlocked(p) : id === WEEKLY_ID ? weeklyUnlocked(p) : shiftUnlocked(p, id).ok;
   if (!ok) return career();
-  const date = localDate();
-  const cfg = id === DAILY_ID ? buildDailyConfig(p, date) : buildShiftConfig(p, id);
-  const seed = id === DAILY_ID ? dailySeed(date) : undefined; // same customers for everyone on the same day
+  const date = localDate(), week = isoWeek();
+  const cfg = id === DAILY_ID ? buildDailyConfig(p, date) : id === WEEKLY_ID ? buildWeeklyConfig(p, week) : buildShiftConfig(p, id);
+  // same customers for everyone on the same day / week
+  const seed = id === DAILY_ID ? dailySeed(date) : id === WEEKLY_ID ? weeklySeed(week) : undefined;
+  // 常客奧客: one of the regulars may come back this shift (their card is shown once per stage)
+  const arc = pickArc(p, cfg);
+  if (arc) arcConfig(cfg, arc);
+  const pre = arc ? takePreScene(p, arc) : null;
   // a story scene once, the first time a chapter starts
   const intro = sceneBefore(id);
-  if (intro && SCENES[intro] && !p.story.includes(intro)) {
-    p.story.push(intro); saveProfile(p);
-    return playScene(intro, () => runShift(id, cfg, seed));
-  }
-  runShift(id, cfg, seed);
+  const showIntro = !!intro && !!SCENES[intro] && !p.story.includes(intro);
+  if (showIntro) p.story.push(intro!);
+  if (showIntro || pre) saveProfile(p);
+  // the regular's pre-shift card is shown in the store during the prep seconds (never blocks starting the shift)
+  const preCard = pre && arc ? { title: `${arc.arc.icon} 常客奧客・${arc.arc.name}（${arc.stage + 1}/${arc.arc.stages.length}）「${arc.arc.stages[arc.stage].title}」`, lines: arcLines(arc, pre) } : undefined;
+  const go = () => runShift(id, cfg, seed, arc, preCard);
+  if (showIntro) return playScene(intro!, go);
+  go();
 }
+
+/** A 常客奧客 arc's lines with speaker names and icons. */
+function arcLines(pick: ArcPick, lines: ArcLine[]) { return lines.map(l => ({ ...arcSpeaker(pick.arc, l.who), text: l.text })); }
 
 /** Plays a story scene once, then continues. */
 function sceneOnce(sceneId: string | null, then: () => void, profile?: ReturnType<typeof loadProfile>) {
@@ -220,11 +237,24 @@ function sceneOnce(sceneId: string | null, then: () => void, profile?: ReturnTyp
   playScene(sceneId, then);
 }
 
-function runShift(id: string, cfg: ReturnType<typeof buildShiftConfig>, seed?: number) {
+function runShift(id: string, cfg: ReturnType<typeof buildShiftConfig>, seed?: number, arc?: ArcPick | null, preCard?: { title: string; lines: { icon: string; name: string; text: string }[] }) {
+  const st = arc?.arc.stages[arc.stage];
+  setShiftRegular(arc && st ? { kind: arc.arc.kind, name: arc.arc.name, icon: arc.arc.icon, bubbles: st.bubbles, handled: st.handled, pre: preCard } : null);
   startGame(() => new LocalConnection(playerName(), null, cfg, seed), (reason, result) => {
+    setShiftRegular(null);
     if (!result) { if (reason) UI.message('提示', reason, '回職涯', career); else career(); return; }
     const prof = loadProfile();
-    const reward = applyResult(prof, result);
+    const reward = result.shiftId === WEEKLY_ID ? applyWeekly(prof, result) : applyResult(prof, result);
+    const arcOut = arc ? finishArc(prof, arc, result) : null;
+    if (arc && arcOut?.advanced) {
+      // the stage's ending goes on the result screen (and the free reward when the story is over)
+      const cos = getCosmetic(arcOut.cosmetic);
+      reward.arc = {
+        title: `${arc.arc.icon} 常客奧客・${arc.arc.name}「${arc.arc.stages[arc.stage].title}」${arcOut.completed ? '・故事完結' : `（${arc.stage + 1}/${arc.arc.stages.length}）`}`,
+        lines: arcLines(arc, arcOut.post),
+        gift: arcOut.completed && cos ? `🎁 獲得「${cos.icon} ${cos.name}」（免費，在商城可以${cos.slot === 'sign' || cos.slot === 'mascot' || cos.slot === 'mat' ? '擺上' : '穿上'}）・成就「${arc.arc.reward.title}」` : undefined,
+      };
+    }
     const fresh = updateAchievements(prof, result);
     saveProfile(prof);
     reportAchievements(prof.achievements);
@@ -275,7 +305,7 @@ function freePlay() {
 function badge(): UI.CareerBadge {
   const p = loadProfile();
   const ents = entitlementsFor(p), look = effectiveLoadout(p, ents);
-  return { level: p.level, rank: rankOf(p.level), title: p.title, stars: Object.values(p.stars).reduce((a, b) => a + b, 0), achievements: p.achievements.length, storeName: p.store?.name ?? '', hat: look.hat ?? '', supporter: isSupporter(p.shop.entitlements) };
+  return { level: p.level, rank: rankOf(p.level), title: p.title, stars: Object.values(p.stars).reduce((a, b) => a + b, 0), achievements: p.achievements.length, storeName: p.store?.name ?? '', hat: look.hat ?? '', supporter: isSupporter(p.shop.entitlements), weekBadges: p.weekly.badges.map(w => weekBadge(w)) };
 }
 
 function menu(error?: string) {
@@ -291,10 +321,14 @@ function menu(error?: string) {
   if (prof.stats.shifts > 0) for (const c of CHAPTERS) for (const sh of c.shifts) if (!next && !prof.stars[sh.id] && shiftUnlocked(prof, sh.id).ok) next = { id: sh.id, title: sh.title, map: (MAPS.find(m => m.id === (sh.map ?? 'convenience')) ?? MAPS[0]).icon };
   const today = localDate();
   const plan = dailyUnlocked(prof) ? dailyPlan(prof, today) : null;
+  const week = isoWeek();
+  const wplan = weeklyUnlocked(prof) ? weeklyPlan(week) : null;
+  const weekly = wplan ? { week: week.slice(5), title: `${WEEKLY_TWISTS[wplan.twist].icon} ${WEEKLY_TWISTS[wplan.twist].name}・${(MAPS.find(m => m.id === wplan.map) ?? MAPS[0]).icon} ${(MAPS.find(m => m.id === wplan.map) ?? MAPS[0]).name}`, goals: 3, done: prof.weekly.week === week ? [0, 1, 2].filter(i => prof.weekly.done & (1 << i)).length : 0 } : null;
   const daily = plan ? { map: `${(MAPS.find(m => m.id === plan.map) ?? MAPS[0]).icon} ${(MAPS.find(m => m.id === plan.map) ?? MAPS[0]).name}`, mods: plan.mods.map(m => DAILY_MODS[m].name).join('、'), done: prof.daily.date === today && prof.daily.rewarded } : null;
   UI.mainMenu(settings, {
     playNext: next ? () => playShift(next!.id) : undefined,
     playDaily: daily ? () => playShift(DAILY_ID) : undefined,
+    playWeekly: weekly ? () => playShift(WEEKLY_ID) : undefined,
     setName: n => { settings = { ...settings, name: n }; saveSettings(settings); },
     career: () => career(),
     multiplayer: () => multiplayer(),
@@ -306,7 +340,7 @@ function menu(error?: string) {
     quit: isApp ? () => quitApp() : undefined,
     firstDay: loadProfile().stats.shifts === 0 ? () => playShift('1-1') : undefined,
     settings: () => { screenDepth = 1; return UI.settingsMenu(settings, s => { settings = s; saveSettings(s); audio.setMaster(s.master); audio.setVolume(s.volume); audio.setMusicVolume(s.music); menu(); }); },
-  }, { coopSave: loadCoopSave(), canRejoin, server: serverUrl(), platform, error, badge: b, account, next, daily });
+  }, { coopSave: loadCoopSave(), canRejoin, server: serverUrl(), platform, error, badge: b, account, next, daily, weekly });
 }
 
 /** 打工人的號角: multiplayer with a store type and difficulty. */

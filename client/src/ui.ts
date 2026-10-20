@@ -71,8 +71,10 @@ export interface MainMenuHandlers {
   /** Jump straight into the next career shift / today's daily challenge. */
   playNext?(): void;
   playDaily?(): void;
+  /** This week's 每週挑戰. */
+  playWeekly?(): void;
 }
-export interface CareerBadge { level: number; rank: string; title: string; stars: number; achievements: number; storeName: string; hat?: string; supporter?: boolean }
+export interface CareerBadge { level: number; rank: string; title: string; stars: number; achievements: number; storeName: string; hat?: string; supporter?: boolean; /** 每週挑戰 badges (newest last): icon + name. */ weekBadges?: { icon: string; name: string }[] }
 
 const AVATARS = ['🧑', '👩', '👨', '🧑‍🍳', '🧑‍💼', '🧔', '👩‍🦰', '👱', '🧑‍🎤', '🥷', '🐱', '🐶'];
 const AVATAR_KEY = 'fucustomer.avatar.v1';
@@ -80,7 +82,8 @@ export function loadAvatar() { try { const a = localStorage.getItem(AVATAR_KEY);
 function saveAvatar(a: string) { try { localStorage.setItem(AVATAR_KEY, a); } catch { /* ignore */ } }
 
 /** The 高級社畜證照 card (also used to show a friend's card). */
-export function licenseHtml(c: { name: string; avatar: string; level: number; rank: string; title?: string; no?: string | null; stars: number; achievements: number; storeName?: string; hat?: string; supporter?: boolean }, editable: boolean) {
+export function licenseHtml(c: { name: string; avatar: string; level: number; rank: string; title?: string; no?: string | null; stars: number; achievements: number; storeName?: string; hat?: string; supporter?: boolean; weekBadges?: { icon: string; name: string }[] }, editable: boolean) {
+  const wb = Array.isArray(c.weekBadges) ? c.weekBadges : [];
   const hat = getCosmetic(c.hat);
   return `<div class="license ${c.supporter ? 'supporter' : ''}">
     <div class="lic-head"><span>🪪 高級社畜證照</span><small>CERTIFIED WAGE WORKER</small></div>
@@ -91,13 +94,14 @@ export function licenseHtml(c: { name: string; avatar: string; level: number; ra
         <div class="lic-row"><span class="lic-lv">Lv.${c.level}</span><b>${esc(c.rank)}</b>${c.title ? `<span class="tag ok">${esc(c.title)}</span>` : ''}${c.supporter ? '<span class="tag gold">💛 贊助者</span>' : ''}</div>
         <div class="lic-row muted">證號 <b class="lic-no">${c.no ? esc(c.no) : '未登入・只存在這台裝置'}</b></div>
         <div class="lic-row muted">★ ${c.stars}・🏆 ${c.achievements}${c.storeName ? `・🏪 ${esc(c.storeName)}` : ''}</div>
+        ${wb.length ? `<div class="lic-row lic-badges" id="lic-badges" title="每週挑戰週章">🏅 週章 ×${wb.length} ${wb.slice(-6).map(x => `<span title="${esc(x.name)}">${esc(x.icon)}</span>`).join('')}</div>` : ''}
       </div>
       <div class="lic-stamp">認證<br>社畜</div>
     </div>
   </div>`;
 }
 
-export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: StoreSave | null; canRejoin: string | null; server: string; platform: string; error?: string; badge: CareerBadge; account: { no: string } | null; next?: { id: string; title: string; map: string } | null; daily?: { map: string; mods: string; done: boolean } | null }) {
+export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: StoreSave | null; canRejoin: string | null; server: string; platform: string; error?: string; badge: CareerBadge; account: { no: string } | null; next?: { id: string; title: string; map: string } | null; daily?: { map: string; mods: string; done: boolean } | null; weekly?: { title: string; goals: number; done: number; week: string } | null }) {
   const floaters = ['🧃', '🍙', '🥤', '🧋', '🍗', '👕', '🛒', '🧾', '🍞', '☕', '📦', '🧹'];
   const b = info.badge;
   show(`
@@ -112,7 +116,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
       <div class="ts-left">
         <div class="logo"><span class="l1">奧客</span><span class="l2">退散！</span><small>FUCUSTOMER</small></div>
         <button class="tagline" id="m-quote" title="再來一句">「${esc(randomQuote())}」</button>
-        ${licenseHtml({ name: s.name, avatar: loadAvatar(), level: b.level, rank: b.rank, title: b.title, no: info.account?.no ?? null, stars: b.stars, achievements: b.achievements, storeName: b.storeName, hat: b.hat, supporter: b.supporter }, true)}
+        ${licenseHtml({ name: s.name, avatar: loadAvatar(), level: b.level, rank: b.rank, title: b.title, no: info.account?.no ?? null, stars: b.stars, achievements: b.achievements, storeName: b.storeName, hat: b.hat, supporter: b.supporter, weekBadges: b.weekBadges }, true)}
         <div class="lic-actions">
           ${info.account ? '<button class="btn small" id="m-signout">登出</button>' : '<div id="m-google" class="gbtn"></div>'}
           <button class="btn small" id="m-friend">🔍 查好友證照</button>
@@ -125,7 +129,10 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
         ${info.next ? `<button class="btn good continue" id="m-next"><span class="cont-tag">繼續上班</span>▶ ${esc(info.next.id)}・${esc(info.next.title)} <span class="cont-map">${esc(info.next.map)}</span></button>` : ''}
         <button class="btn primary hero" id="m-career">🧑‍💼 開工<span class="sub">主線：從工讀生一路升到開自己的店</span></button>
         <button class="btn warn hero" id="m-mp">📯 打工人的號角<span class="sub">多人遊玩・選地圖、選難度</span></button>
-        ${info.daily ? `<button class="daily-mini" id="m-daily"><span class="dm-icon">📅</span><span class="dm-text"><b>今日挑戰</b><small>${esc(info.daily.map)}・${esc(info.daily.mods)}</small></span><span class="tag ${info.daily.done ? 'ok' : ''}">${info.daily.done ? '✅ 已領' : '🎁 未領'}</span></button>` : ''}
+        ${info.daily || info.weekly ? `<div class="chal-row">
+          ${info.daily ? `<button class="daily-mini" id="m-daily"><span class="dm-icon">📅</span><span class="dm-text"><b>今日挑戰</b><small>${esc(info.daily.map)}・${esc(info.daily.mods)}</small></span><span class="tag ${info.daily.done ? 'ok' : ''}">${info.daily.done ? '✅ 已領' : '🎁 未領'}</span></button>` : ''}
+          ${info.weekly ? `<button class="daily-mini weekly-mini" id="m-weekly"><span class="dm-icon">🗓</span><span class="dm-text"><b>每週挑戰・${esc(info.weekly.week)}</b><small>${esc(info.weekly.title)}</small></span><span class="tag ${info.weekly.done >= info.weekly.goals ? 'ok' : ''}">${info.weekly.done >= info.weekly.goals ? '🏅 週章到手' : `🎯 ${info.weekly.done}/${info.weekly.goals}`}</span></button>` : ''}
+        </div>` : ''}
         <div class="notice"><span class="pin">📋 店內公告</span><div class="notice-text" id="m-notice">${esc(NOTICES[Math.floor(Math.random() * NOTICES.length)])}</div></div>
         <div class="err" id="m-err">${esc(info.error ?? '')}</div>
         <div class="ts-foot">
@@ -142,6 +149,7 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
   on('m-career', 'click', () => { name(); h.career(); });
   on('m-next', 'click', () => { name(); h.playNext?.(); });
   on('m-daily', 'click', () => { name(); h.playDaily?.(); });
+  on('m-weekly', 'click', () => { name(); h.playWeekly?.(); });
   // the notice board rotates while the menu is open
   const nt = document.getElementById('m-notice');
   if (nt) { let i = NOTICES.indexOf(nt.textContent ?? ''); const timer = window.setInterval(() => { if (!nt.isConnected) { clearInterval(timer); return; } i = (i + 1) % NOTICES.length; nt.classList.remove('flip'); void nt.offsetWidth; nt.textContent = NOTICES[i]; nt.classList.add('flip'); }, 5000); }
@@ -407,10 +415,12 @@ export function shopHtml(s: Snapshot, allowUpgrades: boolean) {
     <div class="grid2">${PRODUCTS.map(p => `<div class="shopitem"><b>${PRODUCT_INFO[p].name}</b>
       <span class="muted">售價 $${PRODUCT_INFO[p].price}/個・倉庫 ${s.backstock[p]}・貨架 ${s.shelves[p]}/${cap}</span>
       <button class="btn small" data-buy="stock_${p}" ${s.money < PRODUCT_INFO[p].boxCost ? 'disabled' : ''}>買一箱 $${PRODUCT_INFO[p].boxCost}</button></div>`).join('')}</div>
-    <h3>🔧 設備升級 ${allowUpgrades ? '' : '<span class="muted">（營業中無法施工，開店前或日結時可升級）</span>'}</h3>
-    <div class="grid2">${UPGRADE_IDS.map(u => {
-      const d = UPGRADES[u]; const lv = s.upgrades[u]; const max = lv >= d.costs.length; const cost = d.costs[lv];
-      return `<div class="shopitem"><b>${d.name} <span class="tag">Lv ${lv}/${d.costs.length}</span></b><span class="muted">${d.desc}</span><br>
+    <h3>🏗 店面升級（用店裡的錢）${allowUpgrades ? '<span class="muted">・開店前或日結時施工，升級跟著這間店的存檔</span>' : '<span class="muted">（營業中無法施工，開店前或日結時可升級）</span>'}</h3>
+    <div class="grid2 upgpanel" id="upg-panel">${UPGRADE_IDS.map(u => {
+      const d = UPGRADES[u]; const lv = s.upgrades[u] ?? 0; const max = lv >= d.costs.length; const cost = d.costs[lv];
+      const now = lv > 0 && d.levels ? `<span class="upg-now">✅ 目前：${esc(d.levels[lv - 1])}</span>` : '';
+      const next = !max && d.levels ? `<span class="upg-next">⬆ 下一級：${esc(d.levels[lv])}</span>` : '';
+      return `<div class="shopitem upg ${lv > 0 ? 'owned' : ''}" data-upg-card="${u}"><b>${d.icon} ${esc(d.name)} <span class="tag">Lv ${lv}/${d.costs.length}</span></b><span class="muted">${esc(d.desc)}</span>${now}${next}
         <button class="btn small" data-upg="${u}" data-lv="${lv}" ${max || !allowUpgrades || s.money < cost ? 'disabled' : ''}>${max ? '已滿級' : `升級 $${cost}`}</button></div>`;
     }).join('')}</div>`;
 }

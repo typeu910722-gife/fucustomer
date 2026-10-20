@@ -6,6 +6,7 @@ import type { StoreSave } from './protocol.ts';
 import { MAPS } from './maps/index.ts';
 import { ShopState, newShop, sanitizeShop } from './shop.ts';
 import { addHandled, sanitizeDex } from './karendex.ts';
+import { ARCS, type ArcState } from './regulars.ts';
 
 export type Ability = 'hit' | 'grab' | 'spin' | 'ultimate';
 
@@ -47,6 +48,10 @@ export interface ShiftConfig {
   map?: string;
   /** Raiding a friend's store: you play the troublemaker for a short timed round. */
   raid?: { store: string; owner?: string };
+  /** Multiplier on how often customers spill things (weekly 颱風天 > 1). Omitted = 1. */
+  spillMul?: number;
+  /** Set for the weekly challenge (shared/weekly.ts). */
+  weekly?: { week: string; twist: string };
 }
 
 // ---------------- ranks & levels ----------------
@@ -112,6 +117,10 @@ export interface CareerProfile {
   dex: Record<string, number>;
   /** 商城: cosmetics bought with 薪資點數, what is equipped, and paid packs (shared/shop.ts). */
   shop: ShopState;
+  /** 每週挑戰 (weekly.ts): this week's paid goals and every badge earned. Old saves: empty. */
+  weekly: WeeklyState;
+  /** 常客奧客 story arcs (regulars.ts): progress per arc id. Old saves: none started. */
+  arcs: Record<string, ArcState>;
 }
 export function newProfile(): CareerProfile {
   return {
@@ -120,7 +129,7 @@ export function newProfile(): CareerProfile {
     stars: {}, clears: {}, stats: { shifts: 0, wins: 0, served: 0, ejected: 0, karens: 0, revenue: 0 }, endlessBest: 0, title: '',
     achievements: [], daily: { date: '', best: 0, rewarded: false, streak: 0, lastWin: '', wins: 0 },
     court: { trials: 0, fines: 0, acquittals: 0 }, story: [],
-    store: null, storeHistory: { opened: 0, closed: 0, lost: 0, lastReason: '' }, shop: newShop(), dex: {},
+    store: null, storeHistory: { opened: 0, closed: 0, lost: 0, lastReason: '' }, shop: newShop(), dex: {}, weekly: newWeekly(), arcs: {},
   };
 }
 export function sanitizeProfile(v: unknown): CareerProfile {
@@ -150,6 +159,8 @@ export function sanitizeProfile(v: unknown): CareerProfile {
   p.store = sanitizeStore(o.store, int);
   p.dex = sanitizeDex(o.dex); // saves from before the 圖鑑 existed start empty
   p.shop = sanitizeShop(o.shop); // saves from before the shop existed get an empty shop
+  p.weekly = sanitizeWeekly(o.weekly); // saves from before the weekly challenge: nothing played yet
+  p.arcs = sanitizeArcs(o.arcs); // saves from before the 常客奧客 arcs: none started
   if (Array.isArray(o.achievements)) p.achievements = [...new Set(o.achievements.filter((a): a is string => typeof a === 'string' && /^[A-Z0-9_]{1,24}$/.test(a)))].slice(0, 64);
   const d = o.daily, isDate = (x: unknown): x is string => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x);
   if (d && typeof d === 'object') {
@@ -466,6 +477,8 @@ export interface ShiftResult {
   incidents?: Incident[];
   /** Daily challenge date (YYYY-MM-DD). */
   date?: string;
+  /** Weekly challenge ISO week (YYYY-Www). */
+  week?: string;
   /** Karens handled this shift, by kind (for the 奧客圖鑑). */
   handled?: Record<string, number>;
 }
@@ -491,6 +504,10 @@ export interface Reward {
   pay?: Pay;
   /** Set after an interrogation: what was paid (fine + lawyer) and the final verdict. */
   court?: { fine: number; text: string };
+  /** Weekly challenge: which goals this run met, which were paid for the first time, whether the badge was earned. */
+  weekly?: { week: string; met: boolean[]; newly: number[]; badge: boolean };
+  /** 常客奧客 (filled in by the client): the stage's ending lines, and the arc's free reward when it was the last stage. */
+  arc?: { title: string; lines: { icon: string; name: string; text: string }[]; gift?: string };
 }
 export interface Pay { wage: number; bonus: number; cut: number; cutReason: string; tips: number; extra: number }
 
@@ -589,4 +606,37 @@ function sanitizeStore(v: unknown, int: (x: unknown, lo: number, hi: number, d: 
     online: o.online && typeof o.online === 'object' && typeof o.online.code === 'string' && /^[A-Z0-9]{6}$/.test(o.online.code) && typeof o.online.token === 'string' && o.online.token.length <= 64
       ? { code: o.online.code, token: o.online.token, locked: o.online.locked === true } : undefined,
   };
+}
+
+// ---------------- weekly challenge & 常客奧客 arcs: profile state ----------------
+export const WEEK_RE = /^\d{4}-W\d{2}$/;
+/** Profile state: this week's goals already paid (bitmask), best revenue, play count, and every week's badge earned. */
+export interface WeeklyState { week: string; done: number; best: number; plays: number; badges: string[] }
+export function newWeekly(): WeeklyState { return { week: '', done: 0, best: 0, plays: 0, badges: [] }; }
+export function sanitizeWeekly(v: unknown): WeeklyState {
+  const w = newWeekly();
+  if (!v || typeof v !== 'object') return w;
+  const o = v as Partial<WeeklyState>;
+  const int = (x: unknown, lo: number, hi: number) => (typeof x === 'number' && Number.isFinite(x) ? Math.max(lo, Math.min(hi, Math.floor(x))) : lo);
+  w.week = typeof o.week === 'string' && WEEK_RE.test(o.week) ? o.week : '';
+  w.done = w.week ? int(o.done, 0, 7) : 0;
+  w.best = w.week ? int(o.best, 0, 1e7) : 0;
+  w.plays = int(o.plays, 0, 1e6);
+  if (Array.isArray(o.badges)) w.badges = [...new Set(o.badges.filter((b): b is string => typeof b === 'string' && WEEK_RE.test(b)))].sort().slice(-520);
+  return w;
+}
+
+
+/** Arc progress: stages cleared, pre-shift scenes already shown, and the shift count when the last stage was cleared. */
+export function sanitizeArcs(v: unknown): Record<string, ArcState> {
+  const out: Record<string, ArcState> = {};
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return out;
+  const int = (x: unknown, lo: number, hi: number) => (typeof x === 'number' && Number.isFinite(x) ? Math.max(lo, Math.min(hi, Math.floor(x))) : lo);
+  for (const a of ARCS) {
+    const o = (v as Record<string, unknown>)[a.id] as Partial<ArcState> | undefined;
+    if (!o || typeof o !== 'object') continue;
+    const stage = int(o.stage, 0, a.stages.length);
+    out[a.id] = { stage, seen: Math.max(stage, int(o.seen, 0, Math.min(a.stages.length, stage + 1))), at: int(o.at, 0, 1e9) };
+  }
+  return out;
 }

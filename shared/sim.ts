@@ -4,7 +4,7 @@ import type { Outfit } from './shop.ts';
 import {
   BOSS_PHASES, BOX_SIZE, BURST_MAX, CHAOS_MAX, CLOSE_MINUTE, CLOSING_MAX_SECONDS, FOOD_INFO, DAILY_RENT, DAY_OPEN_SECONDS, KAREN_INFO,
   KarenKind, OPEN_MINUTE, PREP_SECONDS, PRODUCTS, ALL_PRODUCTS, type StockIn, PRODUCT_INFO, Product, RUN_SPEED, SERVER_INTERACT_RANGE,
-  UPGRADES, UPGRADE_IDS, UpgradeId, brewTime, checkoutTime, heatTime, shelfCapacity,
+  UPGRADES, UPGRADE_IDS, UpgradeId, brewTime, checkoutTime, heatTime, shelfCapacity, matSkip, selfcheckEvery, doorbellBoost, cameraCalm,
 } from './constants.ts';
 import {
   CHARGE_SPOT, COFFEE_MACHINE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DECOR, DOOR_X0, DOOR_X1, ENTRANCE, MICROWAVE, MOP_RACK,
@@ -86,9 +86,13 @@ export interface World {
   items: { id: number; x: number; z: number; held: Held }[];
   pings: { id: number; x: number; z: number; by: string; until: number }[];
   nextId: number; rng: () => number; spawnTimer: number; karenTimer: number; mopbotTimer: number;
+  /** 自助結帳機: seconds until the kiosk serves the next small basket. */
+  selfTimer: number;
   dayStats: DayStats; bonusPaidDay: number; totals: StoreSave['totals'];
   events: GameEvent[]; results: { playerId: string; rid: string; ok: boolean; reason?: string }[];
   emptyShelfToastAt: number; saveOut: StoreSave | null; difficultyPlayers: number;
+  /** What `saveOut` is: the nightly settlement, or a purchase made between days (no settlement). */
+  saveKind?: 'night' | 'purchase';
   chaos: number; chaosTimer: number; burst: number; combo: number; comboUntil: number;
   power: number; event: { kind: 'rush' | 'outage'; left: number; pulse: number } | null; nextEvent: number;
   guardTimer: number; hintQueue: { at: number; text: string }[]; result: ShiftResult | null;
@@ -160,7 +164,7 @@ export function createWorld(save: StoreSave = defaultSave(), seed = Date.now(), 
     money: shift ? cfg.start.money : s.money, rating: shift ? cfg.start.rating : s.rating,
     backstock: shift ? fullStock(cfg.start.backstock) : { ...s.backstock }, shelves: shift ? fullStock(cfg.start.shelves) : { ...s.shelves },
     upgrades, mopsOnRack: 2, players: new Map(), customers: [], queue: [], registers: [null, null], spills: [], items: [], pings: [],
-    nextId: 1, rng: mulberry32(seed), spawnTimer: 3, karenTimer: cfg.firstKaren, mopbotTimer: 20,
+    nextId: 1, rng: mulberry32(seed), spawnTimer: 3, karenTimer: cfg.firstKaren, mopbotTimer: 20, selfTimer: 8,
     dayStats: emptyStats(shift ? cfg.start.rating : s.rating), bonusPaidDay: 0, totals: { ...s.totals }, events: [], results: [],
     emptyShelfToastAt: -99, saveOut: null, difficultyPlayers: 1,
     incidents: [], raid: cfg.raid ? { score: 0, watched: 0, caught: false, knocked: 0, litter: 0, heckled: 0 } : null, chaos: 0, chaosTimer: 0, burst: 0, combo: 0, comboUntil: 0, power: 1, event: null, nextEvent: cfg.firstEvent,
@@ -257,6 +261,8 @@ function activePlayers(w: World) {
   return Math.max(1, n + Math.floor(bots / 2));
 }
 function cap(w: World) { return shelfCapacity(w.upgrades.shelves); }
+/** Career / gear mods plus what the store's upgrades add (監視器 Lv2: calming is faster). */
+function effMods(w: World) { const k = cameraCalm(w.upgrades.camera ?? 0); return k === 1 ? w.cfg.mods : { ...w.cfg.mods, calm: w.cfg.mods.calm * k }; }
 function customer(w: World, id: number) { return w.customers.find(c => c.id === id); }
 function pick<T>(w: World, arr: T[]): T { return arr[Math.floor(w.rng() * arr.length)]; }
 const isFood = (h: Held | null) => !!h && (h.kind === 'coffee' || h.kind === 'meal');
@@ -284,6 +290,8 @@ function moveAlong(c: Customer, dt: number): boolean {
 
 function addSpill(w: World, x: number, z: number) {
   if (w.spills.length >= 14) return;
+  // 防滑地墊: some spills never happen
+  if ((w.upgrades.mat ?? 0) > 0 && w.rng() < matSkip(w.upgrades.mat)) return;
   const pos = resolveCollision(x + (w.rng() - 0.5) * 0.8, z + (w.rng() - 0.5) * 0.8, 0.35);
   const c = clampToStore(pos.x, pos.z, 0.4);
   if (w.spills.some(s => Math.hypot(s.x - c.x, s.z - c.z) < 0.6)) return;
@@ -329,6 +337,11 @@ function spawnCustomer(w: World, kind: CustomerKind) {
     for (let i = 0; i < count; i++) c.shopping.push(extra && w.rng() < 0.25 ? 'extra' : w.rng() < 0.4 ? 'drinks' : w.rng() < 0.6 ? 'snacks' : 'bento');
     if (w.cfg.foods.length && w.rng() < w.cfg.foodChance) c.want = pick(w, w.cfg.foods);
     c.patienceMax = (55 + w.rating * 6) * m.patience;
+    // 自動門鈴: greeted at the door, ordinary customers start happier and wait longer
+    const bell = doorbellBoost(w.upgrades.doorbell ?? 0);
+    c.patienceMax *= bell.patience; c.mood = Math.min(100, c.mood + bell.mood);
+    // rainy days (weekly 颱風天): wet shoes leave puddles at the door
+    if ((w.cfg.spillMul ?? 1) > 1 && w.rng() < 0.3 * ((w.cfg.spillMul ?? 1) - 1)) addSpill(w, ENTRANCE.x, ENTRANCE.z - 1);
   } else if (kind === 'cutter') {
     c.shopping.push(pick(w, PRODUCTS));
     c.patienceMax = 200; c.speed = 2.1;
@@ -584,7 +597,7 @@ function updateCustomer(w: World, c: Customer, dt: number) {
           c.mood -= 30; adjRating(w, -0.02); adjChaos(w, 1);
           if (w.time - w.emptyShelfToastAt > 8) { toast(w, `📦 ${PRODUCT_INFO[p].name}貨架空了！快去倉庫補貨`, 'bad'); w.emptyShelfToastAt = w.time; }
         }
-        if (w.rng() < 0.025 + 0.01 * n) addSpill(w, c.x, c.z);
+        if (w.rng() < (0.025 + 0.01 * n) * (w.cfg.spillMul ?? 1)) addSpill(w, c.x, c.z);
         nextStep(w, c);
       }
       break;
@@ -946,7 +959,7 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
   if (!!p.raider !== (kind === 'knock' || kind === 'heckle')) return { ok: false, reason: p.raider ? '你是來搗亂的，不是來上班的' : '店員不能搗亂' };
   if (targetDist(w, p, t) > SERVER_INTERACT_RANGE) return { ok: false, reason: '距離太遠' };
   if (p.grabbing != null && kind !== 'grab') return { ok: false, reason: '先把抓著的人丟出去或放下' };
-  const m = w.cfg.mods;
+  const m = effMods(w);
   const c = t.t === 'customer' ? customer(w, t.id) : undefined;
   const busyCust = c && (c.state === 'held' || c.state === 'flying' || c.gone);
   if (busyCust && kind !== 'grab') return { ok: false, reason: '對方正在飛…' };
@@ -1090,7 +1103,7 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
 
 function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
   const n = activePlayers(w);
-  const m = w.cfg.mods;
+  const m = effMods(w);
   const c = t.t === 'customer' ? customer(w, t.id) : undefined;
   switch (kind) {
     case 'checkout': {
@@ -1445,6 +1458,14 @@ export function requestUltimate(w: World, playerId: string, rid: string) {
 }
 
 /** Purchases. Upgrades carry the level the buyer saw, so a resent/duplicate request can't buy twice. */
+/** A purchase between days (prep / summary of a business day) is saved right away, so quitting never loses it. */
+function saveBetweenDays(w: World) {
+  if (w.cfg.mode !== 'day' || (w.phase !== 'prep' && w.phase !== 'summary')) return;
+  const night = w.saveOut !== null && w.saveKind === 'night'; // tonight's settlement not sent yet: keep it a settlement
+  w.saveOut = { ...toSave(w), day: w.phase === 'summary' ? w.day + 1 : w.day };
+  w.saveKind = night ? 'night' : 'purchase';
+}
+
 export function requestBuy(w: World, playerId: string, rid: string, item: string, level?: number) {
   const p = w.players.get(playerId);
   if (!p) return;
@@ -1458,6 +1479,7 @@ export function requestBuy(w: World, playerId: string, rid: string, item: string
     if (w.money < cost) return done(false, '錢不夠');
     w.money -= cost; w.backstock[prod] += BOX_SIZE; w.dayStats.expenses += cost;
     ev(w, { e: 'sfx', name: 'buy' });
+    saveBetweenDays(w);
     return done(true);
   }
   if (item.startsWith('upg_')) {
@@ -1474,6 +1496,7 @@ export function requestBuy(w: World, playerId: string, rid: string, item: string
     w.money -= cost; w.upgrades[id] = cur + 1;
     toast(w, `🔧 ${p.name} 購買升級：${def.name} Lv${cur + 1}`, 'good');
     ev(w, { e: 'sfx', name: 'upgrade' });
+    saveBetweenDays(w);
     return done(true);
   }
   done(false, '未知項目');
@@ -1527,7 +1550,7 @@ function settleDay(w: World) {
     if (staff) w.dayStats.wage = staff;
     w.money += bonus - DAILY_RENT - staff;
   }
-  w.saveOut = { ...toSave(w), day: w.day + 1 };
+  w.saveOut = { ...toSave(w), day: w.day + 1 }; w.saveKind = 'night';
 }
 
 export function finishShift(w: World, failReason: string) {
@@ -1543,7 +1566,7 @@ export function finishShift(w: World, failReason: string) {
     served: d.served, angryLeft: d.angryLeft, karensResolved: d.karensResolved, karensFailed: d.karensFailed,
     ejected: d.ejected, cleaned: d.spillsCleaned, maxCombo: d.maxCombo,
     score: w.cfg.endless ? score : w.raid ? w.raid.score : undefined, survived, bossDefeated: w.cfg.boss ? w.bossDefeated : undefined,
-    date: w.cfg.daily?.date, tips: d.tips, incidents: w.incidents.length ? [...w.incidents] : undefined,
+    date: w.cfg.daily?.date, week: w.cfg.weekly?.week, tips: d.tips, incidents: w.incidents.length ? [...w.incidents] : undefined,
     handled: Object.keys(w.handled).length ? { ...w.handled } : undefined,
   };
   if (w.cfg.endless) w.result.failReason = failReason ? `${failReason}・撐了 ${survived} 秒` : `主動下班・撐了 ${survived} 秒`;
@@ -1683,6 +1706,7 @@ export function tick(w: World, dt: number) {
       w.chaosTimer = 0; adjChaos(w, w.spills.length * 0.8);
       if (w.customers.some(c => c.kind === 'boss' && !c.resolved)) adjChaos(w, 2);
     }
+    if ((w.upgrades.selfcheck ?? 0) > 0) selfCheckout(w, dt);
     if (w.upgrades.mopbot > 0 && w.spills.length) {
       w.mopbotTimer -= dt;
       if (w.mopbotTimer <= 0) { w.mopbotTimer = 20; const s = w.spills.shift()!; ev(w, { e: 'sfx', name: 'clean', x: s.x, z: s.z }); }
@@ -1703,6 +1727,21 @@ export function tick(w: World, dt: number) {
     for (const c of [...w.customers]) if (!c.gone) updateCustomer(w, c, dt);
     w.customers = w.customers.filter(c => !c.gone);
   }
+}
+
+/** 自助結帳機: every few seconds one ordinary customer in line with a small basket pays at the kiosk (no tip). */
+function selfCheckout(w: World, dt: number) {
+  w.selfTimer -= dt;
+  if (w.selfTimer > 0) return;
+  const c = w.queue.map(id => customer(w, id)).find(c => !!c && c.kind === 'normal' && c.state === 'queue' && c.items.length > 0 && c.items.length <= 2 && (!c.want || c.foodDone || c.foodFailed));
+  if (!c) { w.selfTimer = 2; return; }
+  w.selfTimer = selfcheckEvery(w.upgrades.selfcheck);
+  const total = c.items.reduce((s, it) => s + PRODUCT_INFO[it].price, 0) + (c.foodDone ? (c.want === 'meal' ? FOOD_INFO.meal.price : FOOD_INFO.coffee.price) : 0);
+  w.money += total; w.dayStats.revenue += total; w.dayStats.served++; w.totals.revenue += total; w.totals.served++;
+  adjRating(w, 0.01);
+  ev(w, { e: 'money', amount: total, x: c.x, z: c.z });
+  ev(w, { e: 'sfx', name: 'cash', x: c.x, z: c.z });
+  leave(w, c, false);
 }
 
 export function snapshot(w: World, now: number): Snapshot {

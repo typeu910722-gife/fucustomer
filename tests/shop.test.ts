@@ -16,7 +16,7 @@ test('catalog: unique ids, priced in points XOR premium, packs reference real it
   const ids = COSMETICS.map(c => c.id);
   assert.equal(new Set(ids).size, ids.length);
   for (const c of COSMETICS) {
-    assert.ok((c.price !== undefined) !== (c.pack !== undefined), `${c.id}: price xor pack`);
+    assert.equal([c.price !== undefined, c.pack !== undefined, c.reward !== undefined].filter(Boolean).length, 1, `${c.id}: exactly one of price / pack / story reward`);
     if (c.price !== undefined) assert.ok(c.price > 0 && Number.isInteger(c.price));
     if (c.pack) assert.ok(PACKS.some(k => k.id === c.pack && k.items.includes(c.id)), `${c.id} listed in its pack`);
     assert.ok(c.name && c.icon && c.desc);

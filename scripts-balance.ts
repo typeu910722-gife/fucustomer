@@ -51,3 +51,19 @@ if (!only || only === 'daily') {
     console.log(`daily ${date} ${plan.map.padEnd(11)} ch${plan.difficulty} ${plan.mods.join('+').padEnd(18)} goal ${String(cfg.goal).padStart(4)} avg ${avg.toFixed(0).padStart(4)} (${(avg / cfg.goal).toFixed(2)}x) win ${rs.filter(r => r.won).length}/${rs.length}`);
   }
 }
+if (!only || only === 'weekly') {
+  // weekly challenge: one week of each twist, for a mid-game player (Lv18, ch1-3) and a late one (Lv28, ch1-6)
+  const { TWIST_IDS, buildWeeklyConfig, weeklyPlan, weeklyGoalsMet } = await import('./shared/weekly.ts');
+  const mid = profileFor(4, 18); for (const c of CHAPTERS.slice(0, 3)) for (const sh of c.shifts) mid.stars[sh.id] = 2;
+  const late = profileFor(7, 28); for (const c of CHAPTERS.slice(0, 6)) for (const sh of c.shifts) late.stars[sh.id] = 2;
+  for (const t of TWIST_IDS) {
+    let week = ''; for (let w = 1; w <= 53 && !week; w++) { const k = `2026-W${String(w).padStart(2, '0')}`; if (weeklyPlan(k).twist === t) week = k; }
+    for (const [name, prof] of [['mid', mid], ['late', late]] as const) {
+      const cfg = buildWeeklyConfig(prof, week);
+      const rs = Array.from({ length: SEEDS }, (_, i) => play(cfg, prof, i + 1, cfg.length + 60));
+      const avg = rs.reduce((a, r) => a + r.revenue, 0) / rs.length;
+      const goals = rs.map(r => weeklyGoalsMet(week, { ...r, week }).map(b => (b ? '✓' : '·')).join('')).join(' ');
+      console.log(`weekly ${week} ${t.padEnd(11)} ${name.padEnd(4)} ${weeklyPlan(week).map.padEnd(11)} goal ${String(cfg.goal).padStart(4)} avg ${avg.toFixed(0).padStart(4)} (${(avg / cfg.goal).toFixed(2)}x) win ${rs.filter(r => r.won).length}/${rs.length} goals ${goals}`);
+    }
+  }
+}

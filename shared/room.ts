@@ -418,7 +418,7 @@ export class Room {
     if (this.world.events.length) { this.broadcastEvents(this.world.events); this.world.events = []; }
     if (this.world.saveOut) {
       this.save = this.world.saveOut; this.world.saveOut = null;
-      this.broadcast({ type: 'save', save: this.save });
+      this.broadcast({ type: 'save', save: this.save, kind: this.world.saveKind ?? 'night' });
       this.opts.onCheckpoint?.(this.checkpoint());
     }
     this.tickCount++;

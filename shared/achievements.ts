@@ -3,6 +3,7 @@
 import { CHAPTERS, ENDLESS_ID, type CareerProfile, type ShiftResult } from './career.ts';
 import { dexCount } from './karendex.ts';
 import { SIG_KINDS } from './sigkarens.ts';
+import { arcDone } from './regulars.ts';
 
 export interface Achievement { id: string; name: string; desc: string; check: (p: CareerProfile, r?: ShiftResult) => boolean }
 
@@ -34,6 +35,14 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'ENDLESS_PLAYED', name: '還沒下班', desc: '挑戰一次無限夜班', check: (p, r) => p.endlessBest > 0 || r?.shiftId === ENDLESS_ID },
   { id: 'DAILY_FIRST', name: '今日任務', desc: '完成一次每日挑戰', check: p => p.daily.wins >= 1 },
   { id: 'DAILY_STREAK_3', name: '全勤獎', desc: '連續 3 天完成每日挑戰', check: p => p.daily.streak >= 3 },
+  // 常客奧客 story arcs (regulars.ts)
+  { id: 'ARC_AUNTIE', name: '集點卡滿了', desc: '完成「集點王阿姨」的故事', check: p => arcDone(p, 'auntie') },
+  { id: 'ARC_KAI', name: '轉型成功', desc: '完成「直播主阿凱」的故事', check: p => arcDone(p, 'kai') },
+  { id: 'ARC_ZHANG', name: '品管合格', desc: '完成「退貨張伯」的故事', check: p => arcDone(p, 'zhang') },
+  { id: 'ARC_VICKY', name: '找到插座', desc: '完成「插座姐 Vicky」的故事', check: p => arcDone(p, 'vicky') },
+  // 每週挑戰 (weekly.ts)
+  { id: 'WEEKLY_BADGE', name: '本週全制霸', desc: '一週內完成每週挑戰的 3 個目標，拿到週章', check: p => p.weekly.badges.length >= 1 },
+  { id: 'WEEKLY_BADGE_4', name: '月月不缺席', desc: '收集 4 枚每週挑戰週章', check: p => p.weekly.badges.length >= 4 },
 ];
 
 /** Records newly earned achievements in the profile and returns them (in list order). */

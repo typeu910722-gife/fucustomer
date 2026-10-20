@@ -125,7 +125,19 @@ export function buildShopDecor(scene: THREE.Object3D, q: Quality) {
     put(g, RB(1.2, 0.56, 0.05, 0.03), mat(0x212529, q), 0, 0, 0);
     const neon = basic(sign.color), n2 = basic(sign.color2 ?? 0xffffff);
     for (const [x, y, w, h] of [[0, 0.22, 1.08, 0.03], [0, -0.22, 1.08, 0.03], [-0.53, 0, 0.03, 0.44], [0.53, 0, 0.03, 0.44]]) put(g, B(w, h, 0.02), neon, x, y, 0.035);
-    if (sign.id === 'sign_coffee') {
+    if (sign.id === 'sign_live') {
+      // red recording dot + LIVE
+      put(g, CYL(0.07, 0.07, 0.02, 14), neon, -0.34, 0, 0.05, Math.PI / 2);
+      const tex = textTexture(() => {
+        const c = document.createElement('canvas'); c.width = 256; c.height = 96;
+        const x = c.getContext('2d')!;
+        x.font = font(64); x.textAlign = 'center'; x.textBaseline = 'middle';
+        x.shadowColor = '#ff4d6d'; x.shadowBlur = 16; x.fillStyle = '#ff4d6d'; x.fillText('LIVE', 128, 50);
+        x.shadowBlur = 0; x.fillStyle = '#ffffff'; x.fillText('LIVE', 128, 50);
+        return c;
+      });
+      put(g, new THREE.PlaneGeometry(0.75, 0.28), new THREE.MeshBasicMaterial({ map: tex, transparent: true }), 0.12, 0, 0.04);
+    } else if (sign.id === 'sign_coffee') {
       put(g, CYL(0.11, 0.09, 0.2, 10, true), neon, -0.05, -0.02, 0.06);
       put(g, TOR(0.06, 0.015, 4, 10), neon, 0.08, -0.01, 0.06);
       for (const x of [-0.09, -0.01]) put(g, CAP(0.012, 0.06, 4), n2, x, 0.14, 0.06);
@@ -165,6 +177,12 @@ export function buildMascot(q: Quality, id: string, c1: number, c2: number): THR
     put(g, SPH(0.1, 10, 8), m1, 0, 0.3, 0.06);
     put(g, RB(0.09, 0.03, 0.08, 0.012), m2, 0, 0.29, 0.16);
     for (const s of [-1, 1]) put(g, SPH(0.014, 5, 4), ink, s * 0.045, 0.33, 0.14);
+  } else if (id === 'mascot_plug') {
+    // a little two-pin plug with a face, sitting on its coiled cable
+    put(g, TOR(0.1, 0.025, 5, 14), m2, 0, 0.03, 0, Math.PI / 2);
+    put(g, RB(0.2, 0.2, 0.14, 0.04), m1, 0, 0.15, 0);
+    for (const s of [-1, 1]) { put(g, B(0.025, 0.09, 0.025), mat(0xced4da, q), s * 0.05, 0.29, 0); put(g, SPH(0.016, 5, 4), ink, s * 0.045, 0.17, 0.072); }
+    put(g, TOR(0.025, 0.008, 4, 8, Math.PI), ink, 0, 0.125, 0.072, 0, 0, Math.PI);
   } else {
     put(g, CYL(0.1, 0.08, 0.12, 10), m2, 0, 0.06, 0);
     put(g, CAP(0.06, 0.16, 6), m1, 0, 0.25, 0);

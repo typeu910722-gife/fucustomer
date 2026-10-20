@@ -243,6 +243,9 @@ const KAREN_BG: Record<string, string> = {
 };
 const SIG_BG: Record<string, string> = { haggle: '#ff5d5d', camp: '#ff9f1c', roam: '#8f6bff', till: '#48a6ff', redo: '#ff7eb6', sneak: '#868e96', refund: '#4fb35a' };
 const q20 = (v: number) => Math.round(Math.max(0, Math.min(1, v)) * 20) / 20;
+/** 常客奧客: the customer id of today's named regular and the name shown under their tag (set by the game). */
+let namedRegular: { id: number; label: string } | null = null;
+export function setNamedRegular(v: { id: number; label: string } | null) { namedRegular = v; }
 function customerTag(c: CustomerSnap): Tag | null {
   const loose = !c.held && !c.flying;
   if (c.kind === 'boss' && !c.resolved && loose) {
@@ -256,7 +259,8 @@ function customerTag(c: CustomerSnap): Tag | null {
   if (c.down > 0) return { key: 'down', full: { text: '💫 好痛…', size: 40 }, compact: { text: '💫', size: 40 }, prio: 0 };
   if (!loose) return { key: c.held ? 'held' : 'fly', full: { text: c.held ? '😵 放開我！' : '😱 啊——', size: 44 }, compact: null, prio: 2 };
   if (c.kind !== 'normal' && !c.resolved && c.revealed) {
-    const extras = `${c.vip ? '💼 好像有背景' : ''}${c.vip && c.heavy ? '・' : ''}${c.heavy ? '🏋 抓不動' : ''}`;
+    const flags = `${c.vip ? '💼 好像有背景' : ''}${c.vip && c.heavy ? '・' : ''}${c.heavy ? '🏋 抓不動' : ''}`;
+    const extras = namedRegular?.id === c.id ? namedRegular.label + (flags ? '・' + flags : '') : flags;
     const badge = (c.vip ? '💼' : '') + (c.heavy ? '🏋' : '');
     let name = '', bar: PillOpts['bar'];
     const sd = sigDef(c.kind);
@@ -310,6 +314,8 @@ export class StoreView {
   private crateStacks = new Map<Product, THREE.Group>();
   private mopsOnRack: THREE.Object3D[] = [];
   private register2: THREE.Object3D[] = [];
+  /** 店面升級 props (自助結帳機, 防滑地墊, 自動門鈴, 員工休息室 sign), shown once the upgrade is bought. */
+  private upgProps: Partial<Record<'selfcheck' | 'mat' | 'doorbell' | 'lounge', THREE.Group>> = {};
   private reg2On = false;
   private stationLabels: { l: Label; on: () => boolean }[] = [];
   private doorL!: THREE.Mesh; private doorR!: THREE.Mesh; private doorOpen = 0;
@@ -375,6 +381,7 @@ export class StoreView {
     this.scene.add(this.highlight);
     const before = new Set(this.scene.children);
     this.build();
+    this.buildUpgradeProps();
     buildShopDecor(this.scene, this.q); // 商城 decorations (free play / own store only)
     this.atlas.pack();
     this.mergeStatic(before);
@@ -1081,6 +1088,41 @@ export class StoreView {
    * Merge every static, opaque mesh added by build() into one mesh per material.
    * Cuts draw calls a lot (walls, shelves, fixtures, street) without changing the look.
    */
+  /** Cheap 3D hints for the store upgrades (hidden until bought; groups are never merged into the static mesh). */
+  private buildUpgradeProps() {
+    const q = this.q, S = this.scene;
+    const grp = (k: keyof typeof this.upgProps) => { const g = new THREE.Group(); g.visible = false; S.add(g); this.upgProps[k] = g; return g; };
+    // 自助結帳機: a kiosk at the east end of the counter
+    if (COUNTER.x1 > COUNTER.x0) {
+      const g = grp('selfcheck');
+      g.position.set(Math.min(STORE_W - 0.45, COUNTER.x1 + 0.4), 0, (COUNTER.z0 + COUNTER.z1) / 2);
+      put(g, RB(0.5, 1.0, 0.42, 0.05), mat(0xdee2e6, q), 0, 0.5, 0);
+      put(g, RB(0.46, 0.34, 0.06, 0.03), mat(0x343a40, q), 0, 1.18, 0.1, -0.5);
+      put(g, B(0.4, 0.27, 0.01), basic(0x4dabf7), 0, 1.18, 0.135, -0.5);
+      const lbl = this.atlas.mesh(0.5, 0.14, () => textCanvas([{ text: '自助結帳', size: 60, color: '#fff' }], 512, 144, '#1971c2'));
+      lbl.position.set(0, 0.82, 0.215); g.add(lbl);
+    }
+    // 防滑地墊: a ribbed dark mat a couple of steps inside the door
+    {
+      const g = grp('mat'); g.position.set((DOOR_X0 + DOOR_X1) / 2, 0, STORE_D - 2.1);
+      put(g, RB(2.2, 0.025, 1.1, 0.01), mat(0x495057, q), 0, 0.013, 0);
+      for (let i = 0; i < 7; i++) put(g, B(2.0, 0.012, 0.05), mat(0x343a40, q), 0, 0.03, -0.45 + i * 0.15);
+    }
+    // 自動門鈴: a chime box with a bell above the door
+    {
+      const g = grp('doorbell'); g.position.set(DOOR_X0 - 0.35, 2.65, STORE_D - 0.12);
+      put(g, RB(0.22, 0.16, 0.08, 0.02), mat(0xfab005, q), 0, 0, 0);
+      put(g, DOME(0.07, Math.PI / 2, 10, 4), mat(0xf08c00, q), 0, -0.1, -0.03);
+      put(g, SPH(0.018, 6, 4), basic(0x51cf66), 0.07, 0.04, -0.045);
+    }
+    // 員工休息室: a door sign on the back wall
+    {
+      const g = grp('lounge'); g.position.set(1.6, 2.35, 0.04);
+      const sign = this.atlas.mesh(1.1, 0.3, () => textCanvas([{ text: '員工休息室', size: 60, color: '#fff' }], 512, 144, '#2f9e44'));
+      g.add(sign);
+    }
+  }
+
   private mergeStatic(before: Set<THREE.Object3D>) {
     const groups = new Map<THREE.Material, THREE.BufferGeometry[]>();
     const remove: THREE.Mesh[] = [];
@@ -1231,6 +1273,7 @@ export class StoreView {
     if (sig !== this.shadowSig) { this.shadowSig = sig; this.renderer.shadowMap.needsUpdate = true; }
     this.reg2On = snap.upgrades.register2 > 0;
     this.register2.forEach(o => { o.visible = this.reg2On; });
+    for (const [k, g] of Object.entries(this.upgProps)) g.visible = (snap.upgrades[k as keyof typeof this.upgProps] ?? 0) > 0;
     // analog wall clock follows the in-game time
     if (this.clockHands.length) {
       this.clockHands[0].rotation.z = -((snap.clock / 60) % 12) / 12 * Math.PI * 2;

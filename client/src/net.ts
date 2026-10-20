@@ -15,7 +15,7 @@ export interface LocalExtras {
   /** Your own cosmetics (you play first-person, so in solo this only keeps the snapshot consistent). */
   outfit?: Outfit;
   /** Receives each nightly save instead of the free-play save slot. */
-  onSave?: (save: StoreSave) => void;
+  onSave?: (save: StoreSave, kind: 'night' | 'purchase') => void;
   /** Map for free play / own store (career shifts carry it in their config). */
   map?: string;
   /** Free play with a hired clerk: wage charged at each nightly settlement. */
@@ -40,13 +40,13 @@ export class LocalConnection implements GameConnection {
   private playerId = '';
   private timer: number;
   private last = performance.now();
-  readonly onSave?: (save: StoreSave) => void;
+  readonly onSave?: (save: StoreSave, kind: 'night' | 'purchase') => void;
   private staff: { bot: Bot; id: string; snap: Snapshot | null; rid: number } | null = null;
   constructor(name: string, save: StoreSave | null, shift?: ShiftConfig, seed?: number, extras: LocalExtras = {}) {
     applyMap(shift?.map ?? extras.map); // must happen before the world and the 3D view are built
     this.room = new Room('SOLO', save, { solo: true, shift, seed, map: extras.map, staffWage: extras.staffWage });
     this.onSave = extras.onSave;
-    const conn = { send: (m: ServerMsg) => queueMicrotask(() => { if (m.type === 'save') this.onSave?.(m.save); this.onMessage(m); }), close: () => {} };
+    const conn = { send: (m: ServerMsg) => queueMicrotask(() => { if (m.type === 'save') this.onSave?.(m.save, m.kind ?? 'night'); this.onMessage(m); }), close: () => {} };
     const r = this.room.join(conn, name, undefined, 'solo', extras.outfit);
     if (r.ok) this.playerId = r.member.playerId;
     if (extras.staff) {

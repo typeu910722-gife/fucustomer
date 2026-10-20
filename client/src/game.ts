@@ -15,12 +15,21 @@ import { audio } from './audio.ts';
 import { Input } from './input.ts';
 import { Minimap } from './minimap.ts';
 import type { GameConnection, NetStatus } from './net.ts';
-import { StoreView } from './render.ts';
+import { StoreView, setNamedRegular } from './render.ts';
 import { Settings, loadFlags, saveCoopSave, saveFlags, saveLastSession, saveSettings, saveSoloSave } from './storage.ts';
 import * as UI from './ui.ts';
 import { desktop } from './platform.ts';
 import { inputMode, keyOf, padStyle, rumble, setRumble } from './pad.ts';
 import { controlsLine } from './padmap.ts';
+
+/** 常客奧客 (shared/regulars.ts): the named regular expected in this shift — set by the career flow before the game starts. */
+export interface ShiftRegular {
+  kind: string; name: string; icon: string; bubbles: string[]; handled: string;
+  /** Pre-shift dialogue card (shown in the store during the short prep, once per stage). */
+  pre?: { title: string; lines: { icon: string; name: string; text: string }[] };
+}
+let shiftRegular: ShiftRegular | null = null;
+export function setShiftRegular(r: ShiftRegular | null) { shiftRegular = r; setNamedRegular(null); }
 
 type Overlay = 'none' | 'pause' | 'shop' | 'quick' | 'summary' | 'settings' | 'help';
 
@@ -238,6 +247,7 @@ export class Game {
       audio.startMusic(s.shift.endless ? 7 : s.shift.boss ? 6 : s.shift.mode === 'shift' ? (s.shift.chapter <= 7 ? s.shift.chapter : 1 + (s.shift.chapter - 1) % 5) : 0);
       audio.startStoreAmbience(CURRENT_MAP.id);
       if (!s.raid) this.introduceStore();
+      this.showArcCard();
     }
     if (first || !this.started) { this.pos = { x: me.x, z: me.z }; this.yaw = me.yaw; }
     // server reconciliation (the server clamps speed and resolves collisions)
@@ -259,10 +269,23 @@ export class Game {
 
   private onEvent(e: GameEvent) {
     switch (e.e) {
-      case 'toast': this.toast(e.text, e.tone ?? 'info'); if (e.karen) this.aftermath(e.karen, e.ok !== false, e.kid ?? 0); break;
+      case 'toast':
+        this.toast(e.text, e.tone ?? 'info');
+        if (e.karen && this.regularId !== null && e.kid === this.regularId && shiftRegular) this.regularSays(e.ok !== false ? shiftRegular.handled : shiftRegular.bubbles[1] ?? shiftRegular.bubbles[0], e.ok === false);
+        else if (e.karen) this.aftermath(e.karen, e.ok !== false, e.kid ?? 0);
+        break;
       case 'sfx': audio.play(e.name, e.x, e.z); if (e.name === 'clean' && e.x !== undefined) this.view.burst(e.x, e.z!, 0x99e9f2); break;
       case 'money': this.view.floatText(`+$${e.amount}`, e.x, e.z); this.view.burst(e.x, e.z, 0xffd43b, 10); break;
-      case 'karen': audio.play('karen'); audio.karenSting(e.kind); this.introduceKaren(e.kind); break;
+      case 'karen':
+        audio.play('karen'); audio.karenSting(e.kind); this.introduceKaren(e.kind);
+        // the first karen of the regular's kind is the regular: name tag + speech bubbles
+        if (shiftRegular && this.regularId === null && e.kind === shiftRegular.kind) {
+          const r = shiftRegular; this.regularId = e.id;
+          setNamedRegular({ id: e.id, label: `${r.icon} ${r.name}` });
+          this.regularSays(r.bubbles[0]);
+          if (r.bubbles[1]) this.afTimers.push(window.setTimeout(() => { if (this.regularId === e.id && this.snap?.customers.some(c => c.id === e.id && !c.resolved)) this.regularSays(r.bubbles[1]); }, 12000));
+        }
+        break;
       case 'quick': this.addFeed(`💬 ${e.from}：${e.text}`); audio.play('quick'); break;
       case 'phase':
         if (e.phase === 'prep' && this.snap && this.snap.shift.mode !== 'shift') this.toast(`☀ 第 ${e.day} 天・開店準備：採購(${keyOf('shop')})、補貨、升級，按 ${keyOf('ready')} 準備開店`, 'info', 5000);
@@ -298,25 +321,43 @@ export class Game {
     setTimeout(() => d.remove(), ms);
   }
   private afTimers: number[] = [];
+  /** Customer id of this shift's named regular (常客奧客), once they walk in. */
+  private regularId: number | null = null;
+  /** 常客奧客: today's chapter of their story, as a card at the side of the store while the shift gets ready. */
+  private showArcCard() {
+    const pre = shiftRegular?.pre; if (!pre) return;
+    const el = $('arccard');
+    el.innerHTML = `<div class="ac-title">${UI.esc(pre.title)}</div>` + pre.lines.map(l => `<p>${UI.esc(l.icon)} <b>${UI.esc(l.name)}</b>：${UI.esc(l.text)}</p>`).join('');
+    el.className = '';
+    this.introTimers.push(window.setTimeout(() => el.classList.add('fade'), 14000), window.setTimeout(() => el.classList.add('hidden'), 14600));
+  }
+  private regularSays(text: string, fail = false) {
+    const r = shiftRegular; if (!r) return;
+    this.bubble(r.icon, r.name, text, fail, 300);
+  }
   /** After-story bubble (錢董 / 阿芬姐 / 記者小林) a moment after a signature karen is dealt with. */
   private aftermath(kind: string, ok: boolean, seed: number) {
     const l = aftermathLine(kind, ok, seed);
     if (!l) return;
+    const sp = DEX_SPEAKER[l.who];
+    this.bubble(sp.icon, sp.name, l.text, !ok, 1100);
+  }
+  /** Speech bubble at the left edge (after-story lines, 常客奧客). */
+  private bubble(icon: string, name: string, text: string, fail: boolean, delay: number) {
     for (const t of this.afTimers) clearTimeout(t);
     const el = $('aftermath');
     this.afTimers = [window.setTimeout(() => {
-      const sp = DEX_SPEAKER[l.who];
       el.innerHTML = '';
-      const ico = document.createElement('div'); ico.className = 'af-ico'; ico.textContent = sp.icon;
+      const ico = document.createElement('div'); ico.className = 'af-ico'; ico.textContent = icon;
       const txt = document.createElement('div'); txt.className = 'af-txt';
-      const who = document.createElement('b'); who.className = 'af-who'; who.textContent = sp.name;
-      txt.append(who, document.createTextNode(l.text));
+      const who = document.createElement('b'); who.className = 'af-who'; who.textContent = name;
+      txt.append(who, document.createTextNode(text));
       el.append(ico, txt);
-      el.className = ok ? '' : 'fail';
+      el.className = fail ? 'fail' : '';
       // restart the pop-in animation
       el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
       this.afTimers.push(window.setTimeout(() => el.classList.add('fade'), 5200), window.setTimeout(() => el.classList.add('hidden'), 5700));
-    }, 1100)];
+    }, delay)];
   }
   private showHint(text: string) {
     const el = $('hintbar'); el.textContent = '💡 ' + text; el.classList.remove('hidden');
@@ -861,7 +902,7 @@ export class Game {
     for (const t of this.introTimers) clearTimeout(t);
     for (const t of this.afTimers) clearTimeout(t);
     $('aftermath').classList.add('hidden');
-    $('introcard').classList.add('hidden'); $('tutskip').classList.add('hidden');
+    $('introcard').classList.add('hidden'); $('tutskip').classList.add('hidden'); $('arccard').classList.add('hidden');
     this.input.unlock();
     this.conn.close();
     audio.stopMusic();

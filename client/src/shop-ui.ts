@@ -7,6 +7,7 @@ import {
   equipCosmetic, getCosmetic, outfitOf, ownsCosmetic, storeLocked, type Pack, type PlayMode,
 } from '../../shared/shop.ts';
 import { getMap } from '../../shared/maps/index.ts';
+import { ARC_BY_ID } from '../../shared/regulars.ts';
 import { billing, devShop, entitlementsFor } from './billing.ts';
 import { mountPreview } from './cosmetics.ts';
 import { esc } from './ui.ts';
@@ -31,6 +32,7 @@ function itemHtml(p: CareerProfile, c: Cosmetic, ents: string[]) {
   let act: string;
   if (on) act = `<span class="tag ok">✅ 使用中</span><button class="btn small" data-cos-off="${c.slot}">卸下</button>`;
   else if (own) act = `<button class="btn small info" data-cos-eq="${c.id}">${DECOR_SLOTS.includes(c.slot) ? '擺上' : '穿上'}</button>`;
+  else if (c.reward) act = `<span class="tag lock">📖 故事獎勵</span><span class="muted">完成「${esc(ARC_BY_ID[c.reward]?.name ?? '')}」故事線免費獲得</span>`;
   else if (c.price !== undefined) act = `<button class="btn small primary" data-cos-buy="${c.id}" ${p.wallet >= c.price ? '' : 'disabled'}>💰 ${c.price}</button>`;
   else act = `<span class="tag lock">🔒限定</span><button class="btn small purple" data-pack-buy="${pack?.id ?? ''}">${esc(pack?.name ?? '')}</button>`;
   return `<div class="shopitem cos ${on ? 'on' : ''} ${trying[c.slot] === c.id ? 'trying' : ''}" data-try="${c.id}">

@@ -21,6 +21,8 @@ export interface Cosmetic {
   price?: number;
   /** Premium only: which pack grants it (bought with real money later). */
   pack?: string;
+  /** Story reward: granted free when this 常客奧客 arc (regulars.ts) is finished; cannot be bought. */
+  reward?: string;
   /** Main colour (UI preview + 3D). */
   color: number;
   /** Second colour (patterns, trims). */
@@ -58,6 +60,11 @@ export const COSMETICS: Cosmetic[] = [
   C({ id: 'mat_paw', name: '貓掌地墊', icon: '🐾', slot: 'mat', price: 250, color: 0x845ef7, color2: 0xf3f0ff, desc: '踩上去心情會變好（大概）' }),
   C({ id: 'mascot_cat', name: '招財貓', icon: '🐱', slot: 'mascot', price: 500, color: 0xffffff, color2: 0xe03131, desc: '放在櫃台，揮手招客' }),
   C({ id: 'mascot_duck', name: '小黃鴨', icon: '🦆', slot: 'mascot', price: 300, color: 0xffd43b, color2: 0xf76707, desc: '櫃台上的療癒小鴨' }),
+  // ---- 常客奧客 story rewards (free, granted when an arc ends; see shared/regulars.ts) ----
+  C({ id: 'tag_points', name: '王阿姨的集點卡名牌', icon: '🎫', slot: 'tag', reward: 'auntie', color: 0xffa94d, color2: 0xe8590c, desc: '王阿姨用集點卡改的名牌，背面還有十個章' }),
+  C({ id: 'sign_live', name: '「LIVE」直播燈牌', icon: '🔴', slot: 'sign', reward: 'kai', color: 0xff4d6d, color2: 0xffffff, desc: '直播主阿凱送的燈牌。開店就是開台' }),
+  C({ id: 'uni_qc', name: '品管合格背心', icon: '✅', slot: 'uniform', reward: 'zhang', color: 0x2b8a3e, desc: '張伯在工廠穿了四十年的背心' }),
+  C({ id: 'mascot_plug', name: '插頭公仔', icon: '🔌', slot: 'mascot', reward: 'vicky', color: 0xf8f9fa, color2: 0x495057, desc: 'Vicky 送的。每個奧客都有一個還沒找到插座的故事' }),
   C({ id: 'mascot_cactus', name: '小仙人掌', icon: '🌵', slot: 'mascot', price: 250, color: 0x40c057, color2: 0xe8590c, desc: '很好養，比奧客好溝通' }),
 ];
 export const COSMETIC_BY_ID: Record<string, Cosmetic> = Object.fromEntries(COSMETICS.map(c => [c.id, c]));
@@ -111,7 +118,8 @@ export function sanitizeShop(v: unknown): ShopState {
   const s = newShop();
   if (!v || typeof v !== 'object') return s;
   const o = v as Partial<ShopState>;
-  if (Array.isArray(o.owned)) s.owned = [...new Set(o.owned.filter((id): id is string => typeof id === 'string' && getCosmetic(id)?.price !== undefined))];
+  // points items and story rewards (premium pack items come from entitlements, never from this list)
+  if (Array.isArray(o.owned)) s.owned = [...new Set(o.owned.filter((id): id is string => typeof id === 'string' && (getCosmetic(id)?.price !== undefined || !!getCosmetic(id)?.reward)))];
   if (Array.isArray(o.entitlements)) s.entitlements = [...new Set(o.entitlements.filter((id): id is string => typeof id === 'string' && !!PACK_BY_ID[id]))];
   if (o.equipped && typeof o.equipped === 'object') {
     for (const [slot, id] of Object.entries(o.equipped)) {
@@ -129,11 +137,12 @@ export function ownsCosmetic(p: CareerProfile, id: string, entitlements: readonl
   return c.pack ? entitlements.includes(c.pack) : p.shop.owned.includes(id);
 }
 
-export type BuyResult = { ok: true } | { ok: false; why: 'unknown' | 'premium' | 'owned' | 'poor' };
+export type BuyResult = { ok: true } | { ok: false; why: 'unknown' | 'premium' | 'owned' | 'poor' | 'story' };
 /** Buys a points-priced cosmetic with the career wallet (薪資點數). Premium items can't be bought this way. */
 export function buyCosmetic(p: CareerProfile, id: string): BuyResult {
   const c = getCosmetic(id);
   if (!c) return { ok: false, why: 'unknown' };
+  if (c.reward) return { ok: false, why: 'story' };
   if (c.price === undefined) return { ok: false, why: 'premium' };
   if (p.shop.owned.includes(id)) return { ok: false, why: 'owned' };
   if (p.wallet < c.price) return { ok: false, why: 'poor' };

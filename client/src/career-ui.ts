@@ -14,6 +14,9 @@ import { confirmTwice, esc, show } from './ui.ts';
 import { takeReports, syncStore, uploadStore } from './friends.ts';
 import { lockedPack, ownStoreLockHtml, shopHtml, wireShop } from './shop-ui.ts';
 import { dexHtml, dexSwitch } from './dex-ui.ts';
+import { WEEKLY_ID, WEEKLY_TWISTS, BADGE_POINTS, isoWeek, weekBadge, weeklyPlan, weeklyUnlocked } from '../../shared/weekly.ts';
+import { ARCS, arcState } from '../../shared/regulars.ts';
+import { getCosmetic } from '../../shared/shop.ts';
 
 const KEY = 'fucustomer.career.v1';
 export function loadProfile(): CareerProfile {
@@ -119,7 +122,7 @@ function chaptersHtml(p: CareerProfile) {
         <div class="muted story">客人和奧客越來越多，撐越久分數越高。隨時可以從選單「下班結算」。</div>
         <button class="btn primary" data-play="${ENDLESS_ID}">開始無限夜班</button></div>`
     : `<div class="chapter locked"><div class="chhead"><b>🌙 無限夜班</b></div><div class="muted story">🔒 擊敗第 6 章「奧客之王」後解鎖</div></div>`;
-  return dailyHtml(p) + CHAPTERS.map(c => {
+  return dailyHtml(p) + weeklyHtml(p) + arcsHtml(p) + CHAPTERS.map(c => {
     const open = chapterUnlocked(p, c.n);
     const got = c.shifts.reduce((n, s) => n + (p.stars[s.id] ?? 0), 0);
     return `
@@ -218,10 +221,42 @@ function dailyHtml(p: CareerProfile) {
     <button class="btn primary" data-play="${DAILY_ID}">開始今日挑戰</button></div>`;
 }
 
+function weeklyHtml(p: CareerProfile) {
+  if (!weeklyUnlocked(p)) return `<div class="chapter locked"><div class="chhead"><b>🗓 每週挑戰</b></div><div class="muted story">🔒 通過第 1 章「店長來巡店」後解鎖</div></div>`;
+  const week = isoWeek(), plan = weeklyPlan(week), tw = WEEKLY_TWISTS[plan.twist], m = getMap(plan.map);
+  const done = p.weekly.week === week ? p.weekly.done : 0;
+  const badge = p.weekly.badges.includes(week);
+  return `<div class="chapter daily weekly" id="weekly-card"><div class="chhead"><b>🗓 每週挑戰・${esc(week)}</b><span class="muted">本週：${tw.icon} ${esc(tw.name)}・${m.icon} ${esc(m.name)}</span>
+      <span class="tag ${badge ? 'ok' : ''}">${badge ? `🏅 週章「${esc(tw.badge)}」到手` : `🎯 ${[0, 1, 2].filter(i => done & (1 << i)).length}/3`}</span>${p.weekly.badges.length ? `<span class="tag">🏅 ×${p.weekly.badges.length}</span>` : ''}</div>
+    <div class="muted story">${esc(tw.desc)}。全世界這週都是同一關，成功下班時每個目標每週第一次達成發薪資點數，三個都完成再加 ${BADGE_POINTS} 點和一枚週章（掛在高級社畜證照上）。</div>
+    <ul class="goal-list">${plan.goals.map((g, i) => `<li class="${done & (1 << i) ? 'ok' : 'no'}">${done & (1 << i) ? '✅' : '⬜'} ${esc(g.text)}　<small>💰${g.points}</small></li>`).join('')}</ul>
+    <button class="btn primary" data-play="${WEEKLY_ID}">開始每週挑戰</button></div>`;
+}
+
+/** 常客奧客: who you have met and how far each story got. */
+function arcsHtml(p: CareerProfile) {
+  const cards = ARCS.map(a => {
+    const st = arcState(p, a.id), n = a.stages.length, done = st.stage >= n;
+    const cos = getCosmetic(a.reward.cosmetic);
+    const met = st.seen > 0 || st.stage > 0;
+    const next = done ? `🎁 已獲得 ${cos ? `${cos.icon} ${esc(cos.name)}` : ''}` : met ? `下一回：「${esc(a.stages[st.stage].title)}」（第 ${a.stages[st.stage].minChapter} 章後）` : `第 ${a.stages[0].minChapter} 章後可能出現`;
+    return `<div class="arc-card ${done ? 'done' : ''}" data-arc="${a.id}"><b>${met ? a.icon : '❔'} ${met ? esc(a.name) : '？？？'}</b> <span class="arc-pips">${'●'.repeat(st.stage)}${'○'.repeat(n - st.stage)}</span>
+      <div class="muted">${met ? esc(a.blurb) : '還沒遇過的常客。'}</div><div class="muted">${next}</div></div>`;
+  }).join('');
+  return `<div class="chapter daily arcs"><div class="chhead"><b>📖 常客奧客</b><span class="muted">他們會在不同的班次、不同的店再出現</span></div>
+    <div class="muted story">處理好他們、而且成功下班，故事就會往下走；故事走完可以免費拿到一件外觀。</div><div class="arc-list">${cards}</div></div>`;
+}
+
 function achievementsHtml(p: CareerProfile) {
   const have = new Set(p.achievements);
   return `${dexSwitch(p, 'achievements')}<p class="muted">已解鎖 ${have.size} / ${ACHIEVEMENTS.length}</p>
     <div class="grid2">${ACHIEVEMENTS.map(a => `<div class="shopitem ach ${have.has(a.id) ? 'got' : 'locked'}"><b>${have.has(a.id) ? '🏆' : '🔒'} ${esc(a.name)}</b><span class="muted">${esc(a.desc)}</span></div>`).join('')}</div>`;
+}
+
+/** 常客奧客: the stage's ending dialogue on the result screen. */
+function arcResultHtml(reward: Reward) {
+  const a = reward.arc; if (!a) return '';
+  return `<div class="arc-result" id="arc-result"><div class="ac-title">📖 ${esc(a.title)}</div>${a.lines.map(l => `<p>${esc(l.icon)} <b>${esc(l.name)}</b>：${esc(l.text)}</p>`).join('')}${a.gift ? `<div class="levelup">${esc(a.gift)}</div>` : ''}</div>`;
 }
 
 function achHtml(fresh: Achievement[]) {
@@ -265,6 +300,7 @@ function statsHtml(p: CareerProfile) {
 export function resultScreen(r: ShiftResult, reward: Reward, p: CareerProfile, fresh: Achievement[], h: { retry(): void; next(id: string | null): void; career(): void }) {
   if (r.shiftId === ENDLESS_ID) return endlessResult(r, reward, p, fresh, h);
   if (r.shiftId === DAILY_ID) return dailyResult(r, reward, p, fresh, h);
+  if (r.shiftId === WEEKLY_ID) return weeklyResult(r, reward, p, fresh, h);
   const f = findShift(r.shiftId)!;
   const idx = f.chapter.shifts.findIndex(s => s.id === r.shiftId);
   let nextId: string | null = f.chapter.shifts[idx + 1]?.id ?? CHAPTERS.find(c => c.n === f.chapter.n + 1)?.shifts[0]?.id ?? null;
@@ -291,6 +327,7 @@ export function resultScreen(r: ShiftResult, reward: Reward, p: CareerProfile, f
           <div class="stat"><span>清潔</span><b>${r.cleaned}</b></div>
         </div>
       </div>
+      ${arcResultHtml(reward)}
       ${payHtml(reward)}
       <div class="reward">EXP +${reward.exp}${reward.firstClear ? '（首次通關）' : ''}　💰 存款 +${reward.wallet - (reward.court?.fine ?? 0)}</div>
       ${lvl}
@@ -322,8 +359,37 @@ function dailyResult(r: ShiftResult, reward: Reward, p: CareerProfile, fresh: Ac
         <div><div class="stat"><span>奧客處理 成功/失敗</span><b>${r.karensResolved} / ${r.karensFailed}</b></div><div class="stat"><span>連續完成</span><b>🔥 ${p.daily.streak} 天</b></div></div>
       </div>
       <div class="reward">${rewardLine}</div>
-      ${lvl}${achHtml(fresh)}
+      ${lvl}${achHtml(fresh)}${arcResultHtml(reward)}
       <div class="row"><button class="btn" id="r-retry">🔁 再挑戰（刷新紀錄）</button><button class="btn primary" id="r-career">回職涯</button></div>
+    </div>`);
+  document.getElementById('r-retry')!.onclick = () => h.retry();
+  document.getElementById('r-career')!.onclick = () => h.career();
+}
+
+function weeklyResult(r: ShiftResult, reward: Reward, p: CareerProfile, fresh: Achievement[], h: { retry(): void; career(): void }) {
+  const w = reward.weekly; const week = w?.week ?? r.week ?? '';
+  const plan = weeklyPlan(week), tw = WEEKLY_TWISTS[plan.twist];
+  const lvl = reward.levels.length ? `<div class="levelup">🎉 升級！Lv.${reward.levels[reward.levels.length - 1]}「${rankOf(reward.levels[reward.levels.length - 1])}」</div>` : '';
+  const done = p.weekly.week === week ? p.weekly.done : 0;
+  const b = weekBadge(week);
+  show(`
+    <div class="card wide result ${r.won ? 'won' : 'lost'}">
+      <div class="muted">🗓 每週挑戰・${esc(week)}・${tw.icon} ${esc(tw.name)}</div>
+      <h1 class="title">${w?.badge ? '本週全制霸！' : r.won ? '挑戰成功！' : '差一點！'}</h1>
+      <div class="bigstars">${[1, 2, 3].map(i => `<span class="${i <= reward.stars ? 'on' : ''}" style="animation-delay:${i * 0.25}s">★</span>`).join('')}</div>
+      ${r.won ? '' : `<p class="err" style="text-align:center">${esc(r.failReason)}</p>`}
+      <ul class="goal-list" id="weekly-goals">${plan.goals.map((g, i) => {
+        const now = w?.met[i], fresh = w?.newly.includes(i), had = !!(done & (1 << i));
+        return `<li class="${now || had ? 'ok' : 'no'}">${now ? '✅' : had ? '☑' : '⬜'} ${esc(g.text)}${fresh ? `　<b>💰 +${g.points}</b>` : had && !now ? '　<small>（本週已完成）</small>' : ''}</li>`;
+      }).join('')}</ul>
+      ${w?.badge ? `<div class="levelup">🏅 獲得週章「${b.icon} ${esc(b.name)}」＋💰${BADGE_POINTS}（高級社畜證照上看得到）</div>` : ''}
+      <div class="grid2">
+        <div><div class="stat"><span>營業額 / 目標</span><b>$${r.revenue} / $${r.goal}</b></div><div class="stat"><span>本週最佳</span><b>$${p.weekly.best}</b></div></div>
+        <div><div class="stat"><span>奧客處理 成功/失敗</span><b>${r.karensResolved} / ${r.karensFailed}</b></div><div class="stat"><span>清潔 / 生氣離開</span><b>${r.cleaned} / ${r.angryLeft}</b></div></div>
+      </div>
+      <div class="reward">${reward.wallet || reward.exp ? `EXP +${reward.exp}　💰 +${reward.wallet}` : '這次沒有新完成的目標（成績仍會記錄）'}</div>
+      ${lvl}${achHtml(fresh)}${arcResultHtml(reward)}
+      <div class="row"><button class="btn" id="r-retry">🔁 再挑戰</button><button class="btn primary" id="r-career">回職涯</button></div>
     </div>`);
   document.getElementById('r-retry')!.onclick = () => h.retry();
   document.getElementById('r-career')!.onclick = () => h.career();
@@ -344,7 +410,7 @@ function endlessResult(r: ShiftResult, reward: Reward, p: CareerProfile, fresh: 
       </div>
       <div class="reward">EXP +${reward.exp}　💰 +${reward.wallet}</div>
       ${lvl}
-      ${achHtml(fresh)}
+      ${achHtml(fresh)}${arcResultHtml(reward)}
       <p class="muted" style="text-align:center">★1 800 分・★2 1600 分・★3 3000 分</p>
       <div class="row"><button class="btn primary" id="r-retry">🔁 再來一夜</button><button class="btn" id="r-career">回職涯</button></div>
     </div>`);

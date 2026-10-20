@@ -44,20 +44,38 @@ export const MEAL_PRICE = 18;
 export const BURST_MAX = 100;
 export const CHAOS_MAX = 100;
 
-export type UpgradeId = 'register2' | 'scanner' | 'coffee' | 'shelves' | 'camera' | 'mopbot' | 'ads';
-export interface UpgradeDef { name: string; desc: string; costs: number[] }
+export type UpgradeId = 'register2' | 'scanner' | 'coffee' | 'shelves' | 'camera' | 'mopbot' | 'ads' | 'selfcheck' | 'mat' | 'doorbell' | 'lounge';
+export interface UpgradeDef {
+  name: string; desc: string; costs: number[]; icon: string;
+  /** What each level does (index = level - 1), shown in the between-days upgrade panel. */
+  levels?: string[];
+}
 export const UPGRADES: Record<UpgradeId, UpgradeDef> = {
-  register2: { name: '第二收銀台', desc: '開放第二台收銀機，隊伍消化更快', costs: [300] },
-  scanner: { name: '快速掃碼機', desc: '結帳時間縮短', costs: [180, 320] },
-  coffee: { name: '咖啡機升級', desc: '煮咖啡時間縮短', costs: [200, 360] },
-  shelves: { name: '加大貨架', desc: '每個貨架可放更多商品', costs: [220, 400] },
-  camera: { name: '監視器', desc: '偷吃奧客直接顯示，奧客怒氣上升較慢', costs: [350] },
-  mopbot: { name: '掃地機器人', desc: '每隔一段時間自動清掉一灘髒污', costs: [420] },
-  ads: { name: '廣告看板', desc: '顧客來店頻率提高', costs: [160, 300, 480] },
+  register2: { icon: '🧾', name: '第二收銀台', desc: '開放第二台收銀機，隊伍消化更快', costs: [300] },
+  scanner: { icon: '📟', name: '快速掃碼機', desc: '結帳時間縮短', costs: [180, 320] },
+  coffee: { icon: '☕', name: '咖啡機升級', desc: '煮咖啡時間縮短', costs: [200, 360] },
+  shelves: { icon: '🧊', name: '加大貨架／大冰箱', desc: '每個貨架可放更多商品', costs: [220, 400], levels: ['每格貨架 +5（15 個）', '每格貨架 +10（20 個）'] },
+  camera: { icon: '📹', name: '監視器', desc: '偷吃奧客直接顯示，奧客怒氣上升較慢；第 2 級全程錄影，奧客比較快冷靜', costs: [350, 520], levels: ['偷吃奧客現形、怒氣上升 -30%', '再加：安撫／勸導速度 +25%'] },
+  mopbot: { icon: '🤖', name: '掃地機器人', desc: '每隔一段時間自動清掉一灘髒污', costs: [420] },
+  ads: { icon: '🪧', name: '廣告看板', desc: '顧客來店頻率提高', costs: [160, 300, 480] },
+  selfcheck: { icon: '🏧', name: '自助結帳機', desc: '排隊中買 2 件以下的客人會自己去自助結帳（沒有小費）', costs: [380, 600], levels: ['每 22 秒自助結帳一位', '每 14 秒自助結帳一位'] },
+  mat: { icon: '🟫', name: '防滑地墊', desc: '客人打翻東西時比較不會弄髒地板', costs: [150, 280], levels: ['髒污 -25%', '髒污 -40%'] },
+  doorbell: { icon: '🔔', name: '自動門鈴', desc: '「叮咚～歡迎光臨」客人進門心情比較好、比較有耐心', costs: [200, 360], levels: ['一般客人耐心 +8%、心情 +8', '一般客人耐心 +16%、心情 +16'] },
+  lounge: { icon: '🛋', name: '員工休息室', desc: '店員（小陳／電腦店員）動作更快；自己開店時員工每天心情 +3', costs: [260, 450], levels: ['店員移動 +8%', '店員移動 +16%'] },
 };
 export const UPGRADE_IDS = Object.keys(UPGRADES) as UpgradeId[];
 
 export function shelfCapacity(level: number) { return 10 + level * 5; }
+/** 防滑地墊: share of spills that never happen (capped at 40%). */
+export function matSkip(level: number) { return Math.min(0.4, [0, 0.25, 0.4][level] ?? 0.4); }
+/** 自助結帳機: seconds between self-checkouts (0 = no machine). */
+export function selfcheckEvery(level: number) { return level <= 0 ? 0 : level === 1 ? 22 : 14; }
+/** 自動門鈴: patience multiplier and mood bonus for ordinary customers. */
+export function doorbellBoost(level: number) { const l = Math.max(0, Math.min(2, level)); return { patience: 1 + 0.08 * l, mood: 8 * l }; }
+/** 員工休息室: movement multiplier for clerk bots (小陳 / fill-in bots). */
+export function loungePace(level: number) { return 1 + 0.08 * Math.max(0, Math.min(2, level)); }
+/** 監視器 level 2: calming / talking actions are this much faster. */
+export function cameraCalm(level: number) { return level >= 2 ? 1.25 : 1; }
 export function checkoutTime(level: number) { return [1.4, 0.95, 0.6][level] ?? 0.6; }
 export function brewTime(level: number) { return [3.0, 2.0, 1.2][level] ?? 1.2; }
 export function heatTime(level: number) { return [4.0, 2.8, 1.8][level] ?? 1.8; }

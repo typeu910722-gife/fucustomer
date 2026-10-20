@@ -12,21 +12,28 @@ import { audio } from './audio.ts';
 export function playScene(id: string, done: () => void) {
   const sc = SCENES[id];
   if (!sc) { done(); return; }
+  playLines(sc.title, sc.lines.map(l => ({ ...CAST[l.who], text: l.text, me: l.who === 'me' })), done);
+}
+
+export interface DialogLine { icon: string; name: string; text: string; me?: boolean }
+/** Dialogue cards from any cast (story scenes, 常客奧客 arcs). `cls` tags the card (e.g. 'arc'). */
+export function playLines(title: string, lines: DialogLine[], done: () => void, cls = '') {
+  if (!lines.length) { done(); return; }
   let i = 0;
   const onKey = (e: KeyboardEvent) => { if (e.code === 'Enter' || e.code === 'Space') { e.preventDefault(); next(); } else if (e.code === 'Escape') finish(); };
   const finish = () => { window.removeEventListener('keydown', onKey); done(); };
-  const next = () => { i++; if (i >= sc.lines.length) finish(); else render(); };
+  const next = () => { i++; if (i >= lines.length) finish(); else render(); };
   const render = () => {
-    const l = sc.lines[i], who = CAST[l.who];
+    const l = lines[i];
     show(`
-      <div class="card wide scene">
-        <div class="muted">${esc(sc.title)}</div>
-        <div class="dialog ${l.who === 'me' ? 'me' : ''}">
-          <div class="portrait">${who.icon}</div>
-          <div class="bubble"><b>${esc(who.name)}</b><p>${esc(l.text)}</p></div>
+      <div class="card wide scene ${cls}">
+        <div class="muted">${esc(title)}</div>
+        <div class="dialog ${l.me ? 'me' : ''}">
+          <div class="portrait">${esc(l.icon)}</div>
+          <div class="bubble"><b>${esc(l.name)}</b><p>${esc(l.text)}</p></div>
         </div>
-        <div class="row"><button class="btn small" id="sc-skip">跳過</button><button class="btn primary" id="sc-next">${i + 1 < sc.lines.length ? '繼續 ▶' : '好'}</button></div>
-        <div class="muted" style="text-align:center">${i + 1} / ${sc.lines.length}</div>
+        <div class="row"><button class="btn small" id="sc-skip">跳過</button><button class="btn primary" id="sc-next">${i + 1 < lines.length ? '繼續 ▶' : '好'}</button></div>
+        <div class="muted" style="text-align:center">${i + 1} / ${lines.length}</div>
       </div>`);
     document.getElementById('sc-next')!.onclick = next;
     document.getElementById('sc-skip')!.onclick = finish;

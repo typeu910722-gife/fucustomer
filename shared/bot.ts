@@ -1,6 +1,6 @@
 // Simulated player ("模擬玩家") used by automated tests and load tests. It only sees the same
 // snapshot a real client sees and sends the same messages, so it exercises the real protocol.
-import { BOX_SIZE, PRODUCTS, Product, SERVER_INTERACT_RANGE, WALK_SPEED, shelfCapacity } from './constants.ts';
+import { BOX_SIZE, PRODUCTS, Product, SERVER_INTERACT_RANGE, WALK_SPEED, loungePace, shelfCapacity } from './constants.ts';
 import { COFFEE_MACHINE, CRATES, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, findPath, shelfBrowseSpots } from './map.ts';
 import type { ActKind, ClientMsg, CustomerSnap, PlayerSnap, Snapshot, Target } from './protocol.ts';
 import { SIG_KARENS, SigNeed, isSig, sigWaitReason } from './sigkarens.ts';
@@ -42,11 +42,14 @@ export class Bot {
   private direct = 0;
   /** Movement speed multiplier (an unhappy employee drags their feet). */
   pace = 1;
+  /** 員工休息室 upgrade of the store this bot works in (read from each snapshot). */
+  private rested = 1;
   constructor(public role: 'any' | 'cashier' | 'stocker' | 'cleaner' = 'any', private seed = Math.random()) {}
 
   update(s: Snapshot, me: PlayerSnap, dt: number): BotOutput {
     const out: BotOutput = { x: me.x, z: me.z, yaw: me.yaw };
     this.cooldown -= dt;
+    this.rested = loungePace(s.upgrades?.lounge ?? 0);
     if (s.phase === 'summary') { if (!me.ready) out.ready = true; return out; }
     // reorder stock whenever the stockroom runs low (allowed during business too)
     const want = s.phase === 'prep' ? 18 : 6 + 3 * s.playerCount;
@@ -113,7 +116,7 @@ export class Bot {
       this.direct -= dt;
       const dx = pos.x - me.x, dz = pos.z - me.z, d = Math.hypot(dx, dz) || 1;
       const side = Math.sin(performance.now() / 300) * 0.6;
-      const step = WALK_SPEED * dt * this.pace;
+      const step = WALK_SPEED * dt * this.pace * this.rested;
       out.x = me.x + (dx / d) * step + (-dz / d) * side * step; out.z = me.z + (dz / d) * step + (dx / d) * side * step;
       out.yaw = Math.atan2(dx, dz);
       if (this.direct <= 0) this.path = findPath(out, pos);
@@ -122,7 +125,7 @@ export class Bot {
     // re-path toward moving targets
     const last = this.path[this.path.length - 1];
     if (!last || Math.hypot(last.x - pos.x, last.z - pos.z) > 1.0 || ++this.stuck > 200) { this.path = findPath(me, pos); this.stuck = 0; }
-    let step = WALK_SPEED * 1.2 * dt * this.pace;
+    let step = WALK_SPEED * 1.2 * dt * this.pace * this.rested;
     let x = me.x, z = me.z;
     while (step > 0 && this.path.length) {
       const t = this.path[0];
