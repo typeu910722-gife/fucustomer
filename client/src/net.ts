@@ -1,6 +1,6 @@
 // Connections: a WebSocket connection to the dedicated server (with automatic reconnect) and an
 // in-memory connection that runs the very same Room/simulation locally for solo play.
-import { TICK_RATE } from '../../shared/constants.ts';
+import { TICK_RATE, type Product } from '../../shared/constants.ts';
 import type { ClientMsg, ServerMsg, StoreSave } from '../../shared/protocol.ts';
 import { Room } from '../../shared/room.ts';
 import { applyMap } from '../../shared/map.ts';
@@ -71,6 +71,14 @@ export class LocalConnection implements GameConnection {
   /** The employee quit: they leave the store. */
   dismissStaff() { if (this.staff) { this.room.handle(this.staff.id, { type: 'leave' }); this.staff = null; } }
   setStaffPace(p: number) { if (this.staff) this.staff.bot.pace = p; }
+  /** Tonight's day stats (read right after the nightly save: the day is complete). */
+  dayStats() { const d = this.room.world?.dayStats; return d ? { ...d } : null; }
+  /** 店面等級 rewards between days: tonight's event money / rating and the supplier box go into the running store. */
+  grant(money: number, rating: number, box?: { product: Product; qty: number }) {
+    const w = this.room.world; if (!w) return;
+    w.money += money; w.rating = Math.max(0, Math.min(5, w.rating + rating));
+    if (box) w.backstock[box.product] = Math.min(999, (w.backstock[box.product] ?? 0) + box.qty);
+  }
   /** Hits that may bring the police (own store: checked when you close up). */
   incidents() { return [...(this.room.world?.incidents ?? [])]; }
 

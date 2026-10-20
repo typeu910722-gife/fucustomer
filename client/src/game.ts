@@ -22,6 +22,8 @@ import * as UI from './ui.ts';
 import { desktop } from './platform.ts';
 import { inputMode, keyOf, padStyle, rumble, setRumble } from './pad.ts';
 import { controlsLine } from './padmap.ts';
+import { JuiceKind, RateLimit, TimeWarp, juiceProfile, stampText, throwStrength } from './juice.ts';
+import { STORE_D } from '../../shared/map.ts';
 
 /** 常客奧客 (shared/regulars.ts): the named regular expected in this shift — set by the career flow before the game starts. */
 export interface ShiftRegular {
@@ -94,6 +96,7 @@ export class Game {
     this.view.setQuality(settings.quality); this.view.setMaxScale(settings.renderScale);
     this.input = new Input(canvas, touch);
     this.input.padSens = settings.padSens; this.input.padInvertY = settings.padInvertY; setRumble(settings.rumble);
+    this.view.shakeScale = settings.shake !== false && !settings.reduceMotion ? 1 : 0;
     $('helpkeys').textContent = controlsLine(inputMode(), padStyle());
     this.minimap = new Minimap($('minimap') as HTMLCanvasElement);
     conn.onMessage = m => this.onMessage(m);
@@ -223,6 +226,7 @@ export class Game {
     this.view.renderer.dispose();
     this.view = new StoreView(canvas, this.settings.quality, this.settings.fov);
     this.view.setQuality(this.settings.quality); this.view.setMaxScale(this.settings.renderScale);
+    this.view.shakeScale = this.settings.shake !== false && !this.settings.reduceMotion ? 1 : 0;
   }
 
   private showLobby() {
@@ -254,6 +258,12 @@ export class Game {
       this.showArcCard();
     }
     if (first || !this.started) { this.pos = { x: me.x, z: me.z }; this.yaw = me.yaw; }
+    // 打擊感: someone just grabbed a customer → squash-stretch, 嘿咻, camera dip (snapshots carry who holds whom)
+    for (const p of s.players) {
+      const was = this.grabSeen.get(p.id);
+      if (p.grabbing != null && p.grabbing !== was && !first) this.onGrab(p.id === this.selfId, p.grabbing, p.x, p.z);
+      this.grabSeen.set(p.id, p.grabbing ?? null);
+    }
     // server reconciliation (the server clamps speed and resolves collisions)
     const err = Math.hypot(me.x - this.pos.x, me.z - this.pos.z);
     if (err > 1.5) { if (++this.corrections > 2) { this.pos = { x: me.x, z: me.z }; this.corrections = 0; } } else this.corrections = 0;
@@ -275,10 +285,15 @@ export class Game {
     switch (e.e) {
       case 'toast':
         this.toast(e.text, e.tone ?? 'info');
+        if (e.karen) this.karenOutcome(e.ok !== false, e.kid);
         if (e.karen && this.regularId !== null && e.kid === this.regularId && shiftRegular) this.regularSays(e.ok !== false ? shiftRegular.handled : shiftRegular.bubbles[1] ?? shiftRegular.bubbles[0], e.ok === false);
         else if (e.karen) this.aftermath(e.karen, e.ok !== false, e.kid ?? 0);
         break;
-      case 'sfx': audio.play(e.name, e.x, e.z); if (e.name === 'clean' && e.x !== undefined) this.view.burst(e.x, e.z!, 0x99e9f2); break;
+      case 'sfx':
+        audio.play(e.name, e.x, e.z);
+        if (e.name === 'clean' && e.x !== undefined) this.view.burst(e.x, e.z!, 0x99e9f2);
+        else if (e.name === 'deliver' && e.x !== undefined) this.sparkle(e.x, e.z!); // served: soft chime + sparkles
+        break;
       case 'money': this.view.floatText(`+$${e.amount}`, e.x, e.z); this.view.burst(e.x, e.z, 0xffd43b, 10); break;
       case 'karen':
         audio.play('karen'); audio.karenSting(e.kind); this.introduceKaren(e.kind);
@@ -295,27 +310,123 @@ export class Game {
         if (e.phase === 'prep' && this.snap && this.snap.shift.mode !== 'shift') this.toast(`☀ 第 ${e.day} 天・開店準備：採購(${keyOf('shop')})、補貨、升級，按 ${keyOf('ready')} 準備開店`, 'info', 5000);
         break;
       case 'hint': this.showHint(e.text); break;
-      case 'fx':
-        if (e.name === 'eject' || e.name === 'ultimate' || e.name === 'mistake' || e.name === 'hit' || (e.name === 'shove' && e.by === this.myName()) || (e.name === 'spin' && this.nearMe(e.x, e.z))) this.padRumble(e.name);
-        if (e.name === 'eject') { this.view.shockwave(e.x, e.z - 0.3, 0xff922b, 2.5); this.view.floatText(e.combo && e.combo > 1 ? `${e.combo} 連送！` : '退散！', e.x, e.z - 0.6, '#ffa94d'); this.view.burst(e.x, e.z - 0.4, 0xff922b, 26); this.view.shake = 0.25; if (e.combo && e.combo > 1) this.showCombo(e.combo); }
-        else if (e.name === 'ultimate') { this.flash(false); this.view.shake = 0.65; this.view.burst(e.x, e.z, 0xffd43b, 40); this.view.shockwave(e.x, e.z, 0xffd43b, 6); }
-        else if (e.name === 'spin') { this.view.burst(e.x, e.z, 0x63e6be, 30); this.view.shake = 0.2; this.view.shockwave(e.x, e.z, 0x63e6be, 3.2); }
-        else if (e.name === 'mistake') { this.flash(true); this.view.shake = 0.4; }
-        else if (e.name === 'impact') this.view.burst(e.x, e.z, 0xffd69a, 6);
-        else if (e.name === 'throw') this.view.shake = 0.15;
-        else if (e.name === 'hit') { this.view.burst(e.x, e.z, 0xfff3bf, 14); this.view.floatText('啪！', e.x, e.z, '#fff3bf'); this.view.shake = Math.max(this.view.shake, 0.18); }
-        else if (e.name === 'shove' && e.by === this.myName()) { this.flash(true); this.view.shake = 0.45; this.stamina = Math.max(0, this.stamina - 25); }
+      case 'fx': this.onFx(e); break;
+    }
+  }
+
+  // ---------------- 打擊感 (juice) ----------------
+  private warp = new TimeWarp();
+  private grabSeen = new Map<string, number | null>();
+  private sadLimit = new RateLimit(2500);
+  private lastThrowPitch = 0;
+
+  /** Applies hit-stop / slow-mo / shake / kick / flash / rumble for an action; returns its strength (distance falloff). */
+  private juice(kind: JuiceKind, x: number, z: number, mine: boolean): number {
+    const pr = juiceProfile(kind, Math.hypot(x - this.pos.x, z - this.pos.z), mine, { shake: this.settings.shake !== false, reduceMotion: !!this.settings.reduceMotion });
+    const now = performance.now();
+    this.warp.stop(pr.hitStop, now);
+    this.warp.slow(pr.slowMo, pr.slowScale, now);
+    if (pr.shake > 0) this.view.shake = Math.max(this.view.shake, pr.shake);
+    if (pr.kick || pr.dip) this.view.punch(pr.kick, pr.dip);
+    if (pr.flash) this.flash(pr.flash === 2);
+    if (pr.rumble[2] > 0 && pr.rumble[0] + pr.rumble[1] > 0.05) rumble(pr.rumble[0], pr.rumble[1], pr.rumble[2]);
+    return pr.k;
+  }
+
+  private onGrab(mine: boolean, id: number, px: number, pz: number) {
+    this.view.squash(id);
+    const k = this.juice('grab', px, pz, mine);
+    const c = this.view.customerPos(id);
+    audio.play('heave', c?.x ?? px, c?.z ?? pz, k);
+  }
+
+  private onFx(e: Extract<GameEvent, { e: 'fx' }>) {
+    const mine = !!e.by && e.by === this.myName();
+    const reduce = !!this.settings.reduceMotion;
+    switch (e.name) {
+      case 'eject': {
+        const k = this.juice('eject', e.x, e.z, mine);
+        const combo = e.combo ?? 0;
+        this.view.shockwave(e.x, e.z - 0.3, 0xff922b, 2.5);
+        this.view.floatText(combo > 1 ? `${combo} 連送！` : '退散！', e.x, e.z - 0.6, '#ffa94d');
+        this.view.burst(e.x, e.z - 0.4, 0xff922b, Math.round(26 * k));
+        // lands on the pavement outside: cartoon star + dust, door bell, the crowd goes "ooh"
+        this.view.impactStar(e.x, STORE_D + 1.1, k);
+        audio.play('star', e.x, e.z, k); audio.play('dust', e.x, e.z, k);
+        audio.play('ding', e.x, e.z, k);
+        if (combo >= 2 || mine) audio.play('ooh', e.x, e.z, k * (combo >= 2 ? 1 : 0.7));
+        if (mine || k >= 0.75) this.stamp(stampText('eject', combo), mine ? '' : 'small');
+        if (combo > 1) this.showCombo(combo);
+        break;
+      }
+      case 'ultimate': {
+        this.juice('ultimate', e.x, e.z, mine);
+        this.view.burst(e.x, e.z, 0xffd43b, 40); this.view.shockwave(e.x, e.z, 0xffd43b, 6);
+        audio.play('bassdrop');
+        this.stamp(stampText('ultimate'), 'big');
+        break;
+      }
+      case 'spin': {
+        const k = this.juice('spin', e.x, e.z, mine);
+        this.view.burst(e.x, e.z, 0x63e6be, Math.round(30 * k)); this.view.shockwave(e.x, e.z, 0x63e6be, 3.2);
+        this.view.tumble(1.6);
+        audio.play('rise', e.x, e.z, k);
+        if ((mine || this.nearMe(e.x, e.z)) && !reduce) this.speedLines();
+        break;
+      }
+      case 'throw': {
+        const k = this.juice('throw', e.x, e.z, mine);
+        audio.play('whoosh', e.x, e.z, mine ? throwStrength(this.lastThrowPitch) : k);
+        break;
+      }
+      case 'mistake':
+        this.juice('mistake', e.x, e.z, true); // a store-wide blunder: everyone feels it
+        this.sad(e.x, e.z);
+        break;
+      case 'impact': this.view.burst(e.x, e.z, 0xffd69a, 6); break;
+      case 'hit': {
+        const k = this.juice('hit', e.x, e.z, mine);
+        this.view.burst(e.x, e.z, 0xfff3bf, Math.round(14 * k)); this.view.floatText('啪！', e.x, e.z, '#fff3bf');
+        audio.play('slap', e.x, e.z, k);
+        if (mine) this.stamp(stampText('hit'), 'hit');
+        if (e.report && (mine || k >= 0.75)) audio.play('siren', e.x, e.z, k); // this one gets reported…
+        break;
+      }
+      case 'shove':
+        if (e.by === this.myName()) { this.juice('shove', e.x, e.z, true); this.stamina = Math.max(0, this.stamina - 25); }
         break;
     }
   }
 
-  private nearMe(x: number, z: number) { return Math.hypot(x - this.pos.x, z - this.pos.z) < 2.5; }
-  /** Controller rumble for big moments (setting 手把震動; no-op on keyboard or pads without rumble). */
-  private padRumble(kind: string) {
-    const r: Record<string, [number, number, number]> = { shove: [0.9, 0.6, 260], mistake: [0.7, 0.5, 220], ultimate: [1, 1, 450], eject: [0.4, 0.7, 160], hit: [0.6, 0.4, 120], spin: [0.3, 0.6, 200] };
-    const v = r[kind]; if (v) rumble(v[0], v[1], v[2]);
+  /** A karen was dealt with (toast carries karen/ok): soft chime + sparkles, or a (rate-limited) sad trombone. */
+  private karenOutcome(ok: boolean, kid?: number) {
+    const c = kid !== undefined ? this.snap?.customers.find(cc => cc.id === kid) : undefined;
+    const x = c?.x ?? this.pos.x, z = c?.z ?? this.pos.z;
+    if (ok) { audio.play('chime', x, z); this.sparkle(x, z); }
+    else this.sad(x, z);
+  }
+  private sparkle(x: number, z: number) { this.view.burst(x, z, 0xfff3bf, 8); this.view.burst(x, z, 0x99e9f2, 4); }
+  private sad(x: number, z: number) { if (this.sadLimit.ok('sad', performance.now())) audio.play('trombone', x, z); }
+
+  /** Big rubber-stamp text in the middle of the screen (reused element; the animation restarts). */
+  private stamp(text: string, variant: '' | 'small' | 'big' | 'hit') {
+    const el = $('stamp');
+    el.textContent = text;
+    el.className = variant;
+    void el.offsetWidth; // restart the CSS animation
+    if (!this.settings.reduceMotion) el.classList.add('go'); // 減少動態效果: the stamp just appears, no zoom
+    if (variant !== 'small') audio.play('stamp');
+    clearTimeout(this.stampTimer); this.stampTimer = window.setTimeout(() => el.classList.add('hidden'), variant === 'big' ? 1400 : 900);
+  }
+  private stampTimer = 0;
+  private speedTimer = 0;
+  private speedLines() {
+    const el = $('speedlines');
+    el.className = ''; void el.offsetWidth; el.classList.add('go');
+    clearTimeout(this.speedTimer); this.speedTimer = window.setTimeout(() => el.classList.add('hidden'), 650);
   }
 
+  private nearMe(x: number, z: number) { return Math.hypot(x - this.pos.x, z - this.pos.z) < 2.5; }
   // ---------------- UI helpers ----------------
   toast(text: string, tone: 'good' | 'bad' | 'info' = 'info', ms = 2800) {
     const box = $('toasts');
@@ -382,12 +493,13 @@ export class Game {
     this.hintUntil = performance.now() + 7000;
   }
   private flash(red: boolean) {
+    if (this.settings.reduceMotion) return;
     const f = $('flash'); f.classList.toggle('red', red); f.style.opacity = red ? '0.45' : '0.85';
     setTimeout(() => { f.style.opacity = '0'; }, 160);
   }
   private comboTimer = 0;
   private showCombo(n: number) {
-    const el = $('combo'); el.textContent = `${n} 連送！`; el.classList.remove('hidden');
+    const el = $('combo'); el.textContent = `${n} 連送！`; el.classList.remove('hidden', 'pop'); void el.offsetWidth; if (!this.settings.reduceMotion) el.classList.add('pop');
     clearTimeout(this.comboTimer); this.comboTimer = window.setTimeout(() => el.classList.add('hidden'), 1600);
   }
   private addFeed(text: string) { this.feed.push({ text, until: performance.now() + 7000 }); if (this.feed.length > 5) this.feed.shift(); }
@@ -433,6 +545,7 @@ export class Game {
     audio.setMaster(s.master); audio.setVolume(s.volume); audio.setMusicVolume(s.music);
     this.view.setMaxScale(s.renderScale);
     this.input.padSens = s.padSens; this.input.padInvertY = s.padInvertY; setRumble(s.rumble);
+    this.view.shakeScale = s.shake !== false && !s.reduceMotion ? 1 : 0;
   }
 
   private wireShopButtons(container: HTMLElement) {
@@ -706,7 +819,7 @@ export class Game {
       if (this.input.consume('drop') && (me.held || me.held2 || me.grabbing != null || me.busy || me.raider)) this.send({ type: 'drop', rid: newRid() });
       if (this.input.consume('grab')) {
         if (!this.canGrab()) this.toast('「抓起／投擲」在 Lv.11 資深店員解鎖', 'info', 1800);
-        else if (me.grabbing != null) this.send({ type: 'throw', rid: newRid(), yaw: this.yaw, pitch: this.pitch });
+        else if (me.grabbing != null) { this.lastThrowPitch = this.pitch; this.send({ type: 'throw', rid: newRid(), yaw: this.yaw, pitch: this.pitch }); }
         else { const k = this.karenTarget(s); if (k) this.send({ type: 'act', rid: newRid(), kind: 'grab', target: { t: 'customer', id: k.id } }); else this.toast('準星對準身前的顧客再抓', 'info', 1400); }
       }
       if (this.input.consume('spin')) this.send({ type: 'spin', rid: newRid() });
@@ -734,7 +847,11 @@ export class Game {
     }
 
     audio.listener = { x: this.pos.x, z: this.pos.z };
-    this.view.update(s, this.selfId, dt, () => null);
+    // hit-stop freezes the rendered world for a few frames; slow-mo scales effect/animation time
+    // (positions stay server-authoritative: this is a visual effect only)
+    const ts = this.warp.scale(now);
+    this.view.tickCamera(dt, me.grabbing != null);
+    if (ts > 0) this.view.update(s, this.selfId, dt * ts, () => null);
     this.view.setCamera(this.pos.x, this.pos.z, this.yaw, this.pitch, this.bob, me.held);
     this.view.setSecondHand(me.held2);
     const tb = this.target?.box ? new THREE.Box3(new THREE.Vector3(this.target.box.x0, 0, this.target.box.z0), new THREE.Vector3(this.target.box.x1, this.target.box.h ?? 1.5, this.target.box.z1))

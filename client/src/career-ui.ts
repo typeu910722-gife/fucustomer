@@ -5,7 +5,7 @@ import {
   ENDLESS_ID, endlessUnlocked, DAILY_ID, DAILY_MODS, dailyPlan, dailyUnlocked, localDate,
   spendSkill, STAR_RATING, STAR_CHAOS, STAR_REVENUE,
 } from '../../shared/career.ts';
-import { ACHIEVEMENTS, Achievement } from '../../shared/achievements.ts';
+import { ACHIEVEMENTS, Achievement, updateAchievements } from '../../shared/achievements.ts';
 import { STORE_FUND, STORE_RESERVE, WAGES, WageMode, canOpenStore, closeStore, hireStaff, openStore, staffPace, withdraw } from '../../shared/ownstore.ts';
 import { defaultSave } from '../../shared/sim.ts';
 import { MAPS, getMap } from '../../shared/maps/index.ts';
@@ -17,6 +17,8 @@ import { dexHtml, dexSwitch } from './dex-ui.ts';
 import { WEEKLY_ID, WEEKLY_TWISTS, BADGE_POINTS, isoWeek, weekBadge, weeklyPlan, weeklyUnlocked } from '../../shared/weekly.ts';
 import { ARCS, arcState } from '../../shared/regulars.ts';
 import { getCosmetic } from '../../shared/shop.ts';
+import { chainHtml, recordsHtml } from './progress-ui.ts';
+import { canOpenBranch, openBranch } from '../../shared/progression.ts';
 
 const KEY = 'fucustomer.career.v1';
 export function loadProfile(): CareerProfile {
@@ -25,7 +27,7 @@ export function loadProfile(): CareerProfile {
 export function saveProfile(p: CareerProfile) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ignore */ } }
 
 type Tab = 'chapters' | 'store' | 'skills' | 'gear' | 'shop' | 'free' | 'achievements' | 'dex' | 'stats';
-export interface CareerHandlers { play(shiftId: string): void; back(): void; enterStore(): void; opened(): void; raid(code: string): void; freePlay(): void }
+export interface CareerHandlers { play(shiftId: string): void; back(): void; enterStore(): void; opened(): void; raid(code: string): void; freePlay(): void; branch?(i: number): void }
 
 const stars = (n: number, max = 3) => '★'.repeat(n) + '<span class="dim">' + '★'.repeat(max - n) + '</span>';
 
@@ -70,6 +72,15 @@ export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'ch
     if (openStore(p, name, all ? p.wallet : STORE_FUND, defaultSave(), map)) { saveProfile(p); h.opened(); }
   });
   on('st-enter', () => h.enterStore());
+  // 連鎖分店
+  on('br-open', () => {
+    const map = (document.querySelector('input[name="br-map"]:checked') as HTMLInputElement | null)?.value ?? '';
+    const locked = !!lockedPack(p, map, 'own');
+    const ok = canOpenBranch(p.store, p.wallet, map, locked);
+    if (!ok.ok) { const el = document.getElementById('br-msg'); if (el) el.textContent = ok.why ?? ''; return; }
+    if (openBranch(p, map, (document.getElementById('br-name') as HTMLInputElement | null)?.value ?? '', defaultSave(), locked)) { updateAchievements(p); redraw(); }
+  });
+  document.querySelectorAll<HTMLButtonElement>('[data-branch-play]').forEach(b => { b.onclick = () => h.branch?.(Number(b.dataset.branchPlay)); });
   on('st-withdraw', () => { withdraw(p); redraw(); });
   on('st-hire', () => { hireStaff(p); redraw(); });
   const closeBtn = document.getElementById('st-close') as HTMLButtonElement | null;
@@ -190,7 +201,7 @@ function storeHtml(p: CareerProfile) {
       <button class="btn" id="st-withdraw" ${s.money > STORE_RESERVE ? '' : 'disabled'}>💰 提領 $${Math.max(0, s.money - STORE_RESERVE)} 到存款</button>
       ${staff.quit ? `<button class="btn" id="st-hire" ${s.money >= 150 ? '' : 'disabled'}>📋 招募新員工（$150）</button>` : ''}
       <button class="btn small" id="st-close">收店</button>
-    </div></div>${friendsHtml(p)}${histLine}`;
+    </div>${st.branches?.length ? `<p class="muted">收店或倒閉時，分店會以開店費的一半頂讓出去，錢回到存款。</p>` : ''}</div>${chainHtml(p, m => !!lockedPack(p, m, 'own'))}${friendsHtml(p)}${histLine}`;
 }
 
 /** Friend stores (needs a game server): share your store code, lock the door, raid a friend. */
@@ -294,7 +305,8 @@ function statsHtml(p: CareerProfile) {
       <div class="stat"><span>處理奧客</span><b>${s.karens}</b></div><div class="stat"><span>請出門</span><b>${s.ejected}</b></div>
       <div class="stat"><span>主線星數</span><b>★ ${totalStars}/${maxStars}</b></div><div class="stat"><span>職級</span><b>${rankOf(p.level)} Lv.${p.level}</b></div></div></div>
     <div class="grid2"><div><div class="stat"><span>💰 存款</span><b>$${p.wallet}</b></div><div class="stat"><span>⚖ 被帶去審訊</span><b>${p.court.trials} 次</b></div></div>
-      <div><div class="stat"><span>罰款總額</span><b>$${p.court.fines}</b></div><div class="stat"><span>無罪</span><b>${p.court.acquittals} 次</b></div></div></div>`;
+      <div><div class="stat"><span>罰款總額</span><b>$${p.court.fines}</b></div><div class="stat"><span>無罪</span><b>${p.court.acquittals} 次</b></div></div></div>
+    ${recordsHtml(p)}`;
 }
 
 export function resultScreen(r: ShiftResult, reward: Reward, p: CareerProfile, fresh: Achievement[], h: { retry(): void; next(id: string | null): void; career(): void }) {

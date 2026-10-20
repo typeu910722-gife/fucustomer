@@ -2,7 +2,8 @@
 // The code is `FUC1-<base64url(JSON)>-<checksum>`. The checksum only catches typos / truncated copies; it is not a
 // signature (progress is local and self-reported anyway, same as editing localStorage).
 //
-// What travels: career profile (fucustomer.career.v1), settings, one-time flags, avatar, free-play saves and the
+// What travels: career profile (fucustomer.career.v1, incl. 店面等級／個人紀錄 `freeProg` and the own store's level and
+// 分店 — all re-sanitized on import by sanitizeProfile → progression.ts), settings, one-time flags, avatar, free-play saves and the
 // co-op save. What never travels:
 //  - fucustomer.account.v1 (Google sign-in session = a credential) and fucustomer.session.v1 (multiplayer rejoin token);
 //  - settings.serverUrl (device-specific, and a shared code must not be able to point someone at another server);
@@ -15,6 +16,7 @@ import { getCosmetic } from './shop.ts';
 import { sanitizeSave } from './sim.ts';
 import { MAPS } from './maps/index.ts';
 import type { StoreSave } from './protocol.ts';
+import { branchCount, maxStoreLevel } from './progression.ts';
 
 export const SAVE_PREFIX = 'FUC1-';
 /** Longest code accepted (characters). Real codes are a few KB. */
@@ -44,6 +46,8 @@ export interface SavePayload {
 export interface SaveSummary {
   level: number; rank: string; stars: number; wallet: number; shifts: number; achievements: number; cosmetics: number;
   soloSaves: number; ownStore: boolean; at: number;
+  /** Highest 店面等級 of any store and the number of 分店 (progression.ts; they travel inside the career profile). */
+  storeLevel: number; branches: number;
 }
 
 // ---------------- encoding helpers ----------------
@@ -85,7 +89,7 @@ export function cleanSettings(v: unknown): Record<string, string | number | bool
   num('master', 0, 1); num('padSens', 0.2, 3); num('renderScale', 0.5, 1);
   if (v.quality === 'low' || v.quality === 'medium' || v.quality === 'high') out.quality = v.quality;
   if ((FPS_CAPS as readonly unknown[]).includes(v.fpsCap)) out.fpsCap = v.fpsCap as number;
-  bool('invertY'); bool('showFps'); bool('adaptive'); bool('padInvertY'); bool('rumble'); bool('fullscreen');
+  bool('invertY'); bool('showFps'); bool('adaptive'); bool('padInvertY'); bool('rumble'); bool('fullscreen'); bool('shake'); bool('reduceMotion');
   return out; // serverUrl is deliberately dropped
 }
 
@@ -170,6 +174,7 @@ export function summarize(p: CareerProfile, soloSaves: number, at = 0): SaveSumm
   return {
     level: p.level, rank: rankOf(p.level), stars: Object.values(p.stars).reduce((a, b) => a + b, 0), wallet: p.wallet,
     shifts: p.stats.shifts, achievements: p.achievements.length, cosmetics: p.shop.owned.length, soloSaves, ownStore: !!p.store, at,
+    storeLevel: maxStoreLevel(p), branches: branchCount(p),
   };
 }
 

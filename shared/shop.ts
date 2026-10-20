@@ -21,7 +21,7 @@ export interface Cosmetic {
   price?: number;
   /** Premium only: which pack grants it (bought with real money later). */
   pack?: string;
-  /** Story reward: granted free when this 常客奧客 arc (regulars.ts) is finished; cannot be bought. */
+  /** Free reward, cannot be bought: a 常客奧客 arc id (regulars.ts), or `store:<level>` for a 店面等級 reward (progression.ts). */
   reward?: string;
   /** Main colour (UI preview + 3D). */
   color: number;
@@ -65,6 +65,11 @@ export const COSMETICS: Cosmetic[] = [
   C({ id: 'sign_live', name: '「LIVE」直播燈牌', icon: '🔴', slot: 'sign', reward: 'kai', color: 0xff4d6d, color2: 0xffffff, desc: '直播主阿凱送的燈牌。開店就是開台' }),
   C({ id: 'uni_qc', name: '品管合格背心', icon: '✅', slot: 'uniform', reward: 'zhang', color: 0x2b8a3e, desc: '張伯在工廠穿了四十年的背心' }),
   C({ id: 'mascot_plug', name: '插頭公仔', icon: '🔌', slot: 'mascot', reward: 'vicky', color: 0xf8f9fa, color2: 0x495057, desc: 'Vicky 送的。每個奧客都有一個還沒找到插座的故事' }),
+  // ---- 店面等級 rewards (free, granted when any of your stores reaches the level; see shared/progression.ts) ----
+  C({ id: 'sign_local', name: '「在地推薦」燈牌', icon: '🪧', slot: 'sign', reward: 'store:3', color: 0x51cf66, color2: 0xebfbee, desc: '店面 Lv3 獎勵。里長親自掛上去的（他堅持）' }),
+  C({ id: 'mat_carpet', name: '排隊名店紅地毯', icon: '🟥', slot: 'mat', reward: 'store:6', color: 0xa61e4d, color2: 0xfab005, desc: '店面 Lv6 獎勵。每位客人進門都像走星光大道' }),
+  C({ id: 'mascot_trophy', name: '金獎盃公仔', icon: '🏆', slot: 'mascot', reward: 'store:8', color: 0xfab005, color2: 0x5c3d1e, desc: '店面 Lv8 獎勵。「年度最耐奧店家」，評審是你自己' }),
+  C({ id: 'sign_legend', name: '「傳說名店」金色燈牌', icon: '🌟', slot: 'sign', reward: 'store:10', color: 0xfab005, color2: 0xfff3bf, desc: '店面 Lv10 獎勵。傳說的證明，奧客看到會先排好隊' }),
   C({ id: 'mascot_cactus', name: '小仙人掌', icon: '🌵', slot: 'mascot', price: 250, color: 0x40c057, color2: 0xe8590c, desc: '很好養，比奧客好溝通' }),
 ];
 export const COSMETIC_BY_ID: Record<string, Cosmetic> = Object.fromEntries(COSMETICS.map(c => [c.id, c]));

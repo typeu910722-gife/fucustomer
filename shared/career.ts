@@ -7,6 +7,7 @@ import { MAPS } from './maps/index.ts';
 import { ShopState, newShop, sanitizeShop } from './shop.ts';
 import { addHandled, sanitizeDex } from './karendex.ts';
 import { ARCS, type ArcState } from './regulars.ts';
+import { type StoreProg, sanitizeBranches, sanitizeFreeProg, sanitizeProg } from './progression.ts';
 
 export type Ability = 'hit' | 'grab' | 'spin' | 'ultimate';
 
@@ -122,6 +123,8 @@ export interface CareerProfile {
   weekly: WeeklyState;
   /** 常客奧客 story arcs (regulars.ts): progress per arc id. Old saves: none started. */
   arcs: Record<string, ArcState>;
+  /** 店面等級 + 個人紀錄 of each free-play store, by map id (progression.ts). Old saves: none. */
+  freeProg: Record<string, StoreProg>;
 }
 export function newProfile(): CareerProfile {
   return {
@@ -130,7 +133,7 @@ export function newProfile(): CareerProfile {
     stars: {}, clears: {}, stats: { shifts: 0, wins: 0, served: 0, ejected: 0, karens: 0, revenue: 0 }, endlessBest: 0, title: '',
     achievements: [], daily: { date: '', best: 0, rewarded: false, streak: 0, lastWin: '', wins: 0 },
     court: { trials: 0, fines: 0, acquittals: 0 }, story: [],
-    store: null, storeHistory: { opened: 0, closed: 0, lost: 0, lastReason: '' }, shop: newShop(), dex: {}, weekly: newWeekly(), arcs: {},
+    store: null, storeHistory: { opened: 0, closed: 0, lost: 0, lastReason: '' }, shop: newShop(), dex: {}, weekly: newWeekly(), arcs: {}, freeProg: {},
   };
 }
 export function sanitizeProfile(v: unknown): CareerProfile {
@@ -162,6 +165,7 @@ export function sanitizeProfile(v: unknown): CareerProfile {
   p.shop = sanitizeShop(o.shop); // saves from before the shop existed get an empty shop
   p.weekly = sanitizeWeekly(o.weekly); // saves from before the weekly challenge: nothing played yet
   p.arcs = sanitizeArcs(o.arcs); // saves from before the 常客奧客 arcs: none started
+  p.freeProg = sanitizeFreeProg(o.freeProg); // saves from before store levels: every store at Lv1
   if (Array.isArray(o.achievements)) p.achievements = [...new Set(o.achievements.filter((a): a is string => typeof a === 'string' && /^[A-Z0-9_]{1,24}$/.test(a)))].slice(0, 64);
   const d = o.daily, isDate = (x: unknown): x is string => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x);
   if (d && typeof d === 'object') {
@@ -208,6 +212,8 @@ export function modsFor(p: CareerProfile): ShiftMods {
 export interface ShiftDef {
   id: string; title: string; length: number; goal: number; karens: KarenKind[]; maxKarens?: number; karenEvery?: number; firstKaren?: number;
   foods?: Food[]; events?: ShiftEvent[]; spawnEvery?: number; hints?: string[]; boss?: boolean; expMul?: number;
+  /** Seconds between random events (default 42); first event at `firstEvent` (default 40). */
+  eventEvery?: number; firstEvent?: number;
   /** Store type (shared/maps); omitted = 便利商店. */
   map?: string;
 }
@@ -286,11 +292,11 @@ export const CHAPTERS: ChapterDef[] = [
     story: '辭職之後，阿芬姐建議你：開店前，先去不同的店見習。每種店都有它自己的奧客。',
     shifts: [
       S({ id: '7-1', title: '晨光早餐', map: 'breakfast', length: 150, goal: 305, karens: ['custom', 'cutter'], foods: ['coffee', 'meal'], spawnEvery: 5.6, hints: ['早餐店的「客製魔人」會在收銀台一直改單：先對他「複誦點單」才能結帳。'] }),
-      S({ id: '7-2', title: '週末早午餐', map: 'breakfast', length: 170, goal: 365, karens: ['custom', 'rager', 'litterer'], maxKarens: 2, foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 5.6 }),
-      S({ id: '7-3', title: '午後一杯', map: 'boba', length: 150, goal: 305, karens: ['fickle', 'streamer'], foods: ['coffee', 'meal'], spawnEvery: 5.8, hints: ['手搖飲的「改單達人」第一杯一定要改：再做一杯給他，或「推薦招牌」讓他決定。'] }),
-      S({ id: '7-4', title: '下班尖峰', map: 'boba', length: 170, goal: 365, karens: ['fickle', 'cutter', 'charger'], maxKarens: 2, foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 5.6 }),
+      S({ id: '7-2', title: '週末早午餐', map: 'breakfast', length: 170, goal: 385, karens: ['custom', 'rager', 'litterer'], maxKarens: 2, foods: ['coffee', 'meal'], events: ['rush'], eventEvery: 60, spawnEvery: 5.8 }),
+      S({ id: '7-3', title: '午後一杯', map: 'boba', length: 150, goal: 320, karens: ['fickle', 'cutter'], foods: ['coffee', 'meal'], spawnEvery: 5.8, hints: ['手搖飲的「改單達人」第一杯一定要改：再做一杯給他，或「推薦招牌」讓他決定。'] }),
+      S({ id: '7-4', title: '下班尖峰', map: 'boba', length: 170, goal: 360, karens: ['fickle', 'cutter'], maxKarens: 2, karenEvery: 50, foods: ['coffee', 'meal'], events: ['rush'], firstEvent: 50, eventEvery: 60, spawnEvery: 6.5, hints: ['下班尖峰會一波一波湧進來：人潮之間的空檔先把貨架補滿，尖峰時專心顧收銀。'] }),
       S({ id: '7-5', title: '週年慶', map: 'clothing', length: 170, goal: 1120, karens: ['tryhard', 'hog', 'rager'], maxKarens: 3, events: ['rush'], spawnEvery: 5.2, hints: ['服飾店的「試穿狂」會霸佔試衣間把衣服丟滿地：請他「限試穿 3 件」。'] }),
-      S({ id: '7-6', title: '宵夜大雞排', map: 'chicken', length: 180, goal: 440, karens: ['custom', 'streamer', 'litterer', 'charger'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage'], spawnEvery: 5.2 }),
+      S({ id: '7-6', title: '宵夜大雞排', map: 'chicken', length: 180, goal: 410, karens: ['custom', 'streamer', 'litterer', 'charger'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage'], spawnEvery: 5.2 }),
     ],
   },
   // 第 8–10 章：每一班換一種店，主角是那種店的「招牌奧客」(shared/sigkarens.ts)
@@ -299,35 +305,35 @@ export const CHAPTERS: ChapterDef[] = [
     story: '小林的專題「全台奧客圖鑑」要出續集，阿芬姐幫你排了一週的商圈見習：一天一種店，一種店一種奧客。',
     shifts: [
       S({ id: '8-1', title: '試用品風暴', map: 'drugstore', length: 150, goal: 485, karens: ['sampler', 'cutter'], maxKarens: 2, spawnEvery: 5.6, hints: ['藥妝店的「試用品掃貨客」會一排一排狂用試用品：追上去「收走試用品」，他換一排還要再收一次。'] }),
-      S({ id: '8-2', title: '打烊前的書店', map: 'bookstore', length: 160, goal: 440, karens: ['reader', 'litterer'], maxKarens: 2, foods: ['coffee'], spawnEvery: 5.6, hints: ['「白看書魔人」坐在書架前一直翻：對他「請他到櫃台結帳」要講久一點，他會買走那本。'] }),
-      S({ id: '8-3', title: '出爐時間', map: 'bakery', length: 160, goal: 350, karens: ['toucher', 'hog'], maxKarens: 2, foods: ['coffee'], events: ['rush'], spawnEvery: 5.4, hints: ['「徒手摸麵包」一靠近就閃人：追上去「遞夾子托盤」，他就乖乖夾一個去結帳。'] }),
-      S({ id: '8-4', title: '週末試吃大會', map: 'supermarket', length: 170, goal: 480, karens: ['taster', 'cutter', 'rager'], maxKarens: 2, foods: ['meal'], events: ['rush'], spawnEvery: 5.6, hints: ['「試吃狂」站在試吃台吃個不停，每幾秒就燒掉試吃成本：「一人一份喔」說兩次（他會換一個試吃台）。'] }),
-      S({ id: '8-5', title: '毛孩日', map: 'petshop', length: 170, goal: 390, karens: ['dogfeed', 'litterer', 'streamer'], maxKarens: 3, spawnEvery: 5.2, hints: ['「狗狗試吃團」拆零食給狗吃還尿在地上：去倉庫拿一箱貨，拿著貨箱對他「遞一包試吃包」，他就會買。'] }),
-      S({ id: '8-6', title: '筆電森林', map: 'cafe', length: 180, goal: 430, karens: ['squatter', 'charger', 'rager'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage'], spawnEvery: 5.2, hints: ['「一杯坐整天」霸佔座位燒翻桌率：提醒兩次，或沖一杯咖啡「幫他續杯」直接解決（還多賺一杯）。'] }),
+      S({ id: '8-2', title: '打烊前的書店', map: 'bookstore', length: 160, goal: 415, karens: ['reader', 'litterer'], maxKarens: 2, foods: ['coffee'], spawnEvery: 5.6, hints: ['「白看書魔人」坐在書架前一直翻：對他「請他到櫃台結帳」要講久一點，他會買走那本。'] }),
+      S({ id: '8-3', title: '出爐時間', map: 'bakery', length: 160, goal: 340, karens: ['toucher', 'hog'], maxKarens: 2, foods: ['coffee'], events: ['rush'], spawnEvery: 5.4, hints: ['「徒手摸麵包」一靠近就閃人：追上去「遞夾子托盤」，他就乖乖夾一個去結帳。'] }),
+      S({ id: '8-4', title: '週末試吃大會', map: 'supermarket', length: 170, goal: 455, karens: ['taster', 'cutter', 'litterer'], maxKarens: 2, foods: ['meal'], events: ['rush'], eventEvery: 60, spawnEvery: 6, hints: ['「試吃狂」站在試吃台吃個不停，每幾秒就燒掉試吃成本：「一人一份喔」說兩次（他會換一個試吃台）。'] }),
+      S({ id: '8-5', title: '毛孩日', map: 'petshop', length: 170, goal: 380, karens: ['dogfeed', 'litterer', 'streamer'], maxKarens: 3, spawnEvery: 5.2, hints: ['「狗狗試吃團」拆零食給狗吃還尿在地上：去倉庫拿一箱貨，拿著貨箱對他「遞一包試吃包」，他就會買。'] }),
+      S({ id: '8-6', title: '筆電森林', map: 'cafe', length: 180, goal: 420, karens: ['squatter', 'cutter', 'rager'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage'], spawnEvery: 5.2, hints: ['「一杯坐整天」霸佔座位燒翻桌率：提醒兩次，或沖一杯咖啡「幫他續杯」直接解決（還多賺一杯）。'] }),
     ],
   },
   {
     n: 9, title: '夜生活', place: '電影院・火鍋吃到飽・加油站・健身房・牛排館・雞排店', minLevel: 28, baseExp: 840, register2: true,
     story: '見習週結束，小林說晚上的奧客才精彩。電影院、吃到飽、加油站、健身房……一路做到宵夜場。',
     shifts: [
-      S({ id: '9-1', title: '午夜場', map: 'cinema', length: 160, goal: 375, karens: ['kicker', 'streamer'], maxKarens: 2, foods: ['coffee', 'meal'], spawnEvery: 5.4, hints: ['「踢椅背大叔」坐在等候區吵鬧，他附近的客人耐心掉超快：去「請他坐好小聲」兩次。'] }),
+      S({ id: '9-1', title: '午夜場', map: 'cinema', length: 160, goal: 345, karens: ['kicker', 'streamer'], maxKarens: 2, foods: ['coffee', 'meal'], spawnEvery: 5.4, hints: ['「踢椅背大叔」坐在等候區吵鬧，他附近的客人耐心掉超快：去「請他坐好小聲」兩次。'] }),
       S({ id: '9-2', title: '吃到飽之夜', map: 'hotpot', length: 170, goal: 420, karens: ['packer', 'hog', 'litterer'], maxKarens: 3, foods: ['coffee', 'meal'], spawnEvery: 5.2, hints: ['「偷打包客」要靠近才看得到，他會把肉盤塞進保鮮盒：「檢查打包盒」逼他結帳，放他走店裡要賠。'] }),
-      S({ id: '9-3', title: '深夜加油', map: 'gas', length: 160, goal: 515, karens: ['wiper', 'cutter', 'charger'], maxKarens: 3, foods: ['coffee'], events: ['outage'], spawnEvery: 5.4, hints: ['「免費擦車哥」在收銀台不擦車不付錢：去西側牆邊拿拖把，拿著拖把對他「幫他擦車窗」。'] }),
-      S({ id: '9-4', title: '下班後的健身房', map: 'gym', length: 170, goal: 500, karens: ['benchhog', 'streamer', 'litterer'], maxKarens: 2, foods: ['coffee'], events: ['rush'], spawnEvery: 5.6, hints: ['「器材霸主」霸佔器材時，全店排隊的人耐心都掉得快：「請他讓出器材」要說三次。'] }),
-      S({ id: '9-5', title: '情人節牛排', map: 'steak', length: 180, goal: 480, karens: ['doneness', 'custom', 'rager'], maxKarens: 2, foods: ['coffee', 'meal'], events: ['rush'], spawnEvery: 5.6, hints: ['「熟度魔人」坐著大罵不是五分熟：到鐵板重煎一份，拿著它對他「送上重煎的」，他會付錢。'] }),
-      S({ id: '9-6', title: '回鍋宵夜', map: 'chicken', length: 180, goal: 450, karens: ['refry', 'custom', 'streamer'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage'], spawnEvery: 5.2, hints: ['雞排店的「回鍋魔人」在收銀台嫌不夠酥：炸一塊現炸的，拿著它對他「換一塊現炸的」。'] }),
+      S({ id: '9-3', title: '深夜加油', map: 'gas', length: 160, goal: 515, karens: ['wiper', 'cutter', 'litterer'], maxKarens: 3, foods: ['coffee'], events: ['outage'], spawnEvery: 5.4, hints: ['「免費擦車哥」在收銀台不擦車不付錢：去西側牆邊拿拖把，拿著拖把對他「幫他擦車窗」。'] }),
+      S({ id: '9-4', title: '下班後的健身房', map: 'gym', length: 170, goal: 470, karens: ['benchhog', 'streamer', 'litterer'], maxKarens: 2, foods: ['coffee'], events: ['rush'], eventEvery: 60, spawnEvery: 5.6, hints: ['「器材霸主」霸佔器材時，全店排隊的人耐心都掉得快：「請他讓出器材」要說三次。'] }),
+      S({ id: '9-5', title: '情人節牛排', map: 'steak', length: 180, goal: 520, karens: ['doneness', 'custom', 'rager'], maxKarens: 2, foods: ['coffee', 'meal'], events: ['rush'], eventEvery: 60, spawnEvery: 5.6, hints: ['「熟度魔人」坐著大罵不是五分熟：到鐵板重煎一份，拿著它對他「送上重煎的」，他會付錢。'] }),
+      S({ id: '9-6', title: '回鍋宵夜', map: 'chicken', length: 180, goal: 420, karens: ['refry', 'custom', 'cutter'], maxKarens: 3, foods: ['coffee', 'meal'], events: ['outage'], spawnEvery: 5.2, hints: ['雞排店的「回鍋魔人」在收銀台嫌不夠酥：炸一塊現炸的，拿著它對他「換一塊現炸的」。'] }),
     ],
   },
   {
     n: 10, title: '全台奧客圖鑑', place: '3C 賣場・美髮院・郵局・藥局・飯店・便利商店', minLevel: 29, baseExp: 880, register2: true,
     story: '圖鑑只差最後幾頁：退貨、剪髮、寄包裹、買藥、住飯店。最後，圖鑑裡的奧客一起回到了錢董的便利商店。',
     shifts: [
-      S({ id: '10-1', title: '開箱退貨潮', map: 'electronics', length: 160, goal: 1030, karens: ['unboxer', 'cutter', 'hog'], maxKarens: 2, spawnEvery: 5.4, hints: ['「拆封退貨王」在服務台要退自己摔壞的耳機：「檢查拆封痕跡」兩次，或直接退款 $40；放著不管會被迫退 $80。'] }),
-      S({ id: '10-2', title: '婚禮前一天', map: 'salon', length: 170, goal: 615, karens: ['photo', 'rager', 'charger'], maxKarens: 3, foods: ['coffee', 'meal'], spawnEvery: 5.2, hints: ['「照片魔人」剪好兩次都說不像：可以一直重剪，或「拿照片比對」好好說明。'] }),
-      S({ id: '10-3', title: '月初領年金', map: 'post', length: 170, goal: 370, karens: ['coins', 'cutter', 'rager'], maxKarens: 3, events: ['rush'], spawnEvery: 5.2, hints: ['「一袋零錢阿伯」在櫃台倒出一整袋硬幣：要「幫他數零錢」三次才結得了帳，第二台收銀機先顧著。'] }),
-      S({ id: '10-4', title: '流感季', map: 'pharmacy', length: 170, goal: 550, karens: ['rx', 'cutter', 'charger'], maxKarens: 3, events: ['rush'], spawnEvery: 5.2, hints: ['「無處方硬要藥」在櫃台越講越大聲：「堅持要處方箋」讓他降火，或「推薦成藥」；火氣滿了會大鬧。'] }),
-      S({ id: '10-5', title: '連假客滿', map: 'hotel', length: 180, goal: 535, karens: ['upgrader', 'rager', 'charger'], maxKarens: 2, foods: ['coffee'], events: ['rush'], spawnEvery: 5.6, hints: ['「硬要升等」堅持自己是 VIP：「說明今天客滿」三次，或花 $25「送早餐券」。'] }),
-      S({ id: '10-6', title: '圖鑑大集合', length: 200, goal: 595, karens: ['coins', 'unboxer', 'toucher', 'kicker', 'upgrader', 'taster', 'wiper'], maxKarens: 3, karenEvery: 34, foods: ['coffee', 'meal'], events: ['rush', 'outage'], spawnEvery: 5, expMul: 1.5, hints: ['圖鑑裡的奧客全部來到錢董的便利商店！每一種都用它自己的方法處理，記得看畫面上方的提示。'] }),
+      S({ id: '10-1', title: '開箱退貨潮', map: 'electronics', length: 160, goal: 1000, karens: ['unboxer', 'cutter', 'hog'], maxKarens: 2, spawnEvery: 5.4, hints: ['「拆封退貨王」在服務台要退自己摔壞的耳機：「檢查拆封痕跡」兩次，或直接退款 $40；放著不管會被迫退 $80。'] }),
+      S({ id: '10-2', title: '婚禮前一天', map: 'salon', length: 170, goal: 590, karens: ['photo', 'rager', 'cutter'], maxKarens: 3, foods: ['coffee', 'meal'], spawnEvery: 5.2, hints: ['「照片魔人」剪好兩次都說不像：可以一直重剪，或「拿照片比對」好好說明。'] }),
+      S({ id: '10-3', title: '月初領年金', map: 'post', length: 170, goal: 355, karens: ['coins', 'cutter', 'rager'], maxKarens: 3, events: ['rush'], spawnEvery: 5.2, hints: ['「一袋零錢阿伯」在櫃台倒出一整袋硬幣：要「幫他數零錢」三次才結得了帳，第二台收銀機先顧著。'] }),
+      S({ id: '10-4', title: '流感季', map: 'pharmacy', length: 170, goal: 530, karens: ['rx', 'cutter', 'charger'], maxKarens: 3, events: ['rush'], eventEvery: 60, spawnEvery: 5.4, hints: ['「無處方硬要藥」在櫃台越講越大聲：「堅持要處方箋」讓他降火，或「推薦成藥」；火氣滿了會大鬧。'] }),
+      S({ id: '10-5', title: '連假客滿', map: 'hotel', length: 180, goal: 500, karens: ['upgrader', 'rager', 'charger'], maxKarens: 2, foods: ['coffee'], events: ['rush'], firstEvent: 60, eventEvery: 70, spawnEvery: 5.6, hints: ['「硬要升等」堅持自己是 VIP：「說明今天客滿」三次，或花 $25「送早餐券」。'] }),
+      S({ id: '10-6', title: '圖鑑大集合', length: 200, goal: 545, karens: ['coins', 'unboxer', 'toucher', 'kicker', 'upgrader', 'taster', 'wiper'], maxKarens: 3, karenEvery: 38, foods: ['coffee', 'meal'], events: ['rush', 'outage'], eventEvery: 55, spawnEvery: 5, expMul: 1.5, hints: ['圖鑑裡的奧客全部來到錢董的便利商店！每一種都用它自己的方法處理，記得看畫面上方的提示。'] }),
     ],
   },
 ];
@@ -382,7 +388,8 @@ export function buildShiftConfig(p: CareerProfile, id: string): ShiftConfig {
     mode: 'shift', id: s.id, title: s.title, chapter: c.n, length: s.length, goal: s.goal,
     karens: s.karens, firstKaren: s.firstKaren ?? 28, karenEvery: s.karenEvery ?? 45, maxKarens: s.maxKarens ?? 1 + Math.floor(c.n / 2),
     spawnEvery: s.spawnEvery ?? 8, maxCustomers: 8 + c.n * 2,
-    foods: s.foods ?? [], foodChance: 0.35, events: s.events ?? [], firstEvent: 40,
+    foods: s.foods ?? [], foodChance: 0.35, events: s.events ?? [], firstEvent: s.firstEvent ?? 40,
+    ...(s.eventEvery ? { eventEvery: s.eventEvery } : {}),
     register2: !!c.register2, abilities: abilitiesAt(p.level),
     start: {
       money: 80, rating: 3,
@@ -598,7 +605,7 @@ function sanitizeStore(v: unknown, int: (x: unknown, lo: number, hi: number, d: 
   if (!sv || typeof sv !== 'object' || typeof sv.money !== 'number' || !sv.backstock || !sv.shelves || !sv.upgrades) return null;
   const wage: WageMode = o.wage === 'kind' || o.wage === 'stingy' ? o.wage : 'fair';
   const staff = o.staff && typeof o.staff === 'object' ? o.staff : { name: '小陳', mood: 70, quit: false };
-  return {
+  const st: OwnStore = {
     name: typeof o.name === 'string' ? o.name.slice(0, 16) : '我的便利商店',
     invested: int(o.invested, 0, 1e9, 0), save: { ...(sv as StoreSave), money: int(sv.money, -1e6, 1e9, 0), day: int(sv.day, 1, 1e6, 1), rating: Math.max(0, Math.min(5, Number(sv.rating) || 0)) },
     days: int(o.days, 0, 1e6, 0), negDays: int(o.negDays, 0, 3, 0), wage, bestDay: int(o.bestDay, -1e6, 1e9, 0), withdrawn: int(o.withdrawn, 0, 1e9, 0),
@@ -607,6 +614,10 @@ function sanitizeStore(v: unknown, int: (x: unknown, lo: number, hi: number, d: 
     online: o.online && typeof o.online === 'object' && typeof o.online.code === 'string' && /^[A-Z0-9]{6}$/.test(o.online.code) && typeof o.online.token === 'string' && o.online.token.length <= 64
       ? { code: o.online.code, token: o.online.token, locked: o.online.locked === true } : undefined,
   };
+  // 店面等級 and 連鎖分店 (progression.ts); stores from before them start at Lv1 with no branches
+  st.prog = sanitizeProg(o.prog);
+  st.branches = sanitizeBranches(o.branches, st.map);
+  return st;
 }
 
 // ---------------- weekly challenge & 常客奧客 arcs: profile state ----------------

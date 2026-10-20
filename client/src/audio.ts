@@ -61,20 +61,47 @@ export class Audio {
     s.connect(f); f.connect(g); g.connect(this.master); s.start(t); s.stop(t + dur + 0.02);
   }
 
+  /** Buzzy "voice": sawtooth through a band-pass (vowel-ish), optional vibrato rate (Hz). */
+  private voice(freq: number, slideTo: number, dur: number, vol: number, formant: number, at = 0, startFormant?: number, vib = 0) {
+    const c = this.ctx; if (!c || !this.master) return;
+    const t = c.currentTime + at;
+    const o = c.createOscillator(); o.type = 'sawtooth';
+    o.frequency.setValueAtTime(freq, t); o.frequency.exponentialRampToValueAtTime(Math.max(20, slideTo), t + dur);
+    const f = c.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 3;
+    f.frequency.setValueAtTime(startFormant ?? formant, t); f.frequency.linearRampToValueAtTime(formant, t + dur * 0.5);
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(f); f.connect(g); g.connect(this.master);
+    let lfo: OscillatorNode | null = null;
+    if (vib > 0) { lfo = c.createOscillator(); lfo.frequency.value = vib; const lg = c.createGain(); lg.gain.value = freq * 0.04; lfo.connect(lg); lg.connect(o.frequency); lfo.start(t); lfo.stop(t + dur + 0.02); }
+    o.start(t); o.stop(t + dur + 0.02);
+  }
+  /** Filtered-noise sweep (whoosh): band-pass centre glides from f0 to f1. */
+  private sweep(dur: number, vol: number, f0: number, f1: number, at = 0) {
+    const c = this.ctx; if (!c || !this.master || !this.noiseBuf) return;
+    const t = c.currentTime + at;
+    const s = c.createBufferSource(); s.buffer = this.noiseBuf;
+    const f = c.createBiquadFilter(); f.type = 'bandpass'; f.Q.value = 1.4;
+    f.frequency.setValueAtTime(f0, t); f.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    const g = c.createGain(); g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(vol, t + dur * 0.4); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    s.connect(f); f.connect(g); g.connect(this.master); s.start(t); s.stop(t + dur + 0.02);
+  }
+
   private lastPlayed = new Map<string, number>();
   private voices = 0;
   /** Minimum gap between two plays of the same effect (ms); loud one-shots get a longer gap. */
-  private static GAP: Record<string, number> = { step: 120, knock: 120, cash: 70, impact: 150, crash: 250, karen: 600, ultimate: 800, error: 200, achievement: 400, levelup: 400 };
+  private static GAP: Record<string, number> = { step: 120, knock: 120, cash: 70, impact: 150, crash: 250, karen: 600, ultimate: 800, error: 200, achievement: 400, levelup: 400,
+    heave: 200, ooh: 900, ding: 300, trombone: 2500, siren: 1500, bassdrop: 800, stamp: 90, chime: 150, rise: 400, whoosh: 60, slap: 90 };
 
-  play(name: string, x?: number, z?: number) {
+  /** `k` (0–1.4): strength of the juice layers (throw power, distance falloff for other players' actions). */
+  play(name: string, x?: number, z?: number, k = 1) {
     if (!this.ctx) return;
     const now = performance.now();
     const gap = Audio.GAP[name] ?? 50;
     if (now - (this.lastPlayed.get(name) ?? -1e9) < gap) return; // same sound fired twice at once: play it once
-    if (this.voices > 24 && name !== 'ultimate' && name !== 'achievement') return; // too busy: drop minor sounds
+    if (this.voices > 24 && name !== 'ultimate' && name !== 'achievement' && name !== 'bassdrop') return; // too busy: drop minor sounds
     this.lastPlayed.set(name, now);
     this.voices++; window.setTimeout(() => { this.voices--; }, 400);
-    const v = this.gainFor(x, z);
+    const v = this.gainFor(x, z) * Math.max(0.15, Math.min(1, k));
     switch (name) {
       case 'grab': this.tone(330, 0.12, 'triangle', 0.16 * v, 0, 520); this.noise(0.12, 0.12 * v, 1200); this.tone(260, 0.18, 'sawtooth', 0.05 * v, 0.06, 420); break;
       case 'hit': this.noise(0.12, 0.35 * v, 2500); this.tone(180, 0.12, 'square', 0.14 * v, 0, 70); this.tone(1200, 0.08, 'triangle', 0.06 * v, 0.03); break;
@@ -113,6 +140,35 @@ export class Audio {
       case 'error': this.tone(220, 0.15, 'square', 0.07); break;
       case 'step': this.noise(0.05, 0.035, 900); break;
       case 'quick': this.tone(1046, 0.08, 'sine', 0.1); this.tone(1318, 0.1, 'sine', 0.1, 0.07); break;
+      // ---- 打擊感 layers (game.ts juice) ----
+      case 'heave': // 「嘿咻」: two short voiced grunts (buzzy saw through a vowel-ish band) + a cloth rustle
+        this.voice(190, 150, 0.09, 0.11 * v, 700, 0); this.voice(240, 170, 0.14, 0.12 * v, 1100, 0.11);
+        this.noise(0.1, 0.06 * v, 2500, 0.02, 'bandpass'); break;
+      case 'whoosh': { // pitch rises with throw strength
+        const f = 500 + 900 * Math.max(0.3, Math.min(1.4, k));
+        this.sweep(0.32, 0.22 * v * Math.min(1.2, k), f * 0.5, f * 1.6, 0); this.tone(f * 0.6, 0.22, 'sine', 0.05 * v, 0, f * 0.25); break;
+      }
+      case 'ding': this.tone(1568, 0.5, 'triangle', 0.1 * v); this.tone(2093, 0.6, 'sine', 0.06 * v, 0.02); break;
+      case 'ooh': // crowd "ooh": a few detuned voices with a rising-then-falling vowel band
+        for (const [f, d] of [[180, 0], [225, 0.02], [270, 0.04], [320, 0.03]] as const) this.voice(f, f * 1.12, 0.7, 0.035 * v, 500, d, f * 0.92);
+        break;
+      case 'stamp': this.tone(140, 0.14, 'sine', 0.22 * v, 0, 60); this.noise(0.08, 0.2 * v, 900); this.tone(900, 0.05, 'square', 0.04 * v, 0); break;
+      case 'star': this.tone(1760, 0.12, 'triangle', 0.07 * v, 0, 2637); this.tone(2637, 0.18, 'sine', 0.05 * v, 0.06); break;
+      case 'dust': this.noise(0.3, 0.14 * v, 500); break;
+      case 'rise': this.sweep(0.55, 0.2 * v, 300, 3200, 0); this.tone(200, 0.5, 'sawtooth', 0.04 * v, 0, 800); break;
+      case 'bassdrop':
+        this.tone(160, 1.1, 'sine', 0.35, 0.05, 32); this.tone(80, 1.2, 'triangle', 0.2, 0.05, 30);
+        this.sweep(0.25, 0.25, 6000, 300, 0); this.noise(0.6, 0.25, 220, 0.05); break;
+      case 'slap': // cartoon 「啪」: sharp crack + quick pitch drop
+        this.noise(0.05, 0.5 * v, 3500, 0, 'highpass'); this.noise(0.12, 0.25 * v, 1400, 0.005, 'bandpass');
+        this.tone(900, 0.07, 'square', 0.08 * v, 0, 180); this.tone(120, 0.12, 'sine', 0.18 * v, 0.01, 60); break;
+      case 'siren': // comedic police sting: wee-woo ×2
+        for (let i = 0; i < 4; i++) this.tone(i % 2 ? 660 : 880, 0.22, 'square', 0.05, 0.2 + i * 0.22, i % 2 ? 640 : 900);
+        break;
+      case 'chime': this.tone(1318, 0.35, 'sine', 0.08 * v); this.tone(1760, 0.45, 'sine', 0.06 * v, 0.07); this.tone(2637, 0.3, 'triangle', 0.025 * v, 0.14); break;
+      case 'trombone': // sad "wah wah wah waaah"
+        [[392, 0], [370, 0.3], [349, 0.6]].forEach(([f, at]) => this.voice(f / 2, f / 2 * 0.98, 0.28, 0.06, 900, at));
+        this.voice(165, 150, 0.8, 0.07, 800, 0.9, undefined, 5.5); break;
     }
   }
 

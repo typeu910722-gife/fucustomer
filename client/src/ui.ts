@@ -13,6 +13,8 @@ import { desktop, isApp, isFullscreen, setFullscreen } from './platform.ts';
 import { BTN, buttonGlyph, controlsLine } from './padmap.ts';
 import { padStyle } from './pad.ts';
 import { isTouch } from './storage.ts';
+import { levelBarHtml } from './progress-ui.ts';
+import type { StoreProg } from '../../shared/progression.ts';
 
 // ---------- 打工人的號角: invite links ----------
 /** Public address for invite links from the native apps (their own origin isn't reachable by friends). */
@@ -247,6 +249,8 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
             <select id="s-fps-cap"><option value="0">不限制（跟隨螢幕更新率／垂直同步）</option><option value="144">144 FPS</option><option value="120">120 FPS</option><option value="60">60 FPS</option><option value="40">40 FPS（Steam Deck 省電）</option><option value="30">30 FPS（手機省電）</option></select></label>
           <label class="field">視野 FOV <span id="s-fov-v"></span><input type="range" id="s-fov" min="60" max="100" step="1" value="${s.fov}"></label>
           <label class="chk"><input type="checkbox" id="s-fps" ${s.showFps ? 'checked' : ''}> 顯示 FPS</label>
+          <label class="chk"><input type="checkbox" id="s-shake" ${s.shake !== false ? 'checked' : ''}> 畫面震動（丟奧客、出手、全店退散）</label>
+          <label class="chk"><input type="checkbox" id="s-rmotion" ${s.reduceMotion ? 'checked' : ''}> 減少動態效果（關閉震動、慢動作、閃光）</label>
         </section>
         <section><h3>🔊 聲音</h3>
           <label class="field">主音量 <span id="s-master-v"></span><input type="range" id="s-master" min="0" max="1" step="0.05" value="${s.master}"></label>
@@ -279,7 +283,7 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
   const collect = (): Settings => ({
     ...s, quality: val('s-q') as Settings['quality'], sensitivity: Number(val('s-sens')), fov: Number(val('s-fov')), volume: Number(val('s-vol')), music: Number(val('s-music')),
     master: Number(val('s-master')), fpsCap: Number(val('s-fps-cap')), adaptive: chk('s-adapt'), renderScale: Number(val('s-scale')),
-    invertY: chk('s-inv'), showFps: chk('s-fps'), padSens: Number(val('s-pad')), padInvertY: chk('s-pinv'), rumble: chk('s-rumble'), fullscreen,
+    invertY: chk('s-inv'), showFps: chk('s-fps'), padSens: Number(val('s-pad')), padInvertY: chk('s-pinv'), rumble: chk('s-rumble'), fullscreen, shake: chk('s-shake'), reduceMotion: chk('s-rmotion'),
     serverUrl: val('s-url').trim(),
   });
   on('s-backup', 'click', () => backupScreen(() => settingsMenu(collect(), onDone, overlay)));
@@ -427,6 +431,12 @@ export function shopHtml(s: Snapshot, allowUpgrades: boolean) {
     }).join('')}</div>`;
 }
 
+/** 店面等級 panel in the nightly summary (free play / your own store / a branch); set by main.ts, null elsewhere. */
+let summaryExtra: (() => string) | null = null;
+export function setSummaryExtra(fn: (() => string) | null) { summaryExtra = fn; }
+/** Redraws the 店面等級 panel if the summary is already on screen (the nightly save can arrive after it). */
+export function refreshSummaryExtra() { const el = document.getElementById('sum-prog'); if (el && summaryExtra) el.innerHTML = summaryExtra(); }
+
 export function summaryHtml(s: Snapshot, selfId: string) {
   const d = s.dayStats;
   const me = s.players.find(p => p.id === selfId);
@@ -452,14 +462,15 @@ export function summaryHtml(s: Snapshot, selfId: string) {
     </div>
     <h3>隊伍</h3>
     <div>${s.players.map(p => `<span class="tag" style="margin:2px;display:inline-block"><span class="dot" style="display:inline-block;width:10px;height:10px;background:${hex(p.color)}"></span> ${esc(p.name)} ${p.ready ? '✅' : '⏳'}</span>`).join('')}</div>
+    ${summaryExtra ? `<div id="sum-prog" class="sumprog">${summaryExtra()}</div>` : ''}
     <div id="sum-shop"></div>
     <button class="btn ${me?.ready ? '' : 'primary'}" id="sum-ready">${me?.ready ? '等待隊友…（取消準備）' : `準備開始第 ${s.day + 1} 天`}</button>`;
 }
 
 /** Free play: pick a store type. Each map keeps its own save. */
-export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map: string, fresh: boolean): void; back(): void; pack?(packId: string): void; hire?: { wage: number; hired: Record<string, boolean>; set(map: string, on: boolean): void } }) {
-  show(`<div class="card wide"><div class="row" style="align-items:center"><h2 style="flex:1;margin:0">選擇店面</h2><button class="btn small" id="mp-back" style="flex:0">← 返回</button></div>
-    <p class="muted">每種店賣的東西、擺設和工作站都不一樣。各自有獨立的存檔。</p>
+export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map: string, fresh: boolean): void; back(): void; pack?(packId: string): void; records?(): void; hire?: { wage: number; hired: Record<string, boolean>; set(map: string, on: boolean): void } }, progs: Record<string, StoreProg> = {}) {
+  show(`<div class="card wide"><div class="row" style="align-items:center"><h2 style="flex:1;margin:0">選擇店面</h2>${h.records ? '<button class="btn small" id="mp-records" style="flex:0">🏆 我的紀錄</button>' : ''}<button class="btn small" id="mp-back" style="flex:0">← 返回</button></div>
+    <p class="muted">每種店賣的東西、擺設和工作站都不一樣。各自有獨立的存檔。每撐過一天，店面就會累積名聲（Lv1–10），解鎖免費小獎勵。</p>
     <div class="grid2">${MAPS.map(m => {
       const sv = saves[m.id];
       const foods = [m.coffee && `${m.coffee.icon}${m.coffee.food}`, m.meal && `${m.meal.icon}${m.meal.food}`].filter(Boolean).join('、') || '不賣吃的';
@@ -469,12 +480,14 @@ export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map
         <div class="row"><button class="btn purple" data-map-pack="${k.id}">🛍 看擴充包</button></div></div>`;
       return `<div class="shopitem mapcard" style="--mc:${hex(m.theme.accent)}"><b class="mapname"><span class="mapicon">${m.icon}</span>${esc(m.name)}</b>
         <span class="muted">${esc(m.desc)}</span>
+        ${progs[m.id]?.days || sv ? levelBarHtml(progs[m.id], false, true) : ''}
         <span class="muted">商品：${[m.products.drinks, m.products.snacks, m.products.bento, m.products.extra].filter(Boolean).map(p => esc(p!.name)).join('、')}・現做：${esc(foods)}</span>
         ${h.hire ? `<label class="hirebox"><input type="checkbox" data-hire="${m.id}" ${h.hire.hired[m.id] ? 'checked' : ''}> 🧑‍💼 雇用小陳（日薪 $${h.hire.wage}，從當天營收扣）</label>` : ''}
         <div class="row">${sv ? `<button class="btn primary" data-map-cont="${m.id}">繼續（第 ${sv.day} 天）</button>` : ''}
         <button class="btn ${sv ? '' : 'primary'}" data-map="${m.id}">${sv ? '重新開店' : '開店營業'}</button></div></div>`;
     }).join('')}</div></div>`);
   document.getElementById('mp-back')!.onclick = () => h.back();
+  on('mp-records', 'click', () => h.records?.());
   document.querySelectorAll<HTMLButtonElement>('[data-map-pack]').forEach(b => { b.onclick = () => h.pack?.(b.dataset.mapPack!); });
   document.querySelectorAll<HTMLInputElement>('[data-hire]').forEach(c => { c.onchange = () => h.hire?.set(c.dataset.hire!, c.checked); });
   document.querySelectorAll<HTMLButtonElement>('[data-map-cont]').forEach(b => { b.onclick = () => h.play(b.dataset.mapCont!, false); });

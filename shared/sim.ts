@@ -1463,7 +1463,7 @@ export function requestHit(w: World, playerId: string, rid: string, id: number) 
   c.x = pos.x; c.z = pos.z;
   const wasStunned = (c.stunT ?? 0) > 0;
   c.stunT = c.kind === 'boss' ? 1.5 : 2.5;
-  ev(w, { e: 'fx', name: 'hit', x: c.x, z: c.z, by: p.name });
+  ev(w, { e: 'fx', name: 'hit', x: c.x, z: c.z, by: p.name, report: c.kind === 'normal' || !legal || !!c.vip });
   ev(w, { e: 'sfx', name: 'hit', x: c.x, z: c.z });
   if (c.kind === 'normal') {
     adjRating(w, -0.3); adjChaos(w, 8);

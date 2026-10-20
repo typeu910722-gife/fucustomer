@@ -4,7 +4,7 @@ import { Game } from './game.ts';
 import { LocalConnection, GameConnection } from './net.ts';
 import type { Intent } from './net-ws.ts';
 import {
-  clearSoloSave, loadFreeplayHires, saveFreeplayHire, defaultServerUrl, detectPlatform, isTouch, loadCoopSave, loadLastSession, loadSettings, loadSoloSave, saveSettings,
+  clearSoloSave, loadFreeplayHires, saveFreeplayHire, saveSoloSave, defaultServerUrl, detectPlatform, isTouch, loadCoopSave, loadLastSession, loadSettings, loadSoloSave, saveSettings,
 } from './storage.ts';
 import * as UI from './ui.ts';
 import { careerScreen, loadProfile, resultScreen, saveProfile } from './career-ui.ts';
@@ -21,8 +21,13 @@ import { WEEKLY_ID, WEEKLY_TWISTS, applyWeekly, buildWeeklyConfig, isoWeek, week
 import { type ArcLine, type ArcPick, arcConfig, arcSpeaker, finishArc, pickArc, takePreScene } from '../../shared/regulars.ts';
 import { setShiftRegular } from './game.ts';
 import { getCosmetic } from '../../shared/shop.ts';
-import { FREEPLAY_STAFF_WAGE, ownStoreConfig, settleStoreDay, staffPace } from '../../shared/ownstore.ts';
-import { dayConfig } from '../../shared/sim.ts';
+import { FREEPLAY_STAFF_WAGE, branchConfig, ownStoreConfig, settleStoreDay, staffPace } from '../../shared/ownstore.ts';
+import { dayConfig, defaultSave } from '../../shared/sim.ts';
+import { applyReportToSave, grantLevelCosmetics, newProg, payBranches, recordDay, SUPPLIER_BOX, type BranchPay, type DayReport, type StoreProg } from '../../shared/progression.ts';
+import { summaryProgHtml } from './progress-ui.ts';
+import { ALL_PRODUCTS } from '../../shared/constants.ts';
+import type { StoreSave } from '../../shared/protocol.ts';
+import type { CareerProfile } from '../../shared/career.ts';
 import { MAPS, getMap } from '../../shared/maps/index.ts';
 import { OUTSIDE_SCORE, buildRaidConfig, raidReward } from '../../shared/raid.ts';
 import { getStore, sendRaid, syncStore } from './friends.ts';
@@ -122,7 +127,43 @@ function career(tab?: Parameters<typeof careerScreen>[2], focus?: string) {
     opened: () => sceneOnce('store-open', () => career('store')),
     raid: code => void raidFriend(code),
     freePlay: () => freePlay(),
+    branch: i => playBranch(i),
   }, tab, focus);
+}
+
+// ---------------- 店面等級 (progression.ts) ----------------
+/** What the nightly summary's 店面等級 panel shows (null outside free play / own store / branches). */
+let night: { prog: StoreProg; r: DayReport | null; own: boolean; pays: BranchPay[] } | null = null;
+function showStoreLevel(prog: StoreProg, own: boolean) {
+  night = { prog: { ...prog }, r: null, own, pays: [] };
+  UI.setSummaryExtra(() => (night ? summaryProgHtml(night.prog, night.r, night.own, night.pays) : ''));
+}
+function endStoreLevel() { night = null; UI.setSummaryExtra(null); }
+
+/**
+ * One closed business day of a store you run (free play, your own store or a branch): XP and records, tonight's event
+ * and the 廠商熟客 box (also put into the running store), free level cosmetics, achievements, and the other branches'
+ * income. Returns the save with the rewards applied.
+ */
+function storeNight(prof: CareerProfile, prog: StoreProg, save: StoreSave, prev: StoreSave, map: string, conn: LocalConnection | null, own: boolean, skipBranch?: string): StoreSave {
+  const ds = conn?.dayStats();
+  const input = {
+    revenue: ds?.revenue ?? Math.max(0, save.totals.revenue - prev.totals.revenue),
+    karens: ds?.karensResolved ?? Math.max(0, save.totals.karens - prev.totals.karens), rating: save.rating,
+  };
+  const products = ALL_PRODUCTS.filter(p => p !== 'extra' || !!getMap(map).products.extra);
+  const r = recordDay(prog, input, { own, key: `${map}|${own ? 'own' : 'free'}|${save.day}|${save.totals.served}`, backstock: save.backstock, products });
+  conn?.grant(r.event?.money ?? 0, r.event?.rating ?? 0, r.supplier ? { product: r.supplier, qty: SUPPLIER_BOX } : undefined);
+  const gifts = grantLevelCosmetics(prof, r.level);
+  const pays = payBranches(prof, localDate(), `${map}|${save.day}|${Date.now()}`, skipBranch);
+  const fresh = updateAchievements(prof);
+  night = { prog: { ...prog }, r, own, pays };
+  UI.refreshSummaryExtra();
+  if (r.levels.length) { current?.toast(`🎉 店面升級！Lv${r.level}${r.unlocked.length ? `・解鎖 ${r.unlocked.map(u => u.icon + u.name).join('、')}` : ''}`, 'good', 5000); audio.play('levelup'); }
+  if (gifts.length) current?.toast('🎁 免費店面裝飾已放進商城，可以擺上了！', 'good', 4000);
+  for (const a of fresh) current?.toast(`🏆 成就解鎖：${a.name}`, 'good', 4000);
+  if (fresh.length) reportAchievements(prof.achievements);
+  return applyReportToSave(save, r);
 }
 
 /** Your own store: business days with an employee; every nightly save may end in bankruptcy. */
@@ -134,6 +175,7 @@ function playStore() {
   const cfg = ownStoreConfig(p, dayConfig());
   const look = myLoadout();
   const st = p.store.staff;
+  showStoreLevel(p.store.prog ?? newProg(), true);
   let conn: LocalConnection | null = null;
   let bankrupt = '';
   startGame(() => (conn = new LocalConnection(playerName(), p.store!.save, cfg, undefined, {
@@ -144,6 +186,7 @@ function playStore() {
       const prof = loadProfile();
       // bought something between days: just keep the till / upgrades (no settlement)
       if (kind === 'purchase') { if (prof.store) { prof.store.save = save; saveProfile(prof); } return; }
+      if (prof.store) save = storeNight(prof, (prof.store.prog ??= newProg()), save, prof.store.save, prof.store.map, conn, true);
       const out = settleStoreDay(prof, save);
       saveProfile(prof);
       if (prof.store?.online) void syncStore(prof.store); // friends see today's shelves and rating
@@ -152,6 +195,7 @@ function playStore() {
       if (out.bankrupt) { bankrupt = out.reason; current?.toast(`💸 ${out.reason}……店撐不下去了`, 'bad', 5000); window.setTimeout(() => current?.exit(), 2500); }
     },
   })), () => {
+    endStoreLevel();
     // hit someone today? the police were waiting outside (the store's 監視器 footage goes with the case)
     const incidents = conn?.incidents() ?? [];
     const after = () => {
@@ -169,6 +213,40 @@ function playStore() {
 }
 /** How heavy the fines are for your own store (same scale as the career chapters). */
 const ownStoreChapter = (level: number) => Math.max(1, Math.min(7, Math.ceil(level / 5)));
+
+/** Visit one of your 分店: a business day like the flagship (the manager helps; no wage, no bankruptcy). */
+function playBranch(i: number) {
+  const p = loadProfile();
+  const b = p.store?.branches?.[i];
+  if (!p.store || !b) return career('store');
+  if (storeLocked(b.map, 'own', entitlementsFor(p))) return career('store');
+  const cfg = branchConfig(p, b, dayConfig());
+  const look = myLoadout();
+  let conn: LocalConnection | null = null;
+  showStoreLevel(b.prog, false);
+  const mine = (prof: CareerProfile) => prof.store?.branches?.find(x => x.map === b.map) ?? null;
+  startGame(() => (conn = new LocalConnection(playerName(), b.save, cfg, undefined, {
+    staff: { name: `店長${b.manager}`, pace: 1, outfit: outfitOf({ hat: look.hat, uniform: look.uniform }) },
+    outfit: outfitOf(look),
+    onSave: (save, kind) => {
+      const prof = loadProfile(), br = mine(prof);
+      if (!br) return;
+      if (kind === 'night') save = storeNight(prof, br.prog, save, br.save, br.map, conn, false, br.map);
+      br.save = save;
+      saveProfile(prof);
+    },
+  })), () => {
+    endStoreLevel();
+    const incidents = conn?.incidents() ?? [];
+    if (!needsCourt(incidents)) return career('store');
+    const prof = loadProfile();
+    sceneOnce('first-court', () => courtScreen(incidents, ownStoreChapter(prof.level), cr => {
+      const paid = payFine(prof, cr.fine, cr.extraCost);
+      saveProfile(prof);
+      UI.message('⚖ 審訊結束', paid ? `罰款從存款扣了 $${paid}。分店店長說他什麼都沒看到。` : '無罪！店長幫你作證，回店裡繼續拚。', '好', () => career('store'));
+    }), prof);
+  }, look);
+}
 
 /** Leaving your own store with the door unlocked: friends could walk right in. */
 function lockReminder() {
@@ -269,6 +347,8 @@ function runShift(id: string, cfg: ReturnType<typeof buildShiftConfig>, seed?: n
         gift: arcOut.completed && cos ? `🎁 獲得「${cos.icon} ${cos.name}」（免費，在商城可以${cos.slot === 'sign' || cos.slot === 'mascot' || cos.slot === 'mat' ? '擺上' : '穿上'}）・成就「${arc.arc.reward.title}」` : undefined,
       };
     }
+    // 連鎖分店: a real shift somewhere else, so each branch sends its (capped) income and a report
+    const pays = payBranches(prof, localDate(), `shift|${result.shiftId}|${Date.now()}`);
     const fresh = updateAchievements(prof, result);
     saveProfile(prof);
     reportAchievements(prof.achievements);
@@ -278,6 +358,7 @@ function runShift(id: string, cfg: ReturnType<typeof buildShiftConfig>, seed?: n
     const then = (fn: () => void) => () => sceneOnce(outro, fn);
     const show = () => {
       resultScreen(result, reward, prof, fresh, { retry: then(() => playShift(id)), next: n => then(() => (n ? playShift(n) : career()))(), career: then(career) });
+      if (pays.length) document.querySelector('.result .reward')?.insertAdjacentHTML('afterend', `<div class="muted branchpay" style="text-align:center">🏬 分店入帳 +$${pays.reduce((n, x) => n + x.amount, 0)}・${pays.map(x => `${UI.esc(x.name)}店長${UI.esc(x.manager)}：「${UI.esc(x.line)}」`).join('　')}</div>`);
       audio.play(result.won ? 'win' : 'lose');
       if (reward.levels.length) window.setTimeout(() => audio.play('levelup'), 900);
       if (fresh.length) window.setTimeout(() => audio.play('achievement'), 1500);
@@ -299,9 +380,11 @@ function freePlay() {
   const saves: Record<string, ReturnType<typeof loadSoloSave>> = {};
   for (const m of MAPS) saves[m.id] = loadSoloSave(m.id);
   const hired = loadFreeplayHires();
+  const progs = loadProfile().freeProg;
   UI.mapPicker(saves, {
     hire: { wage: FREEPLAY_STAFF_WAGE, hired, set: (map, on) => { hired[map] = on; saveFreeplayHire(map, on); } },
     back: () => career(),
+    records: () => career('stats'),
     pack: id => career('shop', id),
     play: (map, fresh) => {
       const p = loadProfile(), lock = storeLocked(map, 'free', entitlementsFor(p));
@@ -311,9 +394,22 @@ function freePlay() {
       const look = myLoadout();
       // 雇用小陳: the same employee bot as in your own store; the wage comes out of each day's settlement
       const staff = hired[map] ? { name: '小陳', pace: 1 } : undefined;
-      startGame(() => new LocalConnection(playerName(), save, undefined, undefined, { map, outfit: outfitOf(look), staff, staffWage: staff ? FREEPLAY_STAFF_WAGE : undefined }), () => freePlay(), look);
+      // 店面等級: each night adds XP / records to this store type (kept even when you restart the store from day 1)
+      let prev: StoreSave = save ?? defaultSave();
+      let conn: LocalConnection | null = null;
+      showStoreLevel(p.freeProg[map] ?? newProg(), false);
+      const onSave = (sv: StoreSave, kind: 'night' | 'purchase') => {
+        if (kind === 'night') {
+          const prof = loadProfile();
+          sv = storeNight(prof, (prof.freeProg[map] ??= newProg()), sv, prev, map, conn, false);
+          saveProfile(prof);
+        }
+        prev = sv;
+        saveSoloSave(sv, map);
+      };
+      startGame(() => (conn = new LocalConnection(playerName(), save, undefined, undefined, { map, outfit: outfitOf(look), staff, staffWage: staff ? FREEPLAY_STAFF_WAGE : undefined, onSave })), () => { endStoreLevel(); freePlay(); }, look);
     },
-  });
+  }, progs);
 }
 
 function badge(): UI.CareerBadge {

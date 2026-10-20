@@ -166,6 +166,7 @@ const ACH = {
   STARS_60: ['⭐', '#ffc23d'], PERFECT: ['🌟', '#ffc23d'], COMBO_5: ['💨', '#ff8fc7'], ENDLESS_1600: ['🌙', '#5f43c4'], ENDLESS_PLAYED: ['☕', '#8f6bff'],
   DAILY_FIRST: ['🎯', '#48a6ff'], DAILY_STREAK_3: ['🔥', '#ff5d5d'],
   ARC_AUNTIE: ['🎫', '#ffa94d'], ARC_KAI: ['🔴', '#ff5d5d'], ARC_ZHANG: ['✅', '#39c96b'], ARC_VICKY: ['🔌', '#48a6ff'], WEEKLY_BADGE: ['🏅', '#ffc23d'], WEEKLY_BADGE_4: ['📆', '#8f6bff'],
+  STORE_LV5: ['5', '#48a6ff'], STORE_LV10: ['🌟', '#ffc23d'], BRANCH_1: ['🏬', '#39c96b'], BRANCH_3: ['🏙', '#8f6bff'], STREAK_7: ['7', '#ff8fc7'], STREAK_30: ['30', '#ff5d5d'],
 };
 const badge = (glyph, col, locked) => {
   const isNum = /^\d+$/.test(glyph);

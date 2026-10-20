@@ -131,7 +131,8 @@ export type GameEvent =
   | { e: 'quick'; from: string; text: string }
   | { e: 'phase'; phase: Phase; day: number }
   | { e: 'hint'; text: string }
-  | { e: 'fx'; name: 'eject' | 'ultimate' | 'spin' | 'throw' | 'mistake' | 'impact' | 'hit' | 'shove'; x: number; z: number; combo?: number; by?: string };
+  /** report (hit only): this smack will bring the police (client plays a siren sting) — older clients ignore it. */
+  | { e: 'fx'; name: 'eject' | 'ultimate' | 'spin' | 'throw' | 'mistake' | 'impact' | 'hit' | 'shove'; x: number; z: number; combo?: number; by?: string; report?: boolean };
 
 export type ServerMsg =
   | { type: 'welcome'; playerId: string; token: string; code: string; reconnected: boolean; solo: boolean }

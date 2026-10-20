@@ -18,7 +18,7 @@ function sampleStore(): Record<string, string> {
   const cafe = defaultSave(); cafe.day = 3;
   return {
     [K.career]: JSON.stringify(p),
-    [K.settings]: JSON.stringify({ name: '阿明', sensitivity: 1.4, quality: 'medium', volume: 0.3, music: 0.2, serverUrl: 'wss://evil.example/ws', fov: 80, fpsCap: 30, adaptive: false, invertY: true, showFps: true, master: 0.8, padSens: 1.7, padInvertY: true, rumble: false, renderScale: 0.75, fullscreen: false }),
+    [K.settings]: JSON.stringify({ name: '阿明', sensitivity: 1.4, quality: 'medium', volume: 0.3, music: 0.2, serverUrl: 'wss://evil.example/ws', fov: 80, fpsCap: 30, adaptive: false, invertY: true, showFps: true, master: 0.8, padSens: 1.7, padInvertY: true, rumble: false, renderScale: 0.75, fullscreen: false, shake: false, reduceMotion: true }),
     [K.flags]: JSON.stringify({ tutorialDone: true, seenKarens: ['loud'], seenMaps: ['cafe'] }),
     [K.avatar]: '🐱',
     [K.soloConv]: JSON.stringify(solo),
@@ -54,6 +54,8 @@ test('round trip: export → parse → apply restores progress on an empty devic
   // controller / PC settings (round 21) travel too
   assert.equal(st.master, 0.8); assert.equal(st.padSens, 1.7); assert.equal(st.padInvertY, true); assert.equal(st.rumble, false);
   assert.equal(st.renderScale, 0.75); assert.equal(st.fullscreen, false);
+  // 打擊感 accessibility settings (round 24)
+  assert.equal(st.shake, false); assert.equal(st.reduceMotion, true);
   assert.equal(summarizeStore(set).level, 12);
 });
 
@@ -127,7 +129,7 @@ test('tampering, garbage and wrong types are rejected', () => {
   assert.ok(big.ok); if (!big.ok) return;
   assert.equal(big.payload.career.level, 30); assert.equal(big.payload.career.wallet, 1e8);
   assert.deepEqual(big.payload.settings, { volume: 1 });
-  const odd = parseSaveCode(mk({ ...ok, settings: { master: 9, padSens: 0, renderScale: 3, fpsCap: 75, rumble: 'on', padInvertY: 1, fullscreen: true } }));
+  const odd = parseSaveCode(mk({ ...ok, settings: { master: 9, padSens: 0, renderScale: 3, fpsCap: 75, rumble: 'on', padInvertY: 1, fullscreen: true, shake: 'no', reduceMotion: 1 } }));
   assert.ok(odd.ok); if (!odd.ok) return;
   assert.deepEqual(odd.payload.settings, { master: 1, padSens: 0.2, renderScale: 1, fullscreen: true });
   const deck = parseSaveCode(mk({ ...ok, settings: { fpsCap: 40 } }));
@@ -140,4 +142,44 @@ test('size limit: input over ~200KB is rejected before decoding', () => {
   if (!r.ok) assert.match(r.error, /200KB/);
   // a real code with lots of progress stays far below the limit
   assert.ok(exportSaveCode(sampleStore()).length < 20_000);
+});
+
+test('store levels, personal records and branches travel in the code (re-sanitized), old codes still import', async () => {
+  const { newProg, openBranch, LEVEL_XP } = await import('../shared/progression.ts');
+  const { openStore } = await import('../shared/ownstore.ts');
+  const p = newProfile();
+  p.stars['6-3'] = 1; p.wallet = 20_000;
+  openStore(p, '阿明商店', 2500, defaultSave(), 'convenience');
+  p.store!.prog = { ...newProg(), xp: LEVEL_XP[6], days: 40, bestRevenue: 900, bestKarens: 12, streak: 4, bestStreak: 11 };
+  openBranch(p, 'cafe', '貓咪分店', defaultSave());
+  p.freeProg = { bakery: { ...newProg(), xp: 777, days: 4, bestRevenue: 600, bestKarens: 8, streak: 2, bestStreak: 3 } };
+  const code = exportSaveCode({ [K.career]: JSON.stringify(p) }, 1);
+  const r = parseSaveCode(code);
+  assert.ok(r.ok);
+  if (!r.ok) return;
+  assert.equal(r.summary.storeLevel, 7); assert.equal(r.summary.branches, 1);
+  const got = JSON.parse(applySave(r.payload, {}).set[K.career]);
+  assert.deepEqual(got.freeProg, p.freeProg);
+  assert.deepEqual(got.store.prog, p.store!.prog);
+  assert.equal(got.store.branches[0].name, '貓咪分店'); assert.equal(got.store.branches[0].map, 'cafe');
+  // a tampered code (re-checksummed) can't smuggle absurd values: clamped by the profile sanitizer
+  const body = JSON.parse(Buffer.from(code.slice(5, code.lastIndexOf('-')).replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+  body.career.freeProg = { bakery: { xp: 1e15, days: 'x' }, hacker: { xp: 5 } };
+  body.career.store.branches = [...body.career.store.branches, ...['bakery', 'boba', 'chicken', 'cafe', 'gym'].map(m => ({ ...body.career.store.branches[0], map: m }))];
+  body.career.store.branches[0].payCount = 999;
+  const b64 = Buffer.from(JSON.stringify(body), 'utf8').toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const t = parseSaveCode(`FUC1-${b64}-${checksum(b64)}`);
+  assert.ok(t.ok);
+  if (!t.ok) return;
+  assert.deepEqual(Object.keys(t.payload.career.freeProg), ['bakery']);
+  assert.equal(t.payload.career.freeProg.bakery.xp, 99_999);
+  assert.equal(t.payload.career.store!.branches!.length, 3);
+  assert.equal(t.payload.career.store!.branches![0].payCount, 3);
+  // a code made before this round (no freeProg / prog / branches) imports with everything at Lv1
+  const oldP = JSON.parse(JSON.stringify(p)); delete oldP.freeProg; delete oldP.store.prog; delete oldP.store.branches;
+  const o = parseSaveCode(exportSaveCode({ [K.career]: JSON.stringify(oldP) }, 1));
+  assert.ok(o.ok);
+  if (!o.ok) return;
+  assert.deepEqual(o.payload.career.freeProg, {}); assert.deepEqual(o.payload.career.store!.branches, []);
+  assert.equal(o.summary.storeLevel, 1); assert.equal(o.summary.branches, 0);
 });

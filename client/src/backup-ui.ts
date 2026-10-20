@@ -31,6 +31,8 @@ function compare(cur: SaveSummary, inc: SaveSummary) {
     ['外觀', `${cur.cosmetics} 件`, `${inc.cosmetics} 件`],
     ['自由營業存檔', `${cur.soloSaves} 間`, `${inc.soloSaves} 間`],
     ['自己的店', cur.ownStore ? '有' : '沒有', inc.ownStore ? '有' : '沒有'],
+    ['最高店面等級', cur.storeLevel ? `Lv${cur.storeLevel}` : '—', inc.storeLevel ? `Lv${inc.storeLevel}` : '—'],
+    ['分店', `${cur.branches} 間`, `${inc.branches} 間`],
   ];
   return `<table class="bk-cmp"><tr><th></th><th>這台裝置（會被覆蓋）</th><th>存檔碼</th></tr>
     ${rows.map(([k, a, b]) => `<tr><td>${k}</td><td>${esc(a)}</td><td><b>${esc(b)}</b></td></tr>`).join('')}</table>`;

@@ -4,6 +4,7 @@ import { CHAPTERS, ENDLESS_ID, type CareerProfile, type ShiftResult } from './ca
 import { dexCount } from './karendex.ts';
 import { SIG_KINDS } from './sigkarens.ts';
 import { arcDone } from './regulars.ts';
+import { bestStreakAll, branchCount, maxStoreLevel } from './progression.ts';
 
 export interface Achievement { id: string; name: string; desc: string; check: (p: CareerProfile, r?: ShiftResult) => boolean }
 
@@ -43,6 +44,13 @@ export const ACHIEVEMENTS: Achievement[] = [
   // 每週挑戰 (weekly.ts)
   { id: 'WEEKLY_BADGE', name: '本週全制霸', desc: '一週內完成每週挑戰的 3 個目標，拿到週章', check: p => p.weekly.badges.length >= 1 },
   { id: 'WEEKLY_BADGE_4', name: '月月不缺席', desc: '收集 4 枚每週挑戰週章', check: p => p.weekly.badges.length >= 4 },
+  // 店面等級・連鎖分店・個人紀錄 (progression.ts)
+  { id: 'STORE_LV5', name: '區域名店', desc: '任何一間店（自由營業或自己開的店）升到 Lv5', check: p => maxStoreLevel(p) >= 5 },
+  { id: 'STORE_LV10', name: '傳說名店', desc: '任何一間店升到 Lv10', check: p => maxStoreLevel(p) >= 10 },
+  { id: 'BRANCH_1', name: '連鎖起步', desc: '開第一間分店', check: p => branchCount(p) >= 1 },
+  { id: 'BRANCH_3', name: '連鎖帝國', desc: '同時擁有 3 間分店', check: p => branchCount(p) >= 3 },
+  { id: 'STREAK_7', name: '一週好評', desc: '同一間店連續 7 天打烊時口碑 3★ 以上', check: p => bestStreakAll(p) >= 7 },
+  { id: 'STREAK_30', name: '好評一整個月', desc: '同一間店連續 30 天打烊時口碑 3★ 以上', check: p => bestStreakAll(p) >= 30 },
 ];
 
 /** Records newly earned achievements in the profile and returns them (in list order). */

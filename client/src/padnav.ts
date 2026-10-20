@@ -50,6 +50,8 @@ function adjust(el: HTMLElement, dir: Dir): boolean {
   const d = dir === 'right' ? 1 : -1;
   if (el instanceof HTMLInputElement && el.type === 'range') {
     const step = Number(el.step) || 1, min = Number(el.min), max = Number(el.max);
+    // Already at the end in this direction: let the D-pad move focus instead, so a slider never traps the player in a column.
+    if ((d > 0 && Number(el.value) >= max) || (d < 0 && Number(el.value) <= min)) return false;
     const v = Math.max(min, Math.min(max, Math.round((Number(el.value) + d * step) / step) * step));
     el.value = String(Number(v.toFixed(4)));
     el.dispatchEvent(new Event('input', { bubbles: true })); el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -57,7 +59,8 @@ function adjust(el: HTMLElement, dir: Dir): boolean {
   }
   if (el instanceof HTMLSelectElement) {
     const i = Math.max(0, Math.min(el.options.length - 1, el.selectedIndex + d));
-    if (i !== el.selectedIndex) { el.selectedIndex = i; el.dispatchEvent(new Event('change', { bubbles: true })); }
+    if (i === el.selectedIndex) return false; // at the first/last option: move focus instead
+    el.selectedIndex = i; el.dispatchEvent(new Event('change', { bubbles: true }));
     return true;
   }
   return false;

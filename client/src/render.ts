@@ -305,6 +305,8 @@ function customerTag(c: CustomerSnap): Tag | null {
 // ---------- the store ----------
 interface Smoothed { x: number; z: number; yaw: number }
 
+const SQUASH_T = 0.32, STAR_T = 0.7;
+
 export class StoreView {
   scene = new THREE.Scene();
   camera: THREE.PerspectiveCamera;
@@ -319,7 +321,8 @@ export class StoreView {
   private reg2On = false;
   private stationLabels: { l: Label; on: () => boolean }[] = [];
   private doorL!: THREE.Mesh; private doorR!: THREE.Mesh; private doorOpen = 0;
-  private customers = new Map<number, { h: Human; s: Smoothed; kind: string; tag: Tag | null; compactT: number }>();
+  /** sq: grab squash-stretch timer; spinY: extra tumble yaw; bx/by: the model's own scale (kids, tall…). */
+  private customers = new Map<number, { h: Human; s: Smoothed; kind: string; tag: Tag | null; compactT: number; sq: number; spinY: number; bx: number; by: number }>();
   private players = new Map<string, { h: Human; s: Smoothed }>();
   private spills = new Map<number, THREE.Mesh>();
   private items = new Map<number, THREE.Object3D>();
@@ -1290,7 +1293,7 @@ export class StoreView {
       if (!e) {
         const h = new Human(q, customerLook(c));
         if (c.kind !== 'normal') karenAccessory(q, h, c.kind);
-        e = { h, s: { x: c.x, z: c.z, yaw: c.yaw }, kind: c.kind, tag: null, compactT: 0 };
+        e = { h, s: { x: c.x, z: c.z, yaw: c.yaw }, kind: c.kind, tag: null, compactT: 0, sq: 0, spinY: 0, bx: h.group.scale.x, by: h.group.scale.y };
         this.customers.set(c.id, e); this.scene.add(h.group);
       }
       if (c.flying || c.held) { e.s.x = c.x; e.s.z = c.z; } else this.smooth(e.s, c.x, c.z, c.yaw, dt);
@@ -1298,10 +1301,18 @@ export class StoreView {
       const sitting = c.state === 'charge' && !c.held && !c.flying;
       // thrown out: flat on the back, then sits up over the last 0.7 s
       const lying = c.down > 0 ? Math.min(1, c.down / 0.7) : 0;
-      e.h.group.position.set(e.s.x, c.held ? 0.95 : sitting ? SIT_Y : lying ? 0.3 * lying : c.y, e.s.z); e.h.group.rotation.y = e.s.yaw;
+      // 打擊感: carried karens hang with a weighty sway; spun karens tumble on two axes
+      const sway = c.held ? Math.sin(this.time * 3.2 + c.id) * 0.12 : 0;
+      e.spinY = c.flying && this.tumbleT > 0 ? e.spinY + dt * 14 : c.flying ? e.spinY : 0;
+      e.h.group.position.set(e.s.x, c.held ? 0.95 + Math.abs(sway) * 0.25 : sitting ? SIT_Y : lying ? 0.3 * lying : c.y, e.s.z); e.h.group.rotation.y = e.s.yaw + e.spinY + sway * 0.5;
       // lying face-up so the dazed face is visible
       e.h.group.rotation.x = c.flying ? e.h.group.rotation.x + dt * 9 : -Math.PI / 2 * lying;
-      e.h.group.rotation.z = c.held ? Math.PI / 2 + Math.sin(this.time * 12) * 0.15 : 0;
+      e.h.group.rotation.z = c.held ? Math.PI / 2 + Math.sin(this.time * 12) * 0.15 + sway : 0;
+      if (e.sq > 0) { // grab squash & stretch: a quick damped boing
+        e.sq = Math.max(0, e.sq - dt);
+        const t = 1 - e.sq / SQUASH_T, sy = 1 + 0.32 * Math.sin(t * Math.PI * 3) * (1 - t), sxz = 1 / Math.sqrt(sy);
+        e.h.group.scale.set(e.bx * sxz, e.by * sy, e.bx * sxz);
+      } else if (e.h.group.scale.y !== e.by) e.h.group.scale.set(e.bx, e.by, e.bx);
       const pose = c.held || c.flying ? 'flail'
         : lying ? 'dazed'
         : sitting && c.kind === 'charger' && c.phase > 0 ? 'sitAngry'
@@ -1391,7 +1402,16 @@ export class StoreView {
     const me = snap.players.find(p => p.id === selfId);
     (this.exitGlow.material as THREE.MeshBasicMaterial).opacity = me?.grabbing != null ? 0.35 + Math.sin(this.time * 6) * 0.15 : 0;
     this.exitGlow.visible = me?.grabbing != null;
-    this.shake = Math.max(0, this.shake - dt); this.flash = Math.max(0, this.flash - dt);
+    this.shake = Math.max(0, this.shake - dt); this.flash = Math.max(0, this.flash - dt); this.tumbleT = Math.max(0, this.tumbleT - dt);
+    // impact stars (pooled sprites) pop, spin and fade
+    for (const st of this.stars) {
+      if (st.life <= 0) continue;
+      st.life -= dt; const t = 1 - st.life / STAR_T;
+      st.s.visible = st.life > 0;
+      st.s.scale.setScalar(st.size * (t < 0.15 ? t / 0.15 * 1.3 : 1.3 - Math.min(0.3, (t - 0.15) * 1.2)));
+      st.s.position.y += dt * 0.4;
+      const m = st.s.material as THREE.SpriteMaterial; m.rotation += dt * 4; m.opacity = Math.min(1, st.life / (STAR_T * 0.4));
+    }
     // door
     this.doorOpen += ((doorNear ? 1 : 0) - this.doorOpen) * Math.min(1, dt * 5);
     this.doorL.position.x = DOOR_X0 + 0.75 - this.doorOpen * 1.3;
@@ -1459,6 +1479,41 @@ export class StoreView {
   }
   private particlePool: THREE.Mesh[] = [];
 
+  // ---------- 打擊感 effects ----------
+  private tumbleT = 0;
+  /** Spun customers tumble on two axes for a moment (旋風). */
+  tumble(sec: number) { this.tumbleT = Math.max(this.tumbleT, sec); }
+  /** Grab squash & stretch on one customer. */
+  squash(id: number) { const e = this.customers.get(id); if (e) e.sq = SQUASH_T; }
+  /** Customer's rendered position (for effects on a customer id), or null. */
+  customerPos(id: number): { x: number; z: number } | null { const e = this.customers.get(id); return e ? e.s : null; }
+  private stars: { s: THREE.Sprite; life: number; size: number }[] = [];
+  private starTex: THREE.Texture | null = null;
+  /** Cartoon impact star where a karen lands outside (pool of 6 sprites, one shared texture; low quality uses 3). */
+  impactStar(x: number, z: number, k = 1) {
+    if (!this.starTex) {
+      const c = document.createElement('canvas'); c.width = c.height = 128;
+      const g = c.getContext('2d')!; g.translate(64, 64);
+      const spikes = (r0: number, r1: number, fill: string) => {
+        g.beginPath();
+        for (let i = 0; i < 20; i++) { const a = i / 20 * Math.PI * 2, r = i % 2 ? r0 : r1 * (0.8 + (i % 4 === 0 ? 0.2 : 0)); g.lineTo(Math.cos(a) * r, Math.sin(a) * r); }
+        g.closePath(); g.lineJoin = 'round'; g.lineWidth = 7; g.strokeStyle = '#2a1f3d'; g.stroke(); g.fillStyle = fill; g.fill();
+      };
+      spikes(40, 60, '#ffd43b'); spikes(20, 36, '#fff8db');
+      this.starTex = new THREE.CanvasTexture(c); this.starTex.colorSpace = THREE.SRGBColorSpace;
+      for (let i = 0; i < 6; i++) {
+        const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: this.starTex, transparent: true, depthTest: false }));
+        s.renderOrder = 19; s.visible = false; this.scene.add(s); this.stars.push({ s, life: 0, size: 1 });
+      }
+    }
+    const max = this.q === 'low' ? 3 : 6;
+    let slot = this.stars[0];
+    for (let i = 0; i < max; i++) if (this.stars[i].life < slot.life) slot = this.stars[i];
+    slot.life = STAR_T; slot.size = 1.3 * Math.max(0.5, k);
+    slot.s.position.set(x, 0.7, z); slot.s.visible = true; slot.s.scale.setScalar(0.01);
+    if (this.q !== 'low') for (let i = 0; i < 4; i++) this.puff(x + (i - 1.5) * 0.35, 0.2, z + (i % 2 ? 0.2 : -0.1)); // dust
+  }
+
   /** First-person camera + held item view model. */
   private viewHeld2 = new THREE.Group();
   private viewHeld2Key = '';
@@ -1470,10 +1525,23 @@ export class StoreView {
     if (held) this.viewHeld2.add(heldModel(this.q, held));
   }
 
+  /** 打擊感 camera: shake multiplier (0 = 畫面震動 off), pitch kick (rad) and vertical dip (m) springing back. */
+  shakeScale = 1;
+  private kick = 0; private dip = 0; private carryT = 0;
+  punch(kick: number, dip: number) { this.kick = Math.max(-0.12, Math.min(0.12, this.kick + kick)); this.dip = Math.min(0.15, this.dip + dip); }
+  /** Spring the kick/dip back and track how long we've been carrying (weight sway). Real (unscaled) dt. */
+  tickCamera(dt: number, carrying: boolean) {
+    const k = Math.exp(-dt * 12); this.kick *= k; this.dip *= k;
+    this.carryT = carrying ? this.carryT + dt : 0;
+  }
+
   setCamera(x: number, z: number, yaw: number, pitch: number, bob: number, held: Held | null) {
-    const sh = this.shake * 0.12;
-    this.camera.position.set(x + (Math.random() - 0.5) * sh, EYE_HEIGHT + Math.sin(bob) * 0.035 + (Math.random() - 0.5) * sh, z);
-    this.camera.rotation.set(pitch, yaw + Math.PI, 0);
+    const sh = this.shake * 0.12 * this.shakeScale;
+    // carrying a karen: the view leans with the weight (slow roll + slight sag)
+    const carry = this.carryT > 0 ? Math.min(1, this.carryT * 3) : 0;
+    const roll = carry * Math.sin(this.carryT * 2.6) * 0.03 * this.shakeScale;
+    this.camera.position.set(x + (Math.random() - 0.5) * sh, EYE_HEIGHT + Math.sin(bob) * 0.035 + (Math.random() - 0.5) * sh - this.dip - carry * 0.04, z);
+    this.camera.rotation.set(pitch + this.kick, yaw + Math.PI, roll);
     const key = held ? (held.kind === 'box' ? 'box' + held.product : held.kind) : '';
     if (key !== this.viewHeldKey) {
       this.viewHeldKey = key; this.viewHeld.clear();

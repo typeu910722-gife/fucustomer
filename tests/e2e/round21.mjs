@@ -48,7 +48,7 @@ const stick = async (axes, ms, n = 4) => {
 };
 const focused = () => pg.evaluate(() => { const a = document.activeElement; return a && a !== document.body ? (a.id || a.dataset.tab || a.dataset.map || a.textContent.trim().slice(0, 12)) : null; });
 /** Drive the D-pad toward `sel` the way a player would (look where it is, press toward it). */
-async function navTo(sel, max = 30) {
+async function navTo(sel, max = 60) {
   let lastKey = '', stuck = 0;
   for (let n = 0; n < max; n++) {
     const st = await pg.evaluate(sel => {
@@ -60,7 +60,9 @@ async function navTo(sel, max = 30) {
       const sameRow = tr.top < ar.bottom && tr.bottom > ar.top;
       const dx = tr.left + tr.width / 2 - (ar.left + ar.width / 2), dy = tr.top + tr.height / 2 - (ar.top + ar.height / 2);
       const v = dy > 0 ? 'down' : 'up', h = dx > 0 ? 'right' : 'left';
-      return { dir: sameRow ? h : v, alt: h, key: a.id + a.textContent.slice(0, 8) };
+      const sameCol = tr.left < ar.right && tr.right > ar.left;
+      const horiz = sameRow || (!sameCol && Math.abs(dx) > Math.abs(dy) * 2); // other column and mostly sideways → press sideways, like a player would
+      return { dir: horiz ? h : v, alt: horiz ? v : h, key: a.id + a.textContent.slice(0, 8) };
     }, sel);
     if (st.err) throw new Error(st.err);
     if (st.done) return;
@@ -92,14 +94,22 @@ await pg.waitForSelector('#s-pad');
 // ---------- (2) settings ----------
 await pg.waitForTimeout(150);
 if (!(await pg.evaluate(() => document.activeElement?.closest('.settings')))) fail('settings opened without focus');
+// Moving sideways across sliders on the way can change them, so each check compares with the value right before.
 await navTo('#s-pad');
+const padBefore = Number(await pg.inputValue('#s-pad'));
 await press(B.RIGHT); await press(B.RIGHT);
-const padSens = await pg.inputValue('#s-pad');
-if (padSens !== '1.2') fail('pad sensitivity slider via D-pad: ' + padSens);
-await navTo('#s-pinv'); await press(B.A);
-if (!(await pg.isChecked('#s-pinv'))) fail('A did not toggle 手把反轉 Y 軸');
-await navTo('#s-master'); await press(B.LEFT); await press(B.LEFT);
-await navTo('#s-fps-cap'); await press(B.RIGHT); // 不限制 → 144
+const padSens = Number(await pg.inputValue('#s-pad'));
+if (Math.abs(padSens - Math.min(3, padBefore + 0.2)) > 1e-6) fail('pad sensitivity slider via D-pad: ' + padBefore + ' → ' + padSens);
+await navTo('#s-pinv'); const pinvBefore = await pg.isChecked('#s-pinv'); await press(B.A);
+if ((await pg.isChecked('#s-pinv')) === pinvBefore) fail('A did not toggle 手把反轉 Y 軸');
+await navTo('#s-master'); const masterBefore = Number(await pg.inputValue('#s-master')); await press(B.LEFT); await press(B.LEFT);
+const masterAfter = Number(await pg.inputValue('#s-master'));
+if (Math.abs(masterAfter - Math.max(0, masterBefore - 0.1)) > 1e-6) fail('master volume slider via D-pad: ' + masterBefore + ' → ' + masterAfter);
+await navTo('#s-fps-cap'); const capIdx = await pg.evaluate(() => document.getElementById('s-fps-cap').selectedIndex);
+if (capIdx > 0) { await press(B.LEFT); } else { await press(B.RIGHT); }
+const capAfter = await pg.evaluate(() => document.getElementById('s-fps-cap').selectedIndex);
+if (capAfter === capIdx) fail('D-pad did not change the 幀率上限 drop-down');
+const want = await pg.evaluate(() => ({ padSens: Number(document.getElementById('s-pad').value), padInvertY: document.getElementById('s-pinv').checked, master: Number(document.getElementById('s-master').value), fpsCap: Number(document.getElementById('s-fps-cap').value) }));
 await pg.screenshot({ path: `${OUT}/r21-deck-settings.png` });
 const fit = await pg.evaluate(() => { const c = document.querySelector('.card.settings'); return { h: c.scrollHeight, vh: innerHeight, ok: document.getElementById('s-ok').getBoundingClientRect().bottom <= innerHeight }; });
 console.log('settings card at 1280x800:', JSON.stringify(fit));
@@ -107,7 +117,7 @@ await press(B.B); // B = 完成 (saves)
 await pg.waitForSelector('#m-career');
 const saved = await pg.evaluate(() => JSON.parse(localStorage.getItem('fucustomer.settings.v1')));
 console.log('saved settings:', JSON.stringify({ padSens: saved.padSens, padInvertY: saved.padInvertY, master: saved.master, fpsCap: saved.fpsCap, rumble: saved.rumble }));
-if (saved.padSens !== 1.2 || saved.padInvertY !== true || saved.master !== 0.9 || saved.fpsCap !== 144) fail('settings not saved by B');
+if (saved.padSens !== want.padSens || saved.padInvertY !== want.padInvertY || Math.abs(saved.master - want.master) > 1e-6 || saved.fpsCap !== want.fpsCap) fail('settings not saved by B: ' + JSON.stringify(want));
 // put pad invert back so the look test below is predictable
 await pg.evaluate(() => { const s = JSON.parse(localStorage.getItem('fucustomer.settings.v1')); s.padInvertY = false; localStorage.setItem('fucustomer.settings.v1', JSON.stringify(s)); });
 await pg.reload(); await pg.waitForSelector('#m-career'); await pg.waitForTimeout(1500);

@@ -14,6 +14,10 @@ export interface Settings {
   renderScale: number;
   /** Desktop app: start in full screen (the browser can only enter full screen from a click). */
   fullscreen: boolean;
+  /** 畫面震動 (camera shake on hits / throws). */
+  shake: boolean;
+  /** 減少動態效果: no shake, hit-stop / slow-mo, or full-screen flashes (sounds and rumble stay). */
+  reduceMotion: boolean;
 }
 
 const SETTINGS_KEY = 'fucustomer.settings.v1';
@@ -33,7 +37,7 @@ function write(key: string, v: unknown) {
 export function defaultSettings(touch = isTouch): Settings {
   return {
     name: '', sensitivity: 1, invertY: false, quality: touch ? 'low' : 'high', volume: 0.7, music: 0.5, serverUrl: '', showFps: false, fov: 75, fpsCap: touch ? 30 : 0, adaptive: true,
-    master: 1, padSens: 1, padInvertY: false, rumble: true, renderScale: 1, fullscreen: true,
+    master: 1, padSens: 1, padInvertY: false, rumble: true, renderScale: 1, fullscreen: true, shake: true, reduceMotion: false,
   };
 }
 /** Defaults + whitelisted, range-clamped stored values (a hand-edited or old settings blob can't break the game). */

@@ -3,6 +3,7 @@
 import { CareerProfile, abilitiesAt, modsFor, ShiftConfig } from './career.ts';
 import type { StoreSave } from './protocol.ts';
 import { getMap } from './maps/index.ts';
+import { type Branch, type StoreProg, sellBranches } from './progression.ts';
 
 /** Savings needed to open a store: roughly 10 late-game shifts of take-home pay. */
 export const STORE_FUND = 2500;
@@ -26,6 +27,10 @@ export interface OwnStore {
   map: string;
   /** Shared with friends: store code, the owner's secret token, and whether the door is locked. */
   online?: { code: string; token: string; locked: boolean };
+  /** 店面等級 + 個人紀錄 (progression.ts). Optional: stores from older saves start at Lv1. */
+  prog?: StoreProg;
+  /** 連鎖分店 (progression.ts), at most 3. */
+  branches?: Branch[];
 }
 export interface StoreHistory { opened: number; closed: number; lost: number; lastReason: string }
 
@@ -69,6 +74,15 @@ export function ownStoreConfig(p: CareerProfile, base: ShiftConfig): ShiftConfig
   };
 }
 
+/** Business-day config for one of your 分店 (played like the flagship; the branch manager helps, no wage, no bankruptcy). */
+export function branchConfig(p: CareerProfile, b: Branch, base: ShiftConfig): ShiftConfig {
+  return {
+    ...base, title: b.name, abilities: abilitiesAt(p.level), mods: modsFor(p),
+    karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger', ...(getMap(b.map).karens ?? [])], maxKarens: 2, maxCustomers: 9,
+    staffWage: 0, map: b.map,
+  };
+}
+
 export interface DayOutcome { bankrupt: boolean; reason: string; quit: boolean; profit: number }
 
 /** Called with each nightly save. Updates staff mood, the losing-streak counter, and closes the store when it goes under. */
@@ -90,6 +104,7 @@ export function settleStoreDay(p: CareerProfile, save: StoreSave): DayOutcome {
   const reason = st.negDays >= 3 ? (save.money < 0 ? '連續 3 天現金為負' : '連續 3 天口碑見底，沒有客人上門') : '';
   if (reason) {
     p.storeHistory.closed++; p.storeHistory.lost += st.invested; p.storeHistory.lastReason = reason;
+    p.wallet += sellBranches(st); // the branches are sold off (half of what they cost comes back)
     p.store = null;
     return { bankrupt: true, reason, quit, profit };
   }
@@ -109,7 +124,7 @@ export function withdraw(p: CareerProfile): number {
 /** Closing on your own terms: whatever cash is left comes back to savings. */
 export function closeStore(p: CareerProfile): number {
   const st = p.store; if (!st) return 0;
-  const back = Math.max(0, st.save.money);
+  const back = Math.max(0, st.save.money) + sellBranches(st);
   p.wallet += back;
   p.storeHistory.closed++; p.storeHistory.lastReason = '自己收掉了';
   p.store = null;
