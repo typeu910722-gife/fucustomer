@@ -14,14 +14,22 @@ export const WEEKLY_ID = 'weekly';
 export const WEEKLY_LENGTH = 180;
 
 export type TwistId = 'blackout' | 'influencer' | 'typhoon' | 'anniversary' | 'coldfront';
+// desc follows TWIST_TUNE (2026-W44 on; 2026-W43 is a 颱風天 week, whose numbers did not change)
 export const WEEKLY_TWISTS: Record<TwistId, { name: string; icon: string; desc: string; badge: string }> = {
   blackout: { name: '停電週', icon: '🔦', desc: '台電說是「區域性短暫供電異常」。每 20 秒就可能停電一次，目標 -12%', badge: '黑暗中的收銀員' },
-  influencer: { name: '網紅週', icon: '🤳', desc: '網紅打卡熱潮：直播客特別多、奧客來得更快、同時多一位，目標 -5%', badge: '不上鏡的店員' },
+  influencer: { name: '網紅週', icon: '🤳', desc: '網紅打卡熱潮：直播客特別多、同時多一位，目標 -5%', badge: '不上鏡的店員' },
   typhoon: { name: '颱風天', icon: '🌀', desc: '停班不停課……也不停店。客人少，但每個人都滴著水進門，髒污 ×2.2，目標 -28%', badge: '颱風天照常營業' },
-  anniversary: { name: '週年慶', icon: '🎉', desc: '全館週年慶：人潮不斷、尖峰一波接一波，目標 +12%', badge: '週年慶倖存者' },
+  anniversary: { name: '週年慶', icon: '🎉', desc: '全館週年慶：人潮不斷、尖峰一波接一波，目標不變', badge: '週年慶倖存者' },
   coldfront: { name: '寒流來襲', icon: '🥶', desc: '冷到大家只想喝熱的：八成客人要現做餐點，目標 +10%', badge: '寒流中的熱飲' },
 };
 export const TWIST_IDS = Object.keys(WEEKLY_TWISTS) as TwistId[];
+/** The descriptions weeks before 2026-W44 were shown with (their in-shift hint stays word for word the same). */
+const TWIST_DESC_R22: Partial<Record<TwistId, string>> = {
+  influencer: '網紅打卡熱潮：直播客特別多、奧客來得更快、同時多一位，目標 -5%',
+  anniversary: '全館週年慶：人潮不斷、尖峰一波接一波，目標 +12%',
+};
+/** A week's twist description (the old wording for weeks before ROUND6_WEEK). */
+export function twistDesc(twist: TwistId, week: string) { return (week < ROUND6_WEEK ? TWIST_DESC_R22[twist] : undefined) ?? WEEKLY_TWISTS[twist].desc; }
 
 export interface WeeklyGoal { id: string; text: string; points: number; check: (r: ShiftResult) => boolean }
 /** The second goal follows the twist. */
@@ -57,6 +65,15 @@ function seededRng(seed: number) { let a = seed; return () => { a = (a + 0x6d2b7
 
 /** From this ISO week on, a week may also be a 特殊營業日 and always brings one 通用新奧客 (earlier weeks keep their plans). */
 export const ROUND27_WEEK = '2026-W44';
+/** From this ISO week on (round 6, docs/BALANCE.md「第六輪」) twists use TWIST_TUNE and WEEKLY_STORE / SPECIAL_EXCLUDE; earlier weeks keep TWIST_TUNE_R22. */
+export const ROUND6_WEEK = '2026-W44';
+
+/**
+ * Twists a 特殊營業日 is never combined with (weeks from ROUND6_WEEK on; docs/BALANCE.md「第六輪」). 颱風夜 has few
+ * customers, so it contradicts 週年慶's crowds; on a 網紅週 the streamer chase leaves the leaking floor unmopped (一般
+ * 75–92%); 颱風天 is already a rainy week. Such a week gets 跨年夜 instead.
+ */
+export const SPECIAL_EXCLUDE: Record<SpecialId, readonly TwistId[]> = { typhoon: ['typhoon', 'anniversary', 'influencer'], newyear: [] };
 
 /** Twist, store and goals for a week — the same for every player. */
 export function weeklyPlan(week: string): { week: string; twist: TwistId; map: string; goals: WeeklyGoal[]; special?: SpecialId; gen?: GenKind } {
@@ -80,6 +97,8 @@ export function weeklyPlan(week: string): { week: string; twist: TwistId; map: s
     if (r2() < 2 / 7) {
       special = SPECIAL_IDS[Math.floor(r2() * SPECIAL_IDS.length)];
       if (special === 'typhoon' && twist === 'typhoon') special = 'newyear'; // already a rainy week
+      // round 6: a 特殊營業日 never lands on a twist it does not go with (SPECIAL_EXCLUDE)
+      if (special && week >= ROUND6_WEEK && SPECIAL_EXCLUDE[special].includes(twist)) special = special === 'typhoon' && !SPECIAL_EXCLUDE.newyear.includes(twist) ? 'newyear' : undefined;
     }
     const gen = GEN_KINDS[Math.floor(r2() * GEN_KINDS.length)];
     return { week, twist, map, goals, ...(special ? { special } : {}), gen };
@@ -93,15 +112,59 @@ export function weeklyGoalsMet(week: string, r: ShiftResult): boolean[] { return
 /** Opens with the daily challenge (after chapter 1). */
 export const weeklyUnlocked = (p: CareerProfile) => dailyUnlocked(p);
 
-/** The twist applied to a shift config (exported so tests can check each one). */
-export function applyTwist(cfg: ShiftConfig, twist: TwistId): number {
-  let goal = 1;
-  if (twist === 'blackout') { cfg.events = [...new Set([...cfg.events, 'outage' as ShiftEvent])]; cfg.firstEvent = 12; cfg.eventEvery = 20; goal = 0.88; }
-  if (twist === 'influencer') { cfg.karens = ['streamer', ...cfg.karens.filter(k => k !== 'streamer'), 'streamer']; cfg.maxKarens += 1; cfg.karenEvery *= 0.75; cfg.firstKaren = Math.min(cfg.firstKaren, 15); goal = 0.95; }
-  if (twist === 'typhoon') { cfg.spawnEvery *= 1.45; cfg.maxCustomers = Math.max(6, cfg.maxCustomers - 2); cfg.spillMul = 2.2; goal = 0.72; }
-  if (twist === 'anniversary') { cfg.spawnEvery *= 0.6; cfg.maxCustomers += 8; cfg.events = [...new Set([...cfg.events, 'rush' as ShiftEvent])]; cfg.firstEvent = 25; cfg.eventEvery = 32; goal = 1.12; }
-  if (twist === 'coldfront') { cfg.foods = [...new Set<Food>([...cfg.foods, 'coffee', 'meal'])]; cfg.foodChance = 0.8; goal = 1.1; }
-  return goal;
+export interface TwistTune {
+  /** Revenue target multiplier. */
+  goal: number;
+  /** blackout / anniversary: first event (s) and seconds between events. */
+  firstEvent?: number; eventEvery?: number;
+  /** influencer: extra karens at once, karen interval ×, first karen at most (s). */
+  extraKarens?: number; karenEvery?: number; firstKaren?: number;
+  /** typhoon / anniversary: customer interval ×, max customers − / +, spills ×. */
+  spawnMul?: number; maxDrop?: number; maxAdd?: number; spillMul?: number;
+  /** coldfront: share of customers who want made-to-order food. */
+  foodChance?: number;
+}
+/** The twists as they were up to 2026-W43 (round 22). Kept as-is so past weeks replay exactly the same. */
+export const TWIST_TUNE_R22: Readonly<Record<TwistId, Readonly<TwistTune>>> = {
+  blackout: { firstEvent: 12, eventEvery: 20, goal: 0.88 },
+  influencer: { extraKarens: 1, karenEvery: 0.75, firstKaren: 15, goal: 0.95 },
+  typhoon: { spawnMul: 1.45, maxDrop: 2, spillMul: 2.2, goal: 0.72 },
+  anniversary: { spawnMul: 0.6, maxAdd: 8, firstEvent: 25, eventEvery: 32, goal: 1.12 },
+  coldfront: { foodChance: 0.8, goal: 1.1 },
+};
+/** The twists from ROUND6_WEEK on (calibrated with `scripts/balance.ts --scan weekly`, docs/BALANCE.md「第六輪」). */
+export const TWIST_TUNE: Record<TwistId, TwistTune> = {
+  blackout: { firstEvent: 12, eventEvery: 20, goal: 0.88 },
+  // handled properly a streamer is chased round the store: karens no longer come faster (×0.75 → ×1), the first at 25 s
+  influencer: { extraKarens: 1, karenEvery: 1, firstKaren: 25, goal: 0.95 },
+  typhoon: { spawnMul: 1.45, maxDrop: 2, spillMul: 2.2, goal: 0.72 },
+  // 一般 67% at chapter 5 (chaos): a little less crowded, rushes every 45 s from 40 s, target unchanged (was +12%)
+  anniversary: { spawnMul: 0.75, maxAdd: 5, firstEvent: 40, eventEvery: 45, goal: 1.0 },
+  coldfront: { foodChance: 0.8, goal: 1.1 },
+};
+
+/**
+ * Store rules for the weeks from ROUND6_WEEK on: `goal` = extra target multiplier, `register2` = the second till is
+ * open even before chapter 4 (docs/BALANCE.md「第六輪」).
+ */
+export interface WeeklyStoreRule { goal?: number; register2?: boolean; foodChance?: number }
+export const WEEKLY_STORE: Record<string, WeeklyStoreRule> = {
+  // 手搖飲店: drinks are made at x 10–16 but handed over round the east end of the long counter (pickup x 18.6), so
+  // every drink is a walk along the bar and back; with one till
+  // (chapters 1–3) a slow player lost every boba week (新手 0–25%). Both tills open, target ×0.9, and at most half the
+  // customers want a made-to-order drink even in a 寒流來襲 week.
+  boba: { register2: true, goal: 0.9, foodChance: 0.5 },
+};
+
+/** The twist applied to a shift config (exported so tests can check each one). `tune` = which week's numbers. */
+export function applyTwist(cfg: ShiftConfig, twist: TwistId, tune: Readonly<Record<TwistId, Readonly<TwistTune>>> = TWIST_TUNE_R22): number {
+  const t = tune[twist];
+  if (twist === 'blackout') { cfg.events = [...new Set([...cfg.events, 'outage' as ShiftEvent])]; cfg.firstEvent = t.firstEvent!; cfg.eventEvery = t.eventEvery!; }
+  if (twist === 'influencer') { cfg.karens = ['streamer', ...cfg.karens.filter(k => k !== 'streamer'), 'streamer']; cfg.maxKarens += t.extraKarens!; cfg.karenEvery *= t.karenEvery!; cfg.firstKaren = Math.min(cfg.firstKaren, t.firstKaren!); }
+  if (twist === 'typhoon') { cfg.spawnEvery *= t.spawnMul!; cfg.maxCustomers = Math.max(6, cfg.maxCustomers - t.maxDrop!); cfg.spillMul = t.spillMul!; }
+  if (twist === 'anniversary') { cfg.spawnEvery *= t.spawnMul!; cfg.maxCustomers += t.maxAdd!; cfg.events = [...new Set([...cfg.events, 'rush' as ShiftEvent])]; cfg.firstEvent = t.firstEvent!; cfg.eventEvery = t.eventEvery!; }
+  if (twist === 'coldfront') { cfg.foods = [...new Set<Food>([...cfg.foods, 'coffee', 'meal'])]; cfg.foodChance = t.foodChance!; }
+  return t.goal;
 }
 
 export function buildWeeklyConfig(p: CareerProfile, week: string): ShiftConfig {
@@ -120,11 +183,15 @@ export function buildWeeklyConfig(p: CareerProfile, week: string): ShiftConfig {
   const specific = new Set(MAPS.flatMap(m => m.karens ?? []));
   cfg.karens = [...new Set([...cfg.karens.filter(k => !specific.has(k)), ...(mapDef.karens ?? [])])];
   cfg.maxKarens = Math.max(1, cfg.maxKarens);
-  let mul = applyTwist(cfg, plan.twist);
+  const r6 = WEEK_RE.test(week) && week >= ROUND6_WEEK;
+  let mul = applyTwist(cfg, plan.twist, r6 ? TWIST_TUNE : TWIST_TUNE_R22);
   if (plan.special) mul *= applySpecialDay(cfg, plan.special);
   if (plan.gen) cfg.karens = [...new Set([...cfg.karens, plan.gen])];
-  cfg.goal = Math.round(base.goal * (WEEKLY_LENGTH / base.length) * mul * (mapDef.goalScale ?? 1) / 5) * 5;
-  cfg.hints = [`${tw.icon} ${tw.name}：${tw.desc}`, ...(plan.special ? [SPECIAL_DAYS[plan.special].rules] : []), `本週目標：${plan.goals.map(g => g.text).join('／')}`];
+  const rule = r6 ? WEEKLY_STORE[plan.map] : undefined;
+  if (rule?.register2) cfg.register2 = true;
+  if (rule?.foodChance !== undefined) cfg.foodChance = Math.min(cfg.foodChance, rule.foodChance);
+  cfg.goal = Math.round(base.goal * (WEEKLY_LENGTH / base.length) * mul * (mapDef.goalScale ?? 1) * (rule?.goal ?? 1) / 5) * 5;
+  cfg.hints = [`${tw.icon} ${tw.name}：${twistDesc(plan.twist, week)}`, ...(plan.special ? [SPECIAL_DAYS[plan.special].rules] : []), `本週目標：${plan.goals.map(g => g.text).join('／')}`];
   if (plan.special) cfg.title += `・${SPECIAL_DAYS[plan.special].icon}${SPECIAL_DAYS[plan.special].name}`;
   cfg.weekly = { week, twist: plan.twist };
   return cfg;

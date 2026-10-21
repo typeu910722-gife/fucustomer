@@ -9,12 +9,13 @@
 //   node --import tsx scripts/balance.ts --gen [--proper] # daily-style: chapter 3–6 third shift + one general karen
 //   node --import tsx scripts/balance.ts --gen --solo --proper [--kinds cutter,rager]  # one karen kind only, every 30 s
 //   node --import tsx scripts/balance.ts --weekly [--proper] # the weekly challenges from 2026-W44 on
+//   node --import tsx scripts/balance.ts --scan weekly|daily [--from 2026-W43|2026-10-21] [--count 53|61] [--chapters 3,5] --seeds 12  # every challenge in a range, --proper, worst 10
 //
 // Bots are not humans: they never mis-aim or get lost, but they also follow a fixed priority list, so the numbers
 // are a consistency check of the data, not a substitute for play-testing.
 import { Room } from '../shared/room.ts';
 import { Bot, botMessages } from '../shared/bot.ts';
-import { CHAPTERS, GEAR_IDS, STAR_CHAOS, STAR_RATING, STAR_REVENUE, buildShiftConfig, modsFor, newProfile, starsFor, type CareerProfile, type ShiftConfig } from '../shared/career.ts';
+import { CHAPTERS, GEAR_IDS, STAR_CHAOS, STAR_RATING, STAR_REVENUE, buildDailyConfig, buildShiftConfig, dailyPlan, modsFor, newProfile, starsFor, type CareerProfile, type ShiftConfig } from '../shared/career.ts';
 import { buildSpecialConfig } from '../shared/specialdays.ts';
 import { SPECIAL_DAYS, SPECIAL_IDS } from '../shared/genkarens.ts';
 import { GEN_KINDS, KAREN_INFO, type KarenKind } from '../shared/constants.ts';
@@ -347,6 +348,58 @@ export function weeklyReport(seeds: number, weeks: string[], chapters = [3, 5], 
   return out.join('\n');
 }
 
+// ---------------- scan (round 6): every weekly / daily challenge in a range ----------------
+export interface ScanRow { key: string; chapter: number; label: string; pass: Record<Skill, number>; revRatio: number; fails: string[] }
+/** ISO weeks from `from` (a "YYYY-Www" week) on, `count` of them. */
+export function weekRange(from: string, count: number): string[] {
+  const [y, w] = from.split('-W').map(Number);
+  // Monday of ISO week 1 = the Monday on or before Jan 4
+  const jan4 = new Date(Date.UTC(y, 0, 4)), mon = new Date(jan4); mon.setUTCDate(4 - ((jan4.getUTCDay() || 7) - 1) + (w - 1) * 7);
+  return Array.from({ length: count }, (_, i) => { const d = new Date(mon); d.setUTCDate(d.getUTCDate() + i * 7); return isoWeekUTC(d); });
+}
+function isoWeekUTC(d: Date) { const t = new Date(d); const day = t.getUTCDay() || 7; t.setUTCDate(t.getUTCDate() + 4 - day); const y = t.getUTCFullYear(); return `${y}-W${String(Math.ceil(((t.getTime() - Date.UTC(y, 0, 1)) / 86400000 + 1) / 7)).padStart(2, '0')}`; }
+/** Calendar dates "YYYY-MM-DD" from `from` on, `count` of them. */
+export function dateRange(from: string, count: number): string[] {
+  return Array.from({ length: count }, (_, i) => { const d = new Date(from + 'T12:00:00Z'); d.setUTCDate(d.getUTCDate() + i); return d.toISOString().slice(0, 10); });
+}
+/**
+ * Plays every weekly (`kind` 'weekly') or daily challenge in `keys` at the difficulty of each chapter in `chapters`
+ * (the profile has cleared every earlier chapter), all three skill levels × `seeds` seeds.
+ */
+export function scanPlans(kind: 'weekly' | 'daily', keys: string[], chapters: number[], seeds: number, seedBase = 5000, proper = true, log?: (s: string) => void): ScanRow[] {
+  const rows: ScanRow[] = [];
+  for (const key of keys) for (const n of chapters) {
+    const ch = CHAPTERS[n - 1];
+    const build = (p: CareerProfile) => (kind === 'weekly' ? buildWeeklyConfig(p, key) : buildDailyConfig(p, key));
+    const rs = Object.fromEntries(SKILL_IDS.map(sk => [sk, Array.from({ length: seeds }, (_, i) => playConfig(kind, n, ch.minLevel, sk, seedBase + i * 17, build, proper))])) as Record<Skill, Run[]>;
+    const prof = profileFor(n, ch.minLevel, 'average');
+    for (const c of CHAPTERS) if (c.n < n) for (const s of c.shifts) prof.stars[s.id] = 1;
+    let label: string;
+    if (kind === 'weekly') {
+      const plan = weeklyPlan(key);
+      label = `${WEEKLY_TWISTS[plan.twist].icon}${WEEKLY_TWISTS[plan.twist].name}・${plan.map}${plan.special ? '・' + SPECIAL_DAYS[plan.special].name : ''}${plan.gen ? '・' + kname(plan.gen) : ''}`;
+    } else {
+      const plan = dailyPlan(prof, key);
+      label = `第${plan.difficulty}章難度・${plan.map}・${plan.mods.join('+')}${plan.gen ? '・' + kname(plan.gen) : ''}`;
+    }
+    const pass = Object.fromEntries(SKILL_IDS.map(sk => [sk, rs[sk].filter(x => x.stars > 0).length / seeds])) as Record<Skill, number>;
+    const fails = [...new Set(SKILL_IDS.flatMap(sk => rs[sk].filter(r => !r.won).map(r => r.failReason.replace(/\$\d+/, '$'))))];
+    rows.push({ key, chapter: n, label, pass, revRatio: mean(rs.average.map(r => r.revenue / r.goal)), fails });
+    log?.(`${key} ch${n} ${label} weak ${pct(pass.weak)} avg ${pct(pass.average)} strong ${pct(pass.strong)}`);
+  }
+  return rows;
+}
+/** How far a scan row is below the targets (新手 ≥ 30%, 一般 ≥ 85%); lower = worse. */
+export const scanScore = (r: ScanRow) => Math.min(r.pass.weak - 0.3, r.pass.average - 0.85);
+export function scanTable(rows: ScanRow[], worst = 10): string {
+  const out = ['| 週次／日期 | 難度（章） | 內容 | 新手 過關 | 一般 過關 | 高手 過關 | 一般 營收/目標 | 失敗原因 |', '|---|---|---|---|---|---|---|---|'];
+  for (const r of [...rows].sort((a, b) => scanScore(a) - scanScore(b) || a.key.localeCompare(b.key)).slice(0, worst)) {
+    out.push(`| ${r.key} | ${r.chapter} | ${r.label} | ${pct(r.pass.weak)} | ${pct(r.pass.average)} | ${pct(r.pass.strong)} | ${r.revRatio.toFixed(2)} | ${r.fails.join('；') || '—'} |`);
+  }
+  const below = rows.filter(r => r.pass.weak < 0.3 || r.pass.average < 0.85).length;
+  return out.join('\n') + `\n\n${rows.length} 組中有 ${below} 組低於目標（新手 < 30% 或一般 < 85%）；新手過關平均 ${pct(mean(rows.map(r => r.pass.weak)))}、一般 ${pct(mean(rows.map(r => r.pass.average)))}、高手 ${pct(mean(rows.map(r => r.pass.strong)))}。`;
+}
+
 if (process.argv[1]?.endsWith('scripts/balance.ts')) {
   const arg = (k: string) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : undefined; };
   const proper = process.argv.includes('--proper');
@@ -365,6 +418,18 @@ if (process.argv[1]?.endsWith('scripts/balance.ts')) {
     const chs = arg('--chapters')?.split(',').map(Number);
     const kinds = arg('--kinds')?.split(',') ?? GEN_KINDS;
     emit(extra(runs, genReport(Number(arg('--seeds') ?? 6), chs, Number(arg('--seed-base') ?? 3000), log, proper, runs, process.argv.includes('--solo'), kinds), kinds));
+    process.exit(0);
+  }
+  if (process.argv.includes('--scan')) {
+    // --scan weekly|daily --from 2026-W43|2026-10-21 --count 53|61 --chapters 3,5 [--worst 10] [--json rows.json]
+    const kind = arg('--scan') === 'daily' ? 'daily' : 'weekly';
+    const from = arg('--from') ?? (kind === 'weekly' ? '2026-W43' : '2026-10-21');
+    const count = Number(arg('--count') ?? (kind === 'weekly' ? 53 : 61));
+    const keys = kind === 'weekly' ? weekRange(from, count) : dateRange(from, count);
+    const chs = arg('--chapters')?.split(',').map(Number) ?? (kind === 'weekly' ? [3, 5] : [3, 5, 7]);
+    const rows = scanPlans(kind, keys, chs, Number(arg('--seeds') ?? 6), Number(arg('--seed-base') ?? 5000), true, log);
+    if (arg('--json')) writeFileSync(arg('--json')!, JSON.stringify(rows, null, 1));
+    emit(scanTable(rows, Number(arg('--worst') ?? 10)));
     process.exit(0);
   }
   if (process.argv.includes('--weekly')) {

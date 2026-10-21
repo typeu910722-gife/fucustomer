@@ -13,7 +13,15 @@ const repeat = new NavRepeat();
 /** What B does when the screen has no back / close button (e.g. close the pause menu, or return to the main menu). */
 export function setPadBack(fn: () => void) { fallbackBack = fn; }
 
-const uiRoot = () => document.getElementById('ui');
+/**
+ * Where menu navigation happens: a full-screen card laid over everything outside #ui (the app sign-in link card,
+ * class "screen overlay" directly under <body>) while one is up, otherwise the #ui screen. The card is modal, so the
+ * pad only moves between its buttons and B / Esc press its back button.
+ */
+function uiRoot(): HTMLElement | null {
+  const tops = [...document.body.children].filter(e => e.id !== 'ui' && e.classList.contains('screen') && e.classList.contains('overlay'));
+  return (tops[tops.length - 1] as HTMLElement | undefined) ?? document.getElementById('ui');
+}
 const visible = (el: HTMLElement) => {
   if ((el as HTMLButtonElement).disabled) return false;
   const r = el.getBoundingClientRect();
@@ -66,9 +74,30 @@ function adjust(el: HTMLElement, dir: Dir): boolean {
   return false;
 }
 
+/** The screen's back / close button: one marked data-back, else one that looks like it (id / text, see padmap). */
+function backButton(list: HTMLElement[]): HTMLElement | null {
+  return list.find(e => e.dataset.back !== undefined) ?? list.find(e => e.tagName === 'BUTTON' && looksLikeBack(e.id, e.textContent ?? '')) ?? null;
+}
 function goBack(list: HTMLElement[]) {
-  const back = list.find(e => e.dataset.back !== undefined) ?? list.find(e => e.tagName === 'BUTTON' && looksLikeBack(e.id, e.textContent ?? ''));
+  const back = backButton(list);
   if (back) back.click(); else fallbackBack();
+}
+/**
+ * Esc in a menu (keyboard twin of pad B): presses the top card's back / close button. Unlike B it never falls back to
+ * leaving the screen, so Esc on a screen without one (main menu, a story scene) does nothing. True when it pressed one.
+ */
+export function escBack(): boolean {
+  const back = backButton(focusables());
+  if (!back) return false;
+  back.click();
+  return true;
+}
+/** Android back: close a card laid over the screen (app sign-in link) first. True when there was one. */
+export function overlayBack(): boolean {
+  const root = uiRoot();
+  if (!root || root.id === 'ui') return false;
+  if (!escBack()) root.remove(); // no back button on it: just take it away
+  return true;
 }
 
 function step(now: number) {

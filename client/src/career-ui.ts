@@ -10,7 +10,7 @@ import { STORE_FUND, STORE_RESERVE, WAGES, WageMode, canOpenStore, closeStore, h
 import { defaultSave } from '../../shared/sim.ts';
 import { MAPS, getMap } from '../../shared/maps/index.ts';
 import { KAREN_INFO } from '../../shared/constants.ts';
-import { confirmTwice, esc, show } from './ui.ts';
+import { confirmTwice, esc, screenToken, show } from './ui.ts';
 import { takeReports, syncStore, uploadStore } from './friends.ts';
 import { lockedPack, ownStoreLockHtml, shopHtml, wireShop } from './shop-ui.ts';
 import { dexHtml, dexSwitch } from './dex-ui.ts';
@@ -28,6 +28,9 @@ export function loadProfile(): CareerProfile {
   try { return sanitizeProfile(JSON.parse(localStorage.getItem(KEY) ?? 'null')); } catch { return sanitizeProfile(null); }
 }
 export function saveProfile(p: CareerProfile) { try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* ignore */ } }
+
+/** 搗亂紀錄 fetched after the player left the store tab: shown the next time it opens. */
+let pendingStoreMsg = '';
 
 type Tab = 'chapters' | 'store' | 'skills' | 'gear' | 'shop' | 'free' | 'achievements' | 'dex' | 'stats';
 export interface CareerHandlers { play(shiftId: string): void; back(): void; enterStore(): void; opened(): void; raid(code: string): void; freePlay(): void; branch?(i: number): void }
@@ -56,12 +59,12 @@ export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'ch
       <div class="c-side">
         ${rankCard(p)}
         <div class="tabs">${tabs.map(([t, l]) => `<button class="tab ${t === tab || (t === 'achievements' && tab === 'dex') ? 'on' : ''}" data-tab="${t}">${l}</button>`).join('')}</div>
-        <button class="btn small" id="c-back">← 主選單</button>
+        <button class="btn small" id="c-back" data-back>← 主選單</button>
       </div>
       <div class="c-main" id="c-body">${tab === 'chapters' ? chaptersHtml(p) : tab === 'skills' ? skillsHtml(p) : tab === 'gear' ? gearHtml(p) : tab === 'shop' ? shopHtml(p, focus) : tab === 'store' ? storeHtml(p) : tab === 'achievements' ? achievementsHtml(p) : tab === 'dex' ? dexHtml(p) : statsHtml(p)}</div>
     </div>`);
   document.getElementById('c-back')!.onclick = () => h.back();
-  if (tab === 'shop') wireShop(p, saveProfile, f => careerScreen(p, h, 'shop', f));
+  if (tab === 'shop') wireShop(p, saveProfile, f => careerScreen(p, h, 'shop', f), loadProfile);
   document.querySelectorAll<HTMLButtonElement>('[data-tab]').forEach(b => { b.onclick = () => (b.dataset.tab === 'free' ? h.freePlay() : careerScreen(p, h, b.dataset.tab as Tab)); });
   document.querySelectorAll<HTMLButtonElement>('[data-play]').forEach(b => { b.onclick = () => h.play(b.dataset.play!); });
   document.querySelectorAll<HTMLButtonElement>('[data-skill]').forEach(b => { b.onclick = () => { if (spendSkill(p, b.dataset.skill as SkillTree)) saveProfile(p); careerScreen(p, h, 'skills'); }; });
@@ -89,34 +92,47 @@ export function careerScreen(p: CareerProfile, h: CareerHandlers, tab: Tab = 'ch
   const closeBtn = document.getElementById('st-close') as HTMLButtonElement | null;
   if (closeBtn) closeBtn.onclick = () => confirmTwice(closeBtn, '再按一次收店（現金回到存款）', () => { closeStore(p); redraw(); });
   document.querySelectorAll<HTMLInputElement>('[name="st-wage"]').forEach(r => { r.onchange = () => { if (p.store) { p.store.wage = r.value as WageMode; redraw(); } }; });
-  // friends: share the store code, lock the door, collect damage reports, go raid a friend
+  // friends: share the store code, lock the door, collect damage reports, go raid a friend.
+  // These wait for the game server. The reply is always saved, but the screen is redrawn only while the player is
+  // still on this tab (screenToken): someone who already left must not be yanked back to it. The profile is reloaded
+  // after the wait, because a shift played meanwhile may have saved progress that the captured `p` doesn't have.
   const msg = (t: string) => { const el = document.getElementById('st-msg'); if (el) el.textContent = t; };
+  if (pendingStoreMsg && tab === 'store') { msg(pendingStoreMsg); pendingStoreMsg = ''; }
   on('st-upload', async () => {
     if (!p.store) return; msg('上傳中…');
+    const alive = screenToken();
     const r = await uploadStore(p.store);
-    if (!r.ok) return msg(r.error);
+    if (!r.ok) { if (alive()) msg(r.error); return; }
     const prof = loadProfile(); if (!prof.store) return;
     prof.store.online = { code: r.data.code, token: r.data.token, locked: false };
-    saveProfile(prof); careerScreen(prof, h, 'store');
+    saveProfile(prof);
+    if (alive()) careerScreen(prof, h, 'store');
   });
   on('st-lock', async () => {
     if (!p.store?.online) return;
-    p.store.online.locked = !p.store.online.locked; saveProfile(p);
+    const want = !p.store.online.locked;
+    const setLocked = (prof: CareerProfile, v: boolean) => { if (prof.store?.online) { prof.store.online.locked = v; saveProfile(prof); } return prof; };
+    setLocked(p, want);
+    const alive = screenToken();
     const r = await syncStore(p.store);
-    if (!r.ok) { p.store.online.locked = !p.store.online.locked; saveProfile(p); return msg(r.error); }
-    careerScreen(p, h, 'store');
+    const prof = loadProfile();
+    if (!r.ok) { setLocked(prof, !want); if (alive()) { careerScreen(prof, h, 'store'); msg(r.error); } return; }
+    if (alive()) careerScreen(prof, h, 'store');
   });
   on('st-reports', async () => {
     if (!p.store?.online) return; msg('查詢中…');
+    const alive = screenToken();
     const r = await takeReports(p.store);
-    if (!r.ok) return msg(r.error);
-    if (!r.data.length) return msg('沒有人來搗亂過 👍');
+    if (!r.ok) { if (alive()) msg(r.error); return; }
+    if (!r.data.length) { if (alive()) msg('沒有人來搗亂過 👍'); return; }
+    // the server hands each report out once: apply the losses even if the player has left this tab
+    const prof = loadProfile(), st = prof.store;
+    if (!st) return;
     const lossM = r.data.reduce((n, x) => n + x.money, 0), lossR = r.data.reduce((n, x) => n + x.rating, 0);
-    const st = p.store;
     st.save = { ...st.save, money: st.save.money - lossM, rating: Math.max(0, Math.round((st.save.rating - lossR) * 100) / 100) };
-    saveProfile(p); void syncStore(st);
-    careerScreen(p, h, 'store');
-    msg(r.data.map(x => `${x.outside ? '🚪 在門外丟垃圾' : '😈 進店搗亂'}：${x.raider}（−$${x.money}${x.rating ? `、口碑 −${x.rating}` : ''}）`).join('　'));
+    saveProfile(prof); void syncStore(st);
+    const text = r.data.map(x => `${x.outside ? '🚪 在門外丟垃圾' : '😈 進店搗亂'}：${x.raider}（−$${x.money}${x.rating ? `、口碑 −${x.rating}` : ''}）`).join('　');
+    if (alive()) { careerScreen(prof, h, 'store'); msg(text); } else pendingStoreMsg = text; // shown next time the store tab opens
   });
   on('st-raid', () => {
     const code = (document.getElementById('st-raid-code') as HTMLInputElement).value.trim().toUpperCase();

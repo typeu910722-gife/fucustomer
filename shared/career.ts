@@ -417,8 +417,8 @@ export const DAILY_MODS: Record<DailyModId, { name: string; desc: string }> = {
   outages: { name: '停電頻繁', desc: '每 24 秒就可能停電一次' },
   streamers: { name: '全是直播主', desc: '奧客只剩直播客，而且多一個' },
   chargers: { name: '插座保衛戰', desc: '奧客只剩充電霸王，而且多一個' },
-  rush: { name: '雙倍人潮', desc: '客人來得快很多，目標 +15%' },
-  coffee: { name: '咖啡狂熱', desc: '大部分客人都要咖啡，目標 +25%' },
+  rush: { name: '雙倍人潮', desc: '客人來得快很多，目標 +5%' },
+  coffee: { name: '咖啡狂熱', desc: '大部分客人都要咖啡，目標 +15%' },
   lowstock: { name: '缺貨危機', desc: '倉庫庫存只有一半' },
   tips: { name: '小費日', desc: '小費 +60%，目標 +12%' },
   // 特殊營業日 (round 27): rolled separately (see dailyPlan), never part of the ordinary pool
@@ -469,6 +469,41 @@ export function dailyPlan(p: CareerProfile, date: string) {
   return { date, scene, difficulty, mods, map, ...(gen ? { gen } : {}) };
 }
 
+/** From this date on (round 6, docs/BALANCE.md「第六輪」) daily modifiers use DAILY_TUNE; earlier dates keep DAILY_TUNE_R22. */
+export const ROUND6_DATE = '2026-10-22';
+export interface DailyTune {
+  outages: { firstEvent: number; eventEvery: number; goal: number };
+  streamers: { extraKarens: number; firstKaren: number; karenEvery: number; goal: number };
+  chargers: { extraKarens: number; firstKaren: number; karenEvery: number; goal: number };
+  rush: { spawnMul: number; maxAdd: number; goal: number };
+  coffee: { foodChance: number; goal: number };
+  lowstock: { stock: number; goal: number };
+  tips: { tips: number; goal: number };
+}
+/** Daily modifiers as they were up to 2026-10-21 (kept so past dates replay exactly the same). */
+export const DAILY_TUNE_R22: Readonly<DailyTune> = {
+  outages: { firstEvent: 20, eventEvery: 24, goal: 0.95 },
+  streamers: { extraKarens: 1, firstKaren: 15, karenEvery: 1, goal: 0.9 },
+  chargers: { extraKarens: 1, firstKaren: 15, karenEvery: 1, goal: 1 },
+  rush: { spawnMul: 0.6, maxAdd: 6, goal: 1.15 },
+  coffee: { foodChance: 0.75, goal: 1.25 },
+  lowstock: { stock: 0.5, goal: 1 },
+  tips: { tips: 1.6, goal: 1.12 },
+};
+/** Daily modifiers from ROUND6_DATE on (calibrated with `scripts/balance.ts --scan daily`). */
+export const DAILY_TUNE: DailyTune = {
+  outages: { firstEvent: 20, eventEvery: 24, goal: 0.95 },
+  // 全是直播主: handled properly (no grabbing) a streamer is chased around the store; one every 45 s left a
+  // slow player chasing all shift (新手 0–17% on 6 of 9 such days) — streamers now come every 63 s, the first at 25 s
+  streamers: { extraKarens: 1, firstKaren: 25, karenEvery: 1.4, goal: 0.9 },
+  // 插座保衛戰 / 雙倍人潮 / 咖啡狂熱: at chapter 5 difficulty a slow player missed the target on most such days (新手 17–33%)
+  chargers: { extraKarens: 1, firstKaren: 25, karenEvery: 1.3, goal: 0.9 },
+  rush: { spawnMul: 0.6, maxAdd: 6, goal: 1.05 },
+  coffee: { foodChance: 0.75, goal: 1.15 },
+  lowstock: { stock: 0.5, goal: 1 },
+  tips: { tips: 1.6, goal: 1.12 },
+};
+
 export function buildDailyConfig(p: CareerProfile, date: string): ShiftConfig {
   const plan = dailyPlan(p, date);
   const ch = CHAPTERS[plan.difficulty - 1];
@@ -478,14 +513,15 @@ export function buildDailyConfig(p: CareerProfile, date: string): ShiftConfig {
   cfg.id = DAILY_ID; cfg.title = `每日挑戰・${mapDef.icon}${mapDef.name}`; cfg.map = plan.map;
   cfg.length = 150;
   let goal = base.goal * (150 / base.length);
+  const T = date >= ROUND6_DATE ? DAILY_TUNE : DAILY_TUNE_R22;
   for (const m of plan.mods) {
-    if (m === 'outages') { cfg.events = [...new Set([...cfg.events, 'outage' as ShiftEvent])]; cfg.firstEvent = 20; cfg.eventEvery = 24; goal *= 0.95; }
-    if (m === 'streamers') { cfg.karens = ['streamer']; cfg.maxKarens += 1; cfg.firstKaren = 15; goal *= 0.9; }
-    if (m === 'chargers') { cfg.karens = ['charger']; cfg.maxKarens += 1; cfg.firstKaren = 15; }
-    if (m === 'rush') { cfg.spawnEvery *= 0.6; cfg.maxCustomers += 6; goal *= 1.15; }
-    if (m === 'coffee') { cfg.foods = [...new Set([...cfg.foods, 'coffee' as Food])]; cfg.foodChance = 0.75; goal *= 1.25; }
-    if (m === 'lowstock') { const st = cfg.start.backstock as Record<string, number>; for (const k of Object.keys(st)) st[k] = Math.ceil(st[k] / 2); }
-    if (m === 'tips') { cfg.mods = { ...cfg.mods, tips: cfg.mods.tips * 1.6 }; goal *= 1.12; }
+    if (m === 'outages') { cfg.events = [...new Set([...cfg.events, 'outage' as ShiftEvent])]; cfg.firstEvent = T.outages.firstEvent; cfg.eventEvery = T.outages.eventEvery; goal *= T.outages.goal; }
+    if (m === 'streamers') { cfg.karens = ['streamer']; cfg.maxKarens += T.streamers.extraKarens; cfg.firstKaren = T.streamers.firstKaren; cfg.karenEvery *= T.streamers.karenEvery; goal *= T.streamers.goal; }
+    if (m === 'chargers') { cfg.karens = ['charger']; cfg.maxKarens += T.chargers.extraKarens; cfg.firstKaren = T.chargers.firstKaren; cfg.karenEvery *= T.chargers.karenEvery; goal *= T.chargers.goal; }
+    if (m === 'rush') { cfg.spawnEvery *= T.rush.spawnMul; cfg.maxCustomers += T.rush.maxAdd; goal *= T.rush.goal; }
+    if (m === 'coffee') { cfg.foods = [...new Set([...cfg.foods, 'coffee' as Food])]; cfg.foodChance = T.coffee.foodChance; goal *= T.coffee.goal; }
+    if (m === 'lowstock') { const st = cfg.start.backstock as Record<string, number>; for (const k of Object.keys(st)) st[k] = Math.ceil(st[k] * T.lowstock.stock); goal *= T.lowstock.goal; }
+    if (m === 'tips') { cfg.mods = { ...cfg.mods, tips: cfg.mods.tips * T.tips.tips }; goal *= T.tips.goal; }
   }
   const oneKind = plan.mods.includes('streamers') || plan.mods.includes('chargers');
   for (const m of plan.mods) if ((SPECIAL_IDS as string[]).includes(m)) goal *= applySpecialDay(cfg, m as SpecialId, oneKind);

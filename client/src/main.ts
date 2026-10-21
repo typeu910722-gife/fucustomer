@@ -37,7 +37,7 @@ import { getStore, sendRaid, syncStore } from './friends.ts';
 import { desktop, initPlatform, isApp, onAppPause, onBack, quitApp, reportAchievements } from './platform.ts';
 import { effectiveLoadout, isSupporter, outfitOf, storeLocked, type Loadout } from '../../shared/shop.ts';
 import { entitlementsFor } from './billing.ts';
-import { setPadBack, startPadNav } from './padnav.ts';
+import { escBack, overlayBack, setPadBack, startPadNav } from './padnav.ts';
 import { applyA11y } from './a11y.ts';
 import { loadUiFonts } from './fonts.ts';
 
@@ -278,13 +278,21 @@ function lockReminder() {
   const on = p.store?.online;
   if (!p.store || !on || on.locked) return career('store');
   UI.show(`<div class="card"><h2>🔓 店門還沒鎖！</h2><p>下班不鎖門，好友可以衝進你的店搗亂。要鎖門嗎？</p>
-    <div class="row"><button class="btn good" id="lk-yes">🔒 鎖門再走</button><button class="btn" id="lk-no">不用，就開著</button></div><div class="muted" id="lk-msg"></div></div>`);
+    <div class="row"><button class="btn good" id="lk-yes">🔒 鎖門再走</button><button class="btn" id="lk-no" data-back>不用，就開著</button></div><div class="muted" id="lk-msg"></div></div>`);
+  const alive = UI.screenToken();
   document.getElementById('lk-no')!.onclick = () => career('store');
-  document.getElementById('lk-yes')!.onclick = async () => {
+  const yes = document.getElementById('lk-yes') as HTMLButtonElement;
+  yes.onclick = async () => {
+    yes.disabled = true;
     on.locked = true; saveProfile(p);
     const r = await syncStore(p.store!);
-    if (!r.ok) { on.locked = false; saveProfile(p); const m = document.getElementById('lk-msg'); if (m) m.textContent = r.error; return; }
-    if (document.getElementById('lk-yes')) career('store'); // still on this card (「不用」 may have been pressed while waiting)
+    if (!r.ok) {
+      // undo on the saved profile as it is now (a shift may have been played since this card was left)
+      const q = loadProfile(); if (q.store?.online) { q.store.online.locked = false; saveProfile(q); }
+      if (alive()) { yes.disabled = false; const m = document.getElementById('lk-msg'); if (m) m.textContent = r.error; }
+      return;
+    }
+    if (alive()) career('store'); // still on this card (「不用」 / Esc / B may have been pressed while waiting)
   };
 }
 
@@ -292,19 +300,26 @@ function lockReminder() {
 async function raidFriend(code: string) {
   screenDepth = 1;
   UI.show('<div class="card"><h2>找店中…</h2><p class="muted">正在查詢店碼</p></div>');
+  const alive = UI.screenToken();
   const r = await getStore(code);
+  if (!alive()) return; // left (Android back / pad B) while looking the store up
   if (!r.ok) return UI.message('去不了', r.error, '回職涯', () => career('store'));
   const v = r.data;
-  const done = (title: string, body: string) => UI.message(title, body, '回職涯', () => career('store'));
+  // only shown while the player is still on the screen that sent the request (the coins are paid either way)
+  const done = (title: string, body: string, alive: () => boolean) => { if (alive()) UI.message(title, body, '回職涯', () => career('store')); };
   const pay = (score: number) => { const coins = raidReward(score); const p = loadProfile(); p.wallet += coins; saveProfile(p); return coins; };
   if (v.locked) {
     UI.show(`<div class="card"><h2>🔒 ${UI.esc(v.name)} 鎖門了</h2><p>店主下班有鎖門，進不去。你可以在門口丟一袋垃圾就走。</p>
-      <div class="row"><button class="btn" id="rd-trash">🗑 在門口丟垃圾</button><button class="btn" id="rd-back">算了</button></div></div>`);
+      <div class="row"><button class="btn" id="rd-trash">🗑 在門口丟垃圾</button><button class="btn" id="rd-back" data-back>算了</button></div></div>`);
     document.getElementById('rd-back')!.onclick = () => career('store');
-    document.getElementById('rd-trash')!.onclick = async () => {
+    const trash = document.getElementById('rd-trash') as HTMLButtonElement;
+    trash.onclick = async () => {
+      trash.disabled = true;
+      const here = UI.screenToken();
       const s = await sendRaid(code, playerName(), OUTSIDE_SCORE, true);
-      if (!s.ok) return done('沒丟成', s.error);
-      done('丟完就跑 🏃', `你在 ${v.name} 門口丟了一袋垃圾。店主損失 $${s.data.money}。你拿到 $${pay(OUTSIDE_SCORE)} 零用錢。`);
+      if (!s.ok) return done('沒丟成', s.error, here);
+      const coins = pay(OUTSIDE_SCORE);
+      done('丟完就跑 🏃', `你在 ${v.name} 門口丟了一袋垃圾。店主損失 $${s.data.money}。你拿到 $${coins} 零用錢。`, here);
     };
     return;
   }
@@ -312,9 +327,11 @@ async function raidFriend(code: string) {
   startGame(() => localConn(playerName(), null, cfg, undefined, { staff: { name: '店員', pace: 0.9 } }), async (_reason, result) => {
     if (!result) return career('store');
     const score = result.score ?? 0;
+    const here = UI.screenToken();
     const s = await sendRaid(code, playerName(), score, false);
-    if (!s.ok) return done('搗亂結束', `分數 ${score}，但沒有送出：${s.error}`);
-    done('搗亂結束 😈', `${getMap(v.map).icon} ${v.name}：分數 ${score}。店主損失 $${s.data.money}${s.data.rating ? `、口碑 −${s.data.rating}` : ''}。你拿到 $${pay(score)} 零用錢。`);
+    if (!s.ok) return done('搗亂結束', `分數 ${score}，但沒有送出：${s.error}`, here);
+    const coins = pay(score);
+    done('搗亂結束 😈', `${getMap(v.map).icon} ${v.name}：分數 ${score}。店主損失 $${s.data.money}${s.data.rating ? `、口碑 −${s.data.rating}` : ''}。你拿到 $${coins} 零用錢。`, here);
   });
 }
 
@@ -552,12 +569,18 @@ if ('serviceWorker' in navigator && !isApp && (location.protocol === 'https:' ||
 void initPlatform();
 onBack(() => {
   if (current) { current.back(); return; }
+  if (overlayBack()) return; // e.g. the app sign-in link card: close it, never quit the app from under it
   if (screenDepth === 0) quitApp(); else menu();
 });
 onAppPause(() => current?.appPaused());
 // Controller: D-pad / stick + A/B in every menu; B with no back button on screen = Android back (never quits).
 setPadBack(() => { if (current) current.back(); else if (screenDepth !== 0) menu(); });
 startPadNav();
+// Esc in menus = the screen's back / close button (same one pad B presses). In a shift the game owns Esc (pause menu).
+window.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || e.repeat || e.defaultPrevented || current) return;
+  if (escBack()) e.preventDefault();
+});
 desktop?.onJoinRequest(code => {
   const c = UI.parseRoomCode(code);
   if (current || !c) return;

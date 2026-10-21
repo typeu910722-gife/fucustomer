@@ -25,6 +25,7 @@ import { desktop } from './platform.ts';
 import { inputMode, keyOf, padStyle, rumble, setRumble } from './pad.ts';
 import { BTN, actionLabel, controlsLine, promptDevice, promptKey, qteGlyph, qteHelp, setControlsContext } from './padmap.ts';
 import { EmoteWheel } from './emote-wheel.ts';
+import { hudq } from './hudq.ts';
 import { JuiceKind, RateLimit, TimeWarp, juiceProfile, stampText, throwStrength } from './juice.ts';
 import { STORE_D } from '../../shared/map.ts';
 
@@ -166,13 +167,12 @@ export class Game {
     this.flags.seenMaps.push(m.id); saveFlags(this.flags);
     const st = [m.coffee && FOOD_INFO.coffee, m.meal && FOOD_INFO.meal].filter(Boolean) as (typeof FOOD_INFO.coffee)[];
     const karens = (m.karens ?? []).filter(k => k in KAREN_INFO).map(k => KAREN_INFO[k as keyof typeof KAREN_INFO]);
-    const card = $('introcard');
-    card.innerHTML = `<div class="muted">第一次來這間店</div><h3>${m.icon} ${UI.esc(m.name)}</h3>
-      <p>貨架：${PRODUCTS.map(p => UI.esc(PRODUCT_INFO[p].name)).join('、')}</p>
+    // (.cs = the line a phone shows while the card is folded; tap opens the rest)
+    const html = `<div class="muted">第一次來這間店</div><h3>${m.icon} ${UI.esc(m.name)}</h3>
+      <p${karens.length ? '' : ' class="cs"'}>貨架：${PRODUCTS.map(p => UI.esc(PRODUCT_INFO[p].name)).join('、')}</p>
       ${st.length ? `<p>工作站：${st.map(f => `${f.icon} ${UI.esc(f.station)}（${UI.esc(f.verb)}）`).join('、')}</p>` : '<p>這間店不賣現做的東西，專心顧貨架和收銀。</p>'}
-      ${karens.map(k => `<p class="how">招牌奧客「${UI.esc(k.name)}」：${UI.esc(k.how)}</p>`).join('')}`;
-    card.classList.remove('hidden');
-    this.introTimers.push(window.setTimeout(() => card.classList.add('hidden'), 9000));
+      ${karens.map((k, i) => `<p class="how${i ? '' : ' cs'}">招牌奧客「${UI.esc(k.name)}」：${UI.esc(k.how)}</p>`).join('')}`;
+    hudq.card({ slot: 'introcard', html, ms: 9000, prio: 70 });
   }
 
   /** First time a karen type shows up: a short card explaining how to deal with it (solo pauses for 2 s). */
@@ -182,18 +182,22 @@ export class Game {
     // first shift: the tutorial line already says what to do (no card, no pause in the middle of learning)
     if (this.tutorial) return;
     const info = KAREN_INFO[kind as keyof typeof KAREN_INFO];
-    const card = $('introcard');
-    card.innerHTML = `<div class="muted">新奧客出現！</div><h3>⚠ ${UI.esc(info.name)}</h3><p>${UI.esc(info.hint)}</p><p class="how">處理方法：${UI.esc(info.how)}</p>`;
-    card.classList.remove('hidden');
-    const pause = this.conn.solo && this.overlay === 'none';
-    if (pause) this.send({ type: 'pause', paused: true });
-    this.introTimers.push(window.setTimeout(() => { if (pause && this.overlay === 'none') this.send({ type: 'pause', paused: false }); }, 2000));
-    this.introTimers.push(window.setTimeout(() => card.classList.add('hidden'), 4200));
+    // one card at a time (hudq.ts): several new karens at once take turns; each pauses solo play as it comes up
+    hudq.card({
+      slot: 'introcard', ms: 4200, prio: 80,
+      html: `<div class="muted">新奧客出現！</div><h3>⚠ ${UI.esc(info.name)}</h3><p>${UI.esc(info.hint)}</p><p class="how cs">處理方法：${UI.esc(info.how)}</p>`,
+      onShow: () => {
+        if (this.destroyed) return;
+        const pause = this.conn.solo && this.overlay === 'none';
+        if (pause) this.send({ type: 'pause', paused: true });
+        this.introTimers.push(window.setTimeout(() => { if (pause && this.overlay === 'none' && !this.destroyed) this.send({ type: 'pause', paused: false }); }, 2000));
+      },
+    });
   }
   private onVis = () => {
     if (this.conn.solo && this.started) {
-      if (document.hidden) { this.conn.send({ type: 'pause', paused: true }); audio.suspend(); }
-      else { if (this.overlay !== 'pause') this.conn.send({ type: 'pause', paused: false }); audio.resume(); }
+      if (document.hidden) { this.send({ type: 'pause', paused: true }); audio.suspend(); }
+      else { if (this.overlay !== 'pause') this.send({ type: 'pause', paused: false }); audio.resume(); }
     } else if (document.hidden) audio.suspend(); else audio.resume();
   };
   private onLockChange = () => {
@@ -213,7 +217,9 @@ export class Game {
 
   private myName() { return this.snap?.players.find(p => p.id === this.selfId)?.name ?? ''; }
 
-  send(m: ClientMsg) { this.conn.send(m); }
+  /** Whether this client asked the room to pause (intro cards, hidden tab, pause menu). */
+  private pauseAsked = false;
+  send(m: ClientMsg) { if (m.type === 'pause') this.pauseAsked = m.paused; this.conn.send(m); }
 
   // ---------------- network ----------------
   private onMessage(m: ServerMsg) {
@@ -331,6 +337,7 @@ export class Game {
       UI.ensureLobbyCss(); // team-list ping bars
       if (this.touch) { $('touch').classList.remove('hidden'); document.body.classList.add('touch'); }
       else this.input.lock();
+      hudq.reset(); hudq.setTouch(this.touch);
       audio.setMusicVolume(this.settings.music);
       audio.startMusic(s.shift.endless ? 7 : s.shift.boss ? 6 : s.shift.mode === 'shift' ? (s.shift.chapter <= 7 ? s.shift.chapter : 1 + (s.shift.chapter - 1) % 5) : 0);
       audio.startStoreAmbience(CURRENT_MAP.id);
@@ -432,7 +439,7 @@ export class Game {
   }
 
   // ---------------- 找零計較姐: the exact-change quick-time prompt ----------------
-  private qte: { id: number; look: number; until: number; total: number; el: HTMLElement; dev: string; secs: number } | null = null;
+  private qte: { id: number; look: number; until: number; total: number; el: HTMLElement; dev: string; secs: number; last: number } | null = null;
   /** Opens the prompt: three handfuls of coins, pick the one that adds up to her change
    *  (keys 1–3, D-pad ← ↑ → on a pad, click / tap). The pad does nothing else while it is open (input.qteActive). */
   openChangePrompt(id: number) {
@@ -453,7 +460,7 @@ export class Game {
       b.addEventListener('pointerdown', ev => { if ((ev as PointerEvent).pointerType === 'touch') pick(ev); });
       b.onclick = pick;
     });
-    this.qte = { id, look: c.look, until: performance.now() + total * 1000, total, el, dev: '', secs: -1 };
+    this.qte = { id, look: c.look, until: performance.now() + total * 1000, total, el, dev: '', secs: -1, last: performance.now() };
     this.input.qteActive = true;
     this.qteLabels();
   }
@@ -478,7 +485,12 @@ export class Game {
     const c = s.customers.find(x => x.id === q.id);
     if (!c || c.resolved || c.state !== 'atRegister') { this.closeChangePrompt(); return; }
     for (let i = 1; i <= 3; i++) if (this.input.consume(`q${i}` as 'q1')) { this.answerChange(i - 1); return; }
-    const left = (q.until - performance.now()) / 1000;
+    // The countdown only runs while the game runs: a pause (menu, a new-karen card, hidden tab) freezes it too.
+    const now = performance.now();
+    // (frames can also stop entirely while paused — a gap over 250 ms counts as paused time)
+    if (this.pauseAsked || this.overlay !== 'none' || now - q.last > 250) q.until += now - q.last;
+    q.last = now;
+    const left = (q.until - now) / 1000;
     if (left <= 0) { this.answerChange(-1); return; }
     this.qteLabels();
     const bar = q.el.querySelector<HTMLElement>('.qte-bar i'); if (bar) bar.style.width = `${Math.max(0, left / q.total) * 100}%`;
@@ -497,7 +509,7 @@ export class Game {
     const c = s.customers.find(x => x.kind === 'lottery' && x.state === 'toKiosk' && !x.resolved);
     if (!c || this.overlay !== 'none') { el?.classList.add('hidden'); return; }
     ensureQteStyle();
-    if (!el) { el = document.createElement('div'); el.id = 'escortcue'; el.setAttribute('role', 'status'); ($('hud') ?? document.body).appendChild(el); }
+    if (!el) { el = document.createElement('div'); el.id = 'escortcue'; el.setAttribute('role', 'status'); ($('hq') ?? $('hud') ?? document.body).appendChild(el); }
     const p = this.view.customerWorldPos(c.id) ?? c;
     const dx = p.x - this.pos.x, dz = p.z - this.pos.z, d = Math.hypot(dx, dz);
     const near = d < ESCORT_NEAR;
@@ -606,23 +618,16 @@ export class Game {
 
   private nearMe(x: number, z: number) { return Math.hypot(x - this.pos.x, z - this.pos.z) < 2.5; }
   // ---------------- UI helpers ----------------
-  toast(text: string, tone: 'good' | 'bad' | 'info' = 'info', ms = 2800) {
-    const box = $('toasts');
-    const d = document.createElement('div'); d.className = `toast ${tone}`; d.textContent = text;
-    box.appendChild(d);
-    while (box.childElementCount > 3) box.firstElementChild!.remove();
-    setTimeout(() => d.remove(), ms);
-  }
+  /** Toasts go through the transient-HUD queue (hudq.ts): newest on top, 2 on a phone / 3 on a desktop, never over the prompt. */
+  toast(text: string, tone: 'good' | 'bad' | 'info' = 'info', ms = 2800) { hudq.toast(text, tone, ms); }
   private afTimers: number[] = [];
   /** Customer id of this shift's named regular (常客奧客), once they walk in. */
   private regularId: number | null = null;
   /** 常客奧客: today's chapter of their story, as a card at the side of the store while the shift gets ready. */
-  private showArcCard() {
-    const pre = shiftCtx.regular?.pre; if (!pre) return;
-    const el = $('arccard');
-    el.innerHTML = `<div class="ac-title">${UI.esc(pre.title)}</div>` + pre.lines.map(l => `<p>${UI.esc(l.icon)} <b>${UI.esc(l.name)}</b>：${UI.esc(l.text)}</p>`).join('');
-    el.className = '';
-    this.introTimers.push(window.setTimeout(() => el.classList.add('fade'), 14000), window.setTimeout(() => el.classList.add('hidden'), 14600));
+  private showArcCard(pre = shiftCtx.regular?.pre) {
+    if (!pre) return;
+    const html = `<div class="ac-title">${UI.esc(pre.title)}</div>` + pre.lines.map((l, i) => `<p${i ? '' : ' class="cs"'}>${UI.esc(l.icon)} <b>${UI.esc(l.name)}</b>：${UI.esc(l.text)}</p>`).join('');
+    hudq.card({ slot: 'arccard', html, ms: 14000, prio: 60, fade: true });
   }
   private regularSays(text: string, fail = false) {
     const r = shiftCtx.regular; if (!r) return;
@@ -650,6 +655,7 @@ export class Game {
       // restart the pop-in animation
       el.style.animation = 'none'; void el.offsetWidth; el.style.animation = '';
       this.afTimers.push(window.setTimeout(() => el.classList.add('fade'), 5200), window.setTimeout(() => el.classList.add('hidden'), 5700));
+      hudq.layout();
     }, delay)];
   }
   /** Empty / low shelf: short rate-limited toast for a low shelf, guide arrow to the crate, and a one-time tip (chapters 1–3). */
@@ -1298,6 +1304,8 @@ export class Game {
     const t = performance.now();
     this.feed = this.feed.filter(f => f.until > t);
     $('feed').innerHTML = this.feed.map(f => `<div class="feedline">${UI.esc(f.text)}</div>`).join('');
+    // the transient stack: placed between the shift bar, the side panels, the touch buttons and the prompt (hudq.ts)
+    hudq.layout();
   }
 
   exit(reason?: string) {
@@ -1314,7 +1322,7 @@ export class Game {
     setControlsContext(null);
     this.wheel.el.remove();
     $('aftermath').classList.add('hidden');
-    $('introcard').classList.add('hidden'); $('tutskip').classList.add('hidden'); $('arccard').classList.add('hidden');
+    hudq.reset(); $('tutskip').classList.add('hidden');
     this.input.unlock();
     this.conn.close();
     audio.stopMusic();
@@ -1363,7 +1371,9 @@ function ensureQteStyle() {
   #escortcue[data-state="far"] .ec-arrow { background: #c92a2a; }
   #escortcue[data-state="ok"] .ec-arrow { background: #2b8a3e; }
   body.reduce-motion #escortcue { animation: none !important; }
-  body.touch #escortcue { top: 36%; font-size: 16px; }`;
+  body.touch #escortcue { top: 36%; font-size: 16px; }
+  /* 字級 > 100 %: vw inside the zoomed HUD grows with the zoom, so the phone card keeps its real width (clear of the buttons) */
+  body.touch.big-text #qte { width: calc(44vw / var(--ui-scale, 1)); }`;
   document.head.appendChild(st);
 }
 

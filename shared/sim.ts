@@ -16,7 +16,7 @@ import type {
   ActKind, CustomerKind, DayStats, GameEvent, Held, Phase, Snapshot, StoreSave, Target,
 } from './protocol.ts';
 import { BASE_MODS, Food, Incident, ShiftConfig, ShiftResult } from './career.ts';
-import { bagmanAtDoor, changeAnswer, GEN_TUNE, GUARD_SKIP, SPECIAL_CLOCK, TYPHOON } from './genkarens.ts';
+import { bagmanAtDoor, changeAnswer, GEN_TUNE, GUARD_SKIP, NEWYEAR, SPECIAL_CLOCK, TYPHOON } from './genkarens.ts';
 
 export function mulberry32(seed: number) {
   let a = seed >>> 0;
@@ -430,7 +430,7 @@ function spawnCustomer(w: World, kind: CustomerKind, express = false) {
     if (w.cfg.chapter >= 2 && w.rng() < 0.12) c.vip = true;
   }
   // 跨年夜: every karen has had a few drinks
-  if (kind !== 'normal' && kind !== 'boss' && w.cfg.special === 'newyear') { c.drunk = true; c.drunkT = 9; c.speed *= 0.85; }
+  if (kind !== 'normal' && kind !== 'boss' && w.cfg.special === 'newyear') { c.drunk = true; c.drunkT = NEWYEAR.firstSpill; c.speed *= 0.85; }
   w.customers.push(c);
   if (kind !== 'normal') {
     ev(w, { e: 'karen', kind, id: c.id });
@@ -649,8 +649,8 @@ function updateCustomer(w: World, c: Customer, dt: number) {
   if (c.stunT && c.stunT > 0) { c.stunT = Math.max(0, c.stunT - dt); c.moving = false; return; }
   if (c.drunk && !c.resolved && c.state !== 'leaving') {
     // 跨年夜: a drunk karen knocks a drink over every now and then
-    c.drunkT = (c.drunkT ?? 9) - dt;
-    if (c.drunkT <= 0) { c.drunkT = 15; addSpill(w, c.x, c.z); adjChaos(w, 1); }
+    c.drunkT = (c.drunkT ?? NEWYEAR.firstSpill) - dt;
+    if (c.drunkT <= 0) { c.drunkT = NEWYEAR.spillEvery; addSpill(w, c.x, c.z); adjChaos(w, 1); }
   }
   // 發票對獎魔人 on his way to the 對獎機 only walks while a worker stays with him
   if (c.kind === 'lottery' && c.state === 'toKiosk' && !c.resolved && escortPaused(w, c, dt)) return;
@@ -1177,7 +1177,7 @@ type Check = { ok: true; dur: number } | { ok: false; reason: string };
 function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = false, opt?: number): Check {
   const r = checkAct(w, p, kind, t, completing, opt);
   // 跨年夜: a drunk karen takes longer to get through to
-  if (r.ok && r.dur > 0 && t.t === 'customer' && customer(w, t.id)?.drunk && kind !== 'grab') return { ok: true, dur: r.dur * 1.3 };
+  if (r.ok && r.dur > 0 && t.t === 'customer' && customer(w, t.id)?.drunk && kind !== 'grab') return { ok: true, dur: r.dur * NEWYEAR.talk };
   return r;
 }
 function checkAct(w: World, p: PlayerState, kind: ActKind, t: Target, completing: boolean, opt?: number): Check {
@@ -1928,7 +1928,7 @@ function specialTick(w: World, dt: number) {
   if (!sp.rushOn && w.time >= rushAt && w.time < rushEnd) { sp.rushOn = true; toast(w, '🎆 23:50！倒數人潮湧進來了，收銀台頂住！', 'bad'); ev(w, { e: 'sfx', name: 'crowd' }); }
   if (sp.rushOn && w.time < rushEnd) {
     sp.rushT -= dt;
-    if (sp.rushT <= 0) { sp.rushT = 1.6; if (w.customers.length < w.cfg.maxCustomers + 3 * n + 6) spawnCustomer(w, 'normal'); }
+    if (sp.rushT <= 0) { sp.rushT = NEWYEAR.rushEvery; if (w.customers.length < w.cfg.maxCustomers + 3 * n + NEWYEAR.rushRoom) spawnCustomer(w, 'normal'); }
   }
   // countdown: 10, 5, 3-2-1, then fireworks and a happy store
   const marks = [10, 5, 3, 2, 1, 0];

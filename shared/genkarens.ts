@@ -44,6 +44,21 @@ export const TYPHOON = {
   prestock: 18,
 };
 
+/** 跨年夜 numbers (read by shared/sim.ts; docs/BALANCE.md「第六輪」). */
+export const NEWYEAR = {
+  /**
+   * Countdown rush: one extra customer every rushEvery s (while the store holds fewer than max + 3/player + rushRoom).
+   * Round 6: 1.6 → 2.0 (with the spills below, chapter 5 handled properly went 89% → 100% for an average player).
+   */
+  rushEvery: 2.0, rushRoom: 6,
+  /**
+   * A drunk karen knocks a drink over after firstSpill s, then every spillEvery s; talking to one takes ×talk as long.
+   * Round 6: 9 / 15 → 12 / 22 s. Handled properly (talked down, not thrown out) a drunk karen stays a while, and his
+   * puddles were most of the chaos peaks (no spills at all: 89% → 100%).
+   */
+  firstSpill: 12, spillEvery: 22, talk: 1.3,
+};
+
 // ---------------- 找零計較姐: the exact-change quick-time prompt ----------------
 /** Coins a till hands out, largest first. */
 export const COINS = [50, 10, 5, 1] as const;

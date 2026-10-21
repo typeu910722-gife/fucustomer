@@ -52,11 +52,20 @@ export const esc = (s: string) => s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<
 const hex = (c: number) => '#' + c.toString(16).padStart(6, '0');
 const PLATFORM_ICON: Record<string, string> = { ios: '📱iOS', android: '📱Android', 'steam-pc': '🖥Steam', web: '🌐網頁', 'web-mobile': '📱網頁', solo: '' };
 
+/** Bumped whenever the #ui screen is replaced: async work started on one screen checks it before touching the UI. */
+let screenGen = 0;
+/**
+ * "Is the screen I started on still up?" — take one before an await, check it after. False once anything else was
+ * shown (another screen, another tab of the same screen, a game), so a slow network reply never yanks the player back.
+ */
+export function screenToken(): () => boolean { const g = screenGen; return () => g === screenGen; }
+
 export function show(html: string, cls = 'screen') {
+  screenGen++;
   root().innerHTML = `<div class="${cls}" id="screen">${html}</div>`;
   return root().firstElementChild as HTMLElement;
 }
-export function hide() { root().innerHTML = ''; }
+export function hide() { screenGen++; root().innerHTML = ''; }
 export function isOpen() { return root().childElementCount > 0; }
 function on(id: string, ev: string, fn: (e: Event) => void) { document.getElementById(id)?.addEventListener(ev, fn); }
 function val(id: string) { return (document.getElementById(id) as HTMLInputElement).value; }
@@ -147,6 +156,9 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
         </div>
       </div>
     </div>`, 'screen title-bg');
+  // sign-in / sign-out finish after a network call: redraw the menu only while a main menu is what's on screen
+  // (not after the player went on to the career screen, a game…)
+  const refresh = () => { if (document.getElementById('m-settings')) h.refresh(); };
   const name = () => { const n = val('m-name').trim(); h.setName(n); return n; };
   on('m-name', 'change', name);
   on('m-quote', 'click', () => { const q = document.getElementById('m-quote')!; q.textContent = `「${randomQuote(q.textContent?.slice(1, -1))}」`; });
@@ -165,15 +177,15 @@ export function mainMenu(s: Settings, h: MainMenuHandlers, info: { coopSave: Sto
   on('m-first', 'click', () => { name(); h.firstDay?.(); });
   on('m-friend', 'click', () => friendLicenseScreen(() => h.refresh()));
   const msg = (t: string) => { const el = document.getElementById('m-licmsg'); if (el) el.textContent = t; };
-  on('m-signout', 'click', () => { void signOut().then(() => h.refresh()); });
+  on('m-signout', 'click', () => { void signOut().then(refresh); });
   const g = document.getElementById('m-google');
-  if (g) void renderGoogleButton(g, () => h.refresh(), m => { g.innerHTML = `<span class="muted" title="${esc(m)}">🔒 Google 登入（尚未開放）</span>`; if (!/還沒設定/.test(m)) msg(m); });
+  if (g) void renderGoogleButton(g, refresh, m => { g.innerHTML = `<span class="muted" title="${esc(m)}">🔒 Google 登入（尚未開放）</span>`; if (!/還沒設定/.test(m)) msg(m); });
 }
 
 /** Multiplayer (打工人的號角): store type + difficulty, create a room or join one. */
 export function multiplayerMenu(h: { create(cont: boolean, map: string, difficulty: Difficulty): void; join(code: string): void; back(): void; pack?(packId: string): void }, info: { coopSave: StoreSave | null; error?: string }) {
   show(`<div class="card wide mpcard">
-    <div class="row" style="align-items:center"><h2>📯 打工人的號角</h2><button class="btn small" id="mp-back" style="flex:0">← 主選單</button></div>
+    <div class="row" style="align-items:center"><h2>📯 打工人的號角</h2><button class="btn small" id="mp-back" style="flex:0" data-back>← 主選單</button></div>
     ${info.error ? `<div class="mp-banner" id="mp-banner">${esc(info.error)}</div>` : ''}
     <p class="muted">最多 ${MAX_PLAYERS} 人一起顧店。多人模式還在測試，可能會有問題，歡迎回報。</p>
     <div class="sectlabel">① 選店面</div>
@@ -208,7 +220,7 @@ export function inviteScreen(code: string, name: string, h: { join(name: string)
     <div class="bigcode" id="iv-code">${esc(code)}</div>
     <label class="field">你的名字<input type="text" id="iv-name" maxlength="16" placeholder="你的名字" value="${esc(name)}"></label>
     <button class="btn good" id="iv-join">🚪 加入房間</button>
-    <button class="btn small" id="iv-back">← 先回主選單</button>
+    <button class="btn small" id="iv-back" data-back>← 先回主選單</button>
   </div>`);
   on('iv-join', 'click', () => h.join(val('iv-name').trim()));
   on('iv-name', 'keydown', e => { if ((e as KeyboardEvent).key === 'Enter') document.getElementById('iv-join')!.click(); });
@@ -221,12 +233,14 @@ export function friendLicenseScreen(onBack: () => void) {
     <p class="muted">輸入好友的證號（登入 Google 後才會有證號）。</p>
     <div class="row"><input type="text" id="fl-no" maxlength="9" placeholder="1234-5678" autocomplete="off" inputmode="numeric"><button class="btn info" id="fl-go" style="flex:0 0 110px">查詢</button></div>
     <div id="fl-out"></div>
-    <button class="btn" id="fl-back">← 返回</button></div>`);
+    <button class="btn" id="fl-back" data-back>← 返回</button></div>`);
   on('fl-back', 'click', onBack);
   const go = async () => {
     const raw = val('fl-no').replace(/\D/g, ''); const no = raw.length === 8 ? `${raw.slice(0, 4)}-${raw.slice(4)}` : val('fl-no').trim();
     const out = document.getElementById('fl-out')!; out.innerHTML = '<p class="muted">查詢中…</p>';
+    const alive = screenToken();
     const r = await getLicense(no);
+    if (!alive()) return;
     out.innerHTML = r.ok ? licenseHtml({ ...r.data, weekBadges: (r.data.weekBadges ?? []).map(w => weekBadge(w)), weekBadgeCount: r.data.weekBadgeCount }, false) + (r.data.quote ? `<p class="muted">「${esc(r.data.quote)}」</p>` : '') : `<p class="err">${esc(r.error)}</p>`;
   };
   on('fl-go', 'click', () => void go());
@@ -431,7 +445,7 @@ export function lobbyScreen(l: LobbyState, selfId: string, h: { ready(r: boolean
 }
 
 export function message(title: string, body: string, btn = '確定', onOk?: () => void) {
-  show(`<div class="card"><h2>${esc(title)}</h2><p>${esc(body)}</p><button class="btn primary" id="msg-ok">${esc(btn)}</button></div>`);
+  show(`<div class="card"><h2>${esc(title)}</h2><p>${esc(body)}</p><button class="btn primary" id="msg-ok" data-back>${esc(btn)}</button></div>`);
   on('msg-ok', 'click', () => { hide(); onOk?.(); });
 }
 
@@ -601,7 +615,7 @@ export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map
         <span class="tag ${x.done ? 'ok' : ''}">${x.done ? '✅ 今日獎勵已領' : '🎁 今日獎勵未領'}</span>${x.wins ? `<span class="tag">過關 ${x.wins} 次</span>` : ''}
         <button class="btn primary" data-special="${esc(x.id)}">${x.icon} 開始${esc(x.name)}</button></div>`).join('')}</div></div>`
     : `<div class="chapter locked"><div class="chhead"><b>🎆 特殊營業日</b></div><div class="muted story">🔒 通過第 1 章「店長來巡店」後解鎖（颱風夜、跨年夜）</div></div>`;
-  show(`<div class="card wide"><div class="row" style="align-items:center"><h2 style="flex:1;margin:0">選擇店面</h2>${h.records ? '<button class="btn small" id="mp-records" style="flex:0">🏆 我的紀錄</button>' : ''}<button class="btn small" id="mp-back" style="flex:0">← 返回</button></div>
+  show(`<div class="card wide"><div class="row" style="align-items:center"><h2 style="flex:1;margin:0">選擇店面</h2>${h.records ? '<button class="btn small" id="mp-records" style="flex:0">🏆 我的紀錄</button>' : ''}<button class="btn small" id="mp-back" style="flex:0" data-back>← 返回</button></div>
     ${h.special ? sp : ''}
     <p class="muted">每種店賣的東西、擺設和工作站都不一樣。各自有獨立的存檔。每撐過一天，店面就會累積名聲（Lv1–10），解鎖免費小獎勵。</p>
     <div class="grid2">${MAPS.map(m => {

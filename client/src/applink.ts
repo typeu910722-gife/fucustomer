@@ -39,10 +39,10 @@ export async function appLinkCard(onSignedIn: (card: LicenseCard) => void) {
   const box = overlay();
   const close = () => box.remove();
   const render = (html: string) => { box.innerHTML = `<div class="card" style="max-width:420px;text-align:center">${html}</div>`; box.querySelector('#al-cancel')?.addEventListener('click', close); };
-  render('<h2>🌐 用瀏覽器登入</h2><p class="muted">準備中…</p><button class="btn small" id="al-cancel">取消</button>');
+  render('<h2>🌐 用瀏覽器登入</h2><p class="muted">準備中…</p><button class="btn small" id="al-cancel" data-back>取消</button>');
   const s = await startAppLink();
   if (!box.isConnected) return;
-  if (!s.ok) { render(`<h2>🌐 用瀏覽器登入</h2><div class="err">${esc(s.error)}</div><button class="btn small" id="al-cancel">關閉</button>`); return; }
+  if (!s.ok) { render(`<h2>🌐 用瀏覽器登入</h2><div class="err">${esc(s.error)}</div><button class="btn small" id="al-cancel" data-back>關閉</button>`); return; }
   const { code, pollToken } = s.data;
   const url = `${LINK_WEB_BASE}#link=${encodeURIComponent(code)}`;
   const until = Date.now() + s.data.expiresIn * 1000;
@@ -51,7 +51,7 @@ export async function appLinkCard(onSignedIn: (card: LicenseCard) => void) {
     <div style="font-size:34px;font-weight:900;letter-spacing:4px;margin:8px 0" id="al-code">${esc(code)}</div>
     <p id="al-status">⏳ 等待瀏覽器登入…</p>
     <p class="muted" style="font-size:12px">代碼 10 分鐘內有效，只能用一次。</p>
-    <div class="row"><button class="btn small info" id="al-open">再開一次瀏覽器</button><button class="btn small" id="al-cancel">取消</button></div>`);
+    <div class="row"><button class="btn small info" id="al-open">再開一次瀏覽器</button><button class="btn small" id="al-cancel" data-back>取消</button></div>`);
   box.querySelector('#al-open')?.addEventListener('click', () => void openExternal(url));
   void openExternal(url);
   const status = (t: string) => { const e = box.querySelector('#al-status'); if (e) e.textContent = t; };
@@ -81,26 +81,26 @@ export function webLinkCard(raw: string) {
     box.innerHTML = `<div class="card" style="max-width:440px;text-align:center"><h2>📲 把登入帶回 App</h2>${html}</div>`;
     box.querySelector('#al-cancel')?.addEventListener('click', close);
   };
-  if (!code) { render('<div class="err">代碼格式不對，請回到 App 重新按登入。</div><button class="btn small" id="al-cancel">關閉</button>'); return; }
+  if (!code) { render('<div class="err">代碼格式不對，請回到 App 重新按登入。</div><button class="btn small" id="al-cancel" data-back>關閉</button>'); return; }
   const head = `<div style="font-size:30px;font-weight:900;letter-spacing:4px;margin:6px 0">代碼 ${esc(code)}</div>
     <p class="muted" style="font-size:13px">請確認 App 上顯示的是同一組代碼。只有在你自己剛剛從 App 按下登入時才繼續，別幫別人傳來的代碼登入。</p>`;
   const step = () => {
     const a = loadAccount();
     if (!a) {
-      render(`${head}<p>先用 Google 登入：</p><div id="al-google" style="display:flex;justify-content:center;min-height:40px"></div><div class="err" id="al-err"></div><button class="btn small" id="al-cancel">取消</button>`);
+      render(`${head}<p>先用 Google 登入：</p><div id="al-google" style="display:flex;justify-content:center;min-height:40px"></div><div class="err" id="al-err"></div><button class="btn small" id="al-cancel" data-back>取消</button>`);
       const g = box.querySelector<HTMLElement>('#al-google')!;
       void renderGoogleButton(g, () => step(), m => { const e = box.querySelector('#al-err'); if (e) e.textContent = m; });
       return;
     }
     render(`${head}<p>已登入證照 <b>${esc(a.no)}</b>，要把這個登入帶給 App 嗎？</p><div class="err" id="al-err"></div>
-      <div class="row"><button class="btn good" id="al-go">✅ 帶回 App</button><button class="btn small" id="al-cancel">取消</button></div>`);
+      <div class="row"><button class="btn good" id="al-go">✅ 帶回 App</button><button class="btn small" id="al-cancel" data-back>取消</button></div>`);
     const go = box.querySelector<HTMLButtonElement>('#al-go')!;
     go.addEventListener('click', async () => {
       go.disabled = true;
       const r = await completeAppLink(code);
       if (!r.ok) { if (/重新登入/.test(r.error)) step(); const e = box.querySelector('#al-err'); if (e) e.textContent = r.error; go.disabled = false; return; }
       history.replaceState(null, '', location.pathname + location.search); // a reload shouldn't offer the used code again
-      render(`<p style="font-size:22px;font-weight:900">✅ 完成，回到 App 吧</p><p class="muted">App 會在幾秒內自動登入證照 ${esc(r.data.no)}。這個分頁可以關掉了。</p><button class="btn small" id="al-cancel">關閉</button>`);
+      render(`<p style="font-size:22px;font-weight:900">✅ 完成，回到 App 吧</p><p class="muted">App 會在幾秒內自動登入證照 ${esc(r.data.no)}。這個分頁可以關掉了。</p><button class="btn small" id="al-cancel" data-back>關閉</button>`);
     });
   };
   step();

@@ -3,7 +3,7 @@
 // 雲端備份 (Google sign-in only) sits at the top: upload / restore (same comparison + double confirm as an import) / delete.
 import { MAX_CODE_LEN, type SavePayload, type SaveSummary, applySave, exportSaveCode, parseSaveCode, summarizeStore } from '../../shared/savecode.ts';
 import type { CloudEntry } from '../../shared/cloudsave.ts';
-import { confirmTwice, esc, show } from './ui.ts';
+import { confirmTwice, esc, screenToken, show } from './ui.ts';
 import { isNative } from './platform.ts';
 import { loadAccount } from './account.ts';
 import { cloudDelete, cloudDownload, cloudUpload, loadCloudPrefs, saveCloudPrefs, snapshotStorage as snapshot } from './cloudsave.ts';
@@ -72,7 +72,9 @@ function wireCloud($: <T extends HTMLElement>(id: string) => T | null) {
   const busy = (on: boolean) => { for (const id of ['bk-up', 'bk-down', 'bk-del']) { const b = $<HTMLButtonElement>(id); if (b) b.disabled = on; } };
   $('bk-up')?.addEventListener('click', async () => {
     busy(true); cres.innerHTML = '<p class="muted">上傳中…</p>';
+    const alive = screenToken();
     const r = await cloudUpload();
+    if (!alive()) return; // left the backup screen meanwhile (the upload itself still happened)
     busy(false);
     if (!r.ok) { cres.innerHTML = `<p class="bk-err">❌ ${esc(r.error)}</p>`; return; }
     last.textContent = `上次上傳：${fmtDate(r.data.at)}（Lv.${r.data.summary.level}）`;
@@ -92,7 +94,9 @@ function wireCloud($: <T extends HTMLElement>(id: string) => T | null) {
   };
   $('bk-down')?.addEventListener('click', async () => {
     busy(true); cres.innerHTML = '<p class="muted">讀取雲端存檔中…</p>';
+    const alive = screenToken();
     const r = await cloudDownload();
+    if (!alive()) return; // left meanwhile: never offer a restore on a screen the player is no longer on
     busy(false);
     if (!r.ok && r.status === 404) { last.textContent = '雲端上沒有存檔'; cres.innerHTML = '<p class="muted">☁ 雲端上還沒有存檔，先按「上傳到雲端」。</p>'; return; }
     if (!r.ok) { cres.innerHTML = `<p class="bk-err">❌ ${esc(r.error)}</p>`; return; }
@@ -101,7 +105,9 @@ function wireCloud($: <T extends HTMLElement>(id: string) => T | null) {
   });
   $<HTMLButtonElement>('bk-del')?.addEventListener('click', ev => confirmTwice(ev.currentTarget as HTMLButtonElement, '再按一次刪除雲端存檔', async () => {
     busy(true);
+    const alive = screenToken();
     const r = await cloudDelete();
+    if (!alive()) return;
     busy(false);
     if (!r.ok) { cres.innerHTML = `<p class="bk-err">❌ ${esc(r.error)}</p>`; return; }
     last.textContent = '雲端上沒有存檔';
@@ -144,7 +150,9 @@ export function backupScreen(onBack: () => void) {
   $('bk-back')?.addEventListener('click', onBack);
   wireCloud($);
   $('bk-copy')?.addEventListener('click', async () => {
+    const alive = screenToken();
     const ok = await copyText(code, out);
+    if (!alive()) return; // #bk-msg1 is gone once the player left
     $('bk-msg1')!.textContent = ok ? '✅ 已複製！貼到記事本、雲端或傳給自己保存。' : '無法自動複製，請長按上面的存檔碼全選後複製。';
   });
   $('bk-dl')?.addEventListener('click', () => {
@@ -159,7 +167,10 @@ export function backupScreen(onBack: () => void) {
   $<HTMLInputElement>('bk-file')?.addEventListener('change', async e => {
     const f = (e.target as HTMLInputElement).files?.[0]; if (!f) return;
     if (f.size > MAX_CODE_LEN) { res.innerHTML = `<p class="bk-err">❌ 檔案太大了，這不是存檔檔案。</p>`; return; }
-    inp.value = await f.text(); check();
+    const alive = screenToken();
+    const text = await f.text();
+    if (!alive()) return;
+    inp.value = text; check();
   });
   const check = () => {
     const r = parseSaveCode(inp.value);

@@ -9,7 +9,7 @@ import {
 import { getMap } from '../../shared/maps/index.ts';
 import { ARC_BY_ID } from '../../shared/regulars.ts';
 import { billing, devShop, entitlementsFor } from './billing.ts';
-import { esc } from './ui.ts';
+import { esc, screenToken } from './ui.ts';
 
 type Filter = 'all' | 'hat' | 'uniform' | 'tag' | 'decor' | 'packs';
 const FILTERS: [Filter, string][] = [['all', '全部'], ['hat', '🧢 帽子'], ['uniform', '🦺 圍裙'], ['tag', '📛 名牌'], ['decor', '🏪 店面裝飾'], ['packs', '🎁 擴充包']];
@@ -82,8 +82,11 @@ export function shopHtml(p: CareerProfile, focus?: string): string {
     </div>`;
 }
 
-/** Hooks up the shop tab after the career screen is shown. `redraw(focus)` re-renders the tab. */
-export function wireShop(p: CareerProfile, save: (p: CareerProfile) => void, redraw: (focus?: string) => void) {
+/**
+ * Hooks up the shop tab after the career screen is shown. `redraw(focus)` re-renders the tab. `reload` reads the saved
+ * profile again: a store purchase that finishes after the player left the shop is still saved, without redrawing.
+ */
+export function wireShop(p: CareerProfile, save: (p: CareerProfile) => void, redraw: (focus?: string) => void, reload: () => CareerProfile = () => p) {
   const ents = entitlementsFor(p);
   const msg = (t: string) => { lastMsg = t; const el = document.getElementById('shop-msg'); if (el) el.textContent = t; };
   lastMsg = '';
@@ -111,6 +114,8 @@ export function wireShop(p: CareerProfile, save: (p: CareerProfile) => void, red
     };
   });
   const done = (text: string) => { trying = {}; save(p); redraw(); msg(text); };
+  /** A purchase / restore that came back after the player left the shop: save it into the current profile, no redraw. */
+  const keep = (ids: readonly string[]) => { const q = reload(); q.shop.entitlements = [...new Set([...q.shop.entitlements, ...ids])]; save(q); };
   document.querySelectorAll<HTMLButtonElement>('[data-cos-buy]').forEach(b => {
     b.onclick = () => {
       const c = getCosmetic(b.dataset.cosBuy)!;
@@ -126,7 +131,9 @@ export function wireShop(p: CareerProfile, save: (p: CareerProfile) => void, red
     b.onclick = async () => {
       const pack = PACK_BY_ID[b.dataset.packBuy ?? '']; if (!pack) return;
       b.disabled = true;
+      const alive = screenToken();
       const r = await billing().purchase(pack.id);
+      if (!alive()) { if (r.ok) keep(r.entitlements); return; }
       b.disabled = false;
       if (!r.ok) return msg(`${pack.icon} ${pack.name}：${r.message}`);
       p.shop.entitlements = [...new Set([...p.shop.entitlements, ...r.entitlements])];
@@ -135,7 +142,9 @@ export function wireShop(p: CareerProfile, save: (p: CareerProfile) => void, red
   });
   const rs = document.getElementById('shop-restore') as HTMLButtonElement | null;
   if (rs) rs.onclick = async () => {
+    const alive = screenToken();
     const r = await billing().restore();
+    if (!alive()) { if (r.ok) keep(r.entitlements); return; }
     if (!r.ok) return msg(r.message);
     p.shop.entitlements = [...new Set([...p.shop.entitlements, ...r.entitlements])];
     done(r.entitlements.length ? '已恢復購買' : '沒有找到之前的購買');
