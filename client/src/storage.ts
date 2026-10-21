@@ -56,8 +56,11 @@ export function defaultSettings(touch = isTouch, reducedMotion = prefersReducedM
 export function sanitizeSettings(raw: unknown, touch = isTouch, reducedMotion = prefersReducedMotion()): Settings {
   const d = defaultSettings(touch, reducedMotion);
   const r = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {};
-  const url = typeof r.serverUrl === 'string' && /^wss?:\/\/[^\s]{1,200}$/.test(r.serverUrl.trim()) ? r.serverUrl.trim() : '';
-  return { ...d, ...(cleanSettings(r) as Partial<Settings>), serverUrl: url };
+  return { ...d, ...(cleanSettings(r) as Partial<Settings>), serverUrl: cleanServerUrl(r.serverUrl) };
+}
+/** 自訂伺服器: a ws:// or wss:// address, anything else = '' (the default server). */
+export function cleanServerUrl(v: unknown): string {
+  return typeof v === 'string' && /^wss?:\/\/[^\s]{1,200}$/.test(v.trim()) ? v.trim() : '';
 }
 export function loadSettings(): Settings { return sanitizeSettings(read<unknown>(SETTINGS_KEY)); }
 export function saveSettings(s: Settings) { write(SETTINGS_KEY, s); }

@@ -23,7 +23,7 @@ import { maybeAutoBackup } from './cloudsave.ts';
 import * as UI from './ui.ts';
 import { desktop } from './platform.ts';
 import { inputMode, keyOf, padStyle, rumble, setRumble } from './pad.ts';
-import { BTN, actionLabel, controlsLine, setControlsContext } from './padmap.ts';
+import { BTN, actionLabel, controlsLine, promptDevice, promptKey, qteGlyph, qteHelp, setControlsContext } from './padmap.ts';
 import { EmoteWheel } from './emote-wheel.ts';
 import { JuiceKind, RateLimit, TimeWarp, juiceProfile, stampText, throwStrength } from './juice.ts';
 import { STORE_D } from '../../shared/map.ts';
@@ -432,27 +432,47 @@ export class Game {
   }
 
   // ---------------- 找零計較姐: the exact-change quick-time prompt ----------------
-  private qte: { id: number; look: number; until: number; total: number; el: HTMLElement } | null = null;
-  /** Opens the prompt: three handfuls of coins, pick the one that adds up to her change (keys 1–3, click / tap). */
+  private qte: { id: number; look: number; until: number; total: number; el: HTMLElement; dev: string; secs: number } | null = null;
+  /** Opens the prompt: three handfuls of coins, pick the one that adds up to her change
+   *  (keys 1–3, D-pad ← ↑ → on a pad, click / tap). The pad does nothing else while it is open (input.qteActive). */
   openChangePrompt(id: number) {
     const c = this.snap?.customers.find(x => x.id === id);
     if (!c || this.qte) return;
     ensureQteStyle();
-    const opts = changeOptions(c.look), total = 5;
+    const opts = changeOptions(c.look), total = 5, due = changeDue(c.look);
     const el = document.createElement('div'); el.id = 'qte';
-    el.innerHTML = `<div class="qte-title">🪙 應找 <b>$${changeDue(c.look)}</b>：哪一把零錢剛剛好？</div>
-      <div class="qte-opts">${opts.map((o, i) => `<button class="qte-opt" data-qte="${i}"><kbd>${i + 1}</kbd>${o.counts.map((k, j) => (k ? `<span class="coin c${COINS[j]}">${COINS[j]}</span>×${k}` : '')).filter(Boolean).join(' ')}</button>`).join('')}</div>
-      <div class="qte-bar"><i></i></div><div class="qte-help">按 1／2／3 或點一下・選錯她會從頭數（−8 秒）</div>`;
+    el.setAttribute('role', 'dialog'); el.setAttribute('aria-label', `找零：應找 ${due} 元，選出剛好的那一把零錢`);
+    el.innerHTML = `<div class="qte-title">🪙 應找 <b>$${due}</b>：哪一把零錢剛剛好？</div>
+      <div class="qte-opts">${opts.map((o, i) => `<button class="qte-opt" data-qte="${i}" aria-label="第 ${i + 1} 把：${o.counts.map((k, j) => (k ? `${COINS[j]} 元 ${k} 個` : '')).filter(Boolean).join('、')}"><kbd class="qte-key" aria-hidden="true"></kbd><span class="qte-coins">${o.counts.map((k, j) => (k ? `<span class="coin c${COINS[j]}">${COINS[j]}</span>×${k}` : '')).filter(Boolean).join(' ')}</span></button>`).join('')}</div>
+      <div class="qte-bar" role="progressbar" aria-label="剩餘時間" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${total}"><i></i></div>
+      <div class="qte-foot"><span class="qte-time" aria-hidden="true">⏱ ${total.toFixed(1)} 秒</span><span class="qte-help"></span></div>`;
     ($('hud') ?? document.body).appendChild(el);
-    el.querySelectorAll<HTMLButtonElement>('[data-qte]').forEach(b => { b.onclick = ev => { ev.stopPropagation(); this.answerChange(Number(b.dataset.qte)); }; });
-    this.qte = { id, look: c.look, until: performance.now() + total * 1000, total, el };
+    el.querySelectorAll<HTMLButtonElement>('[data-qte]').forEach(b => {
+      // pointerdown as well as click: on a phone the tap must not wait for a click that a moving thumb can cancel
+      const pick = (ev: Event) => { ev.preventDefault(); ev.stopPropagation(); this.answerChange(Number(b.dataset.qte)); };
+      b.addEventListener('pointerdown', ev => { if ((ev as PointerEvent).pointerType === 'touch') pick(ev); });
+      b.onclick = pick;
+    });
+    this.qte = { id, look: c.look, until: performance.now() + total * 1000, total, el, dev: '', secs: -1 };
+    this.input.qteActive = true;
+    this.qteLabels();
+  }
+  /** Key / D-pad / touch badges on the handfuls + the help line, for the device the player is using right now. */
+  private qteLabels() {
+    const q = this.qte; if (!q) return;
+    const dev = promptDevice(inputMode(), this.touch), style = padStyle();
+    if (q.dev === dev + style) return;
+    q.dev = dev + style;
+    q.el.dataset.dev = dev;
+    q.el.querySelectorAll<HTMLElement>('.qte-key').forEach((k, i) => { k.textContent = qteGlyph(i, dev, style); });
+    const help = q.el.querySelector('.qte-help'); if (help) help.textContent = qteHelp(dev, style);
   }
   private answerChange(opt: number) {
     const q = this.qte; if (!q) return;
     this.send({ type: 'act', rid: newRid(), kind: 'exactChange', target: { t: 'customer', id: q.id }, opt });
     this.closeChangePrompt();
   }
-  private closeChangePrompt() { this.qte?.el.remove(); this.qte = null; }
+  private closeChangePrompt() { this.qte?.el.remove(); this.qte = null; this.input.qteActive = false; }
   private changePromptFrame(s: Snapshot) {
     const q = this.qte!;
     const c = s.customers.find(x => x.id === q.id);
@@ -460,7 +480,37 @@ export class Game {
     for (let i = 1; i <= 3; i++) if (this.input.consume(`q${i}` as 'q1')) { this.answerChange(i - 1); return; }
     const left = (q.until - performance.now()) / 1000;
     if (left <= 0) { this.answerChange(-1); return; }
+    this.qteLabels();
     const bar = q.el.querySelector<HTMLElement>('.qte-bar i'); if (bar) bar.style.width = `${Math.max(0, left / q.total) * 100}%`;
+    const tenths = Math.ceil(left * 10) / 10;
+    if (tenths !== q.secs) {
+      q.secs = tenths;
+      const t = q.el.querySelector('.qte-time'); if (t) t.textContent = `⏱ ${tenths.toFixed(1)} 秒`;
+      q.el.querySelector('.qte-bar')?.setAttribute('aria-valuenow', String(Math.ceil(left)));
+      q.el.classList.toggle('low', left < 1.5); // last moments: the bar turns red AND the timer text says so (not colour alone)
+    }
+  }
+
+  /** 發票對獎魔人 escort cue: how far you are from him and which way, while he walks to the 對獎機 (≤ 3.2 m keeps him going). */
+  private escortCue(s: Snapshot) {
+    let el = document.getElementById('escortcue');
+    const c = s.customers.find(x => x.kind === 'lottery' && x.state === 'toKiosk' && !x.resolved);
+    if (!c || this.overlay !== 'none') { el?.classList.add('hidden'); return; }
+    ensureQteStyle();
+    if (!el) { el = document.createElement('div'); el.id = 'escortcue'; el.setAttribute('role', 'status'); ($('hud') ?? document.body).appendChild(el); }
+    const p = this.view.customerWorldPos(c.id) ?? c;
+    const dx = p.x - this.pos.x, dz = p.z - this.pos.z, d = Math.hypot(dx, dz);
+    const near = d < ESCORT_NEAR;
+    const mate = !near && s.players.some(pl => pl.id !== this.selfId && Math.hypot(pl.x - p.x, pl.z - p.z) < ESCORT_NEAR);
+    // arrow on screen: forward = up (yaw convention of the movement code: forward (sin, cos), right (−cos, sin))
+    const fwd = dx * Math.sin(this.yaw) + dz * Math.cos(this.yaw), right = -dx * Math.cos(this.yaw) + dz * Math.sin(this.yaw);
+    const deg = Math.round(Math.atan2(right, fwd) * 180 / Math.PI / 15) * 15;
+    const state = near ? 'ok' : mate ? 'mate' : 'far';
+    const text = near ? `🧾 陪著走 ✔ ${d.toFixed(1)} 公尺` : mate ? '🧾 隊友陪著他走' : `⚠ 跟上！離他 ${Math.round(d)} 公尺`;
+    const html = `<span class="ec-arrow" style="transform:rotate(${deg}deg)" aria-hidden="true">⬆</span><span class="ec-txt">${text}</span>`;
+    el.classList.remove('hidden');
+    if (el.dataset.state !== state) el.dataset.state = state;
+    if (el.innerHTML !== html) el.innerHTML = html;
   }
 
   private onFx(e: Extract<GameEvent, { e: 'fx' }>) {
@@ -1114,10 +1164,12 @@ export class Game {
     // prompt
     const pr = $('prompt');
     if (this.overlay !== 'none') pr.innerHTML = '';
-    else if (me.busy) pr.innerHTML = '';
+    else if (me.busy || this.qte) pr.innerHTML = ''; // (the exact-change prompt says everything itself)
     else if (this.target) {
-      const key = this.touch ? '互動' : keyOf('interact');
-      const altKey = this.touch ? '次要' : keyOf('alt');
+      // key chip: the key / pad glyph, or on touch the text of the button to press (same words as on the button)
+      const dev = promptDevice(inputMode(), this.touch), style = padStyle();
+      const key = promptKey('interact', dev, style, this.target.primary ? shortLabel(this.target.primary, this.target.target, this.snap) : '互動');
+      const altKey = promptKey('alt', dev, style, this.target.alt ? shortLabel(this.target.alt, this.target.target, this.snap) : '次要');
       pr.innerHTML = (this.target.primary ? `<span class="key">${key}</span>${UI.esc(this.target.label)}` : UI.esc(this.target.label))
         + (this.target.reason ? `<div class="sub">${UI.esc(this.target.reason)}</div>` : '')
         + (this.target.altLabel ? `<div class="sub"><span class="key">${altKey}</span>${UI.esc(this.target.altLabel)}</div>` : '');
@@ -1127,11 +1179,14 @@ export class Game {
     // touch contextual buttons
     if (this.touch) {
       $('t-alt').classList.toggle('hidden', !this.target?.altLabel);
+      const al = this.target?.altLabel && this.target.alt ? shortLabel(this.target.alt, this.target.target, this.snap) : '次要';
+      if ($('t-alt').textContent !== al) { $('t-alt').textContent = al; $('t-alt').classList.toggle('long', al.length > 3); }
       $('t-item').classList.toggle('hidden', !me.held);
       const tl = this.target?.primary ? shortLabel(this.target.primary, this.target.target, this.snap) : '互動';
       $('t-interact').textContent = tl;
       $('t-interact').classList.toggle('long', tl.length > 4);
     }
+    this.escortCue(s);
     // karen alert
     // (a 借廁所大隊 counts once: its followers are part of the leader's karen)
     const karens = s.customers.filter(c => c.kind !== 'normal' && !c.resolved && c.revealed && c.state !== 'leaving' && !(c.kind === 'toilet' && c.phase === 2));
@@ -1271,7 +1326,10 @@ export class Game {
   }
 }
 
-/** Styles of the exact-change prompt (injected once; kept here so the page shell stays untouched). */
+/** 發票對獎魔人 keeps walking while a worker is this close (same distance as escortPaused in shared/sim.ts). */
+const ESCORT_NEAR = 3.2;
+
+/** Styles of the exact-change prompt + the escort cue (injected once; kept here so the page shell stays untouched). */
 function ensureQteStyle() {
   if (document.getElementById('qte-style')) return;
   const st = document.createElement('style'); st.id = 'qte-style';
@@ -1279,12 +1337,33 @@ function ensureQteStyle() {
     border: 4px solid var(--ink, #2a1f3d); box-shadow: 0 7px 0 var(--ink, #2a1f3d); border-radius: 20px; padding: 10px 14px; z-index: 9; text-align: center; animation: pop .25s both; pointer-events: auto; }
   #qte .qte-title { font-weight: 900; font-size: 18px; } #qte .qte-title b { color: #e8590c; font-size: 22px; }
   #qte .qte-opts { display: flex; gap: 8px; margin: 8px 0 6px; flex-wrap: wrap; justify-content: center; }
-  #qte .qte-opt { flex: 1 1 150px; min-height: 48px; border: 3px solid var(--ink, #2a1f3d); border-radius: 14px; background: #fff; font: inherit; font-weight: 800; cursor: pointer; padding: 6px; line-height: 1.6; }
-  #qte .qte-opt:hover { background: #fff3bf; } #qte kbd { background: var(--ink, #2a1f3d); color: #fff; border-radius: 6px; padding: 0 6px; margin-right: 6px; }
+  #qte .qte-opt { flex: 1 1 150px; min-height: 48px; border: 3px solid var(--ink, #2a1f3d); border-radius: 14px; background: #fff; color: var(--ink, #2a1f3d); font: inherit; font-weight: 800; cursor: pointer; padding: 6px; line-height: 1.6;
+    display: flex; align-items: center; justify-content: center; gap: 4px; touch-action: manipulation; }
+  #qte .qte-opt:hover, #qte .qte-opt:focus-visible { background: #fff3bf; }
+  #qte kbd { flex: none; background: var(--ink, #2a1f3d); color: #fff; border-radius: 6px; padding: 0 6px; margin-right: 4px; font: inherit; font-size: 15px; white-space: nowrap; }
+  #qte .qte-coins { display: inline; }
   #qte .coin { display: inline-block; min-width: 26px; height: 26px; border-radius: 50%; background: #fcc419; border: 2px solid #b08900; font-size: 11px; line-height: 22px; margin: 0 1px; }
   #qte .coin.c50 { background: #ffd43b; min-width: 30px; height: 30px; line-height: 26px; } #qte .coin.c1 { background: #dee2e6; border-color: #868e96; }
   #qte .qte-bar { height: 8px; border-radius: 4px; background: #e9ecef; overflow: hidden; border: 2px solid var(--ink, #2a1f3d); } #qte .qte-bar i { display: block; height: 100%; background: #f59f00; width: 100%; }
-  #qte .qte-help { font-size: 12px; margin-top: 4px; opacity: .8; }`;
+  #qte.low .qte-bar i { background: #e03131; } #qte.low .qte-time { color: #c92a2a; } #qte.low .qte-time::after { content: '・快！'; }
+  #qte .qte-foot { display: flex; justify-content: space-between; gap: 8px; font-size: 12px; margin-top: 4px; } #qte .qte-time { font-weight: 900; font-size: 14px; white-space: nowrap; }
+  #qte .qte-help { opacity: .8; }
+  /* phone: a compact card in the top-middle, clear of the joystick (bottom left) and the action buttons (bottom right) */
+  body.touch #qte { left: 22%; right: auto; margin: 0; bottom: auto; top: calc(58px + var(--safe-t, 0px)); width: 44vw; padding: 6px 8px; border-radius: 16px; box-shadow: 0 5px 0 var(--ink, #2a1f3d); }
+  body.touch #qte .qte-title { font-size: 15px; } body.touch #qte .qte-title b { font-size: 18px; }
+  body.touch #qte .qte-opts { flex-wrap: nowrap; gap: 6px; margin: 5px 0 4px; }
+  body.touch #qte .qte-opt { flex: 1 1 0; min-height: 64px; min-width: 56px; flex-direction: column; gap: 0; padding: 3px 2px; line-height: 1.35; font-size: 12px; }
+  body.touch #qte kbd { margin: 0; font-size: 12px; }
+  body.touch #qte .coin { min-width: 22px; height: 22px; line-height: 18px; font-size: 10px; } body.touch #qte .coin.c50 { min-width: 24px; height: 24px; line-height: 20px; }
+  #escortcue { position: absolute; left: 50%; top: 38%; transform: translate(-50%, -100%); display: flex; align-items: center; gap: 8px; padding: 4px 14px 5px 8px; border-radius: 999px; font-weight: 900; font-size: 18px;
+    background: rgba(255,246,229,.94); color: var(--ink, #2a1f3d); border: 3px solid var(--ink, #2a1f3d); box-shadow: 0 4px 0 rgba(42,31,61,.6); white-space: nowrap; pointer-events: none; }
+  #escortcue .ec-arrow { display: inline-grid; place-items: center; width: 30px; height: 30px; border-radius: 50%; background: var(--ink, #2a1f3d); color: #fff; font-size: 17px; transition: transform .15s; }
+  #escortcue[data-state="far"] { background: #ffe3e3; border-color: #c92a2a; color: #c92a2a; animation: ecpulse .5s infinite alternate; }
+  @keyframes ecpulse { to { scale: 1.08; } }
+  #escortcue[data-state="far"] .ec-arrow { background: #c92a2a; }
+  #escortcue[data-state="ok"] .ec-arrow { background: #2b8a3e; }
+  body.reduce-motion #escortcue { animation: none !important; }
+  body.touch #escortcue { top: 36%; font-size: 16px; }`;
   document.head.appendChild(st);
 }
 

@@ -283,8 +283,8 @@ function lockReminder() {
   document.getElementById('lk-yes')!.onclick = async () => {
     on.locked = true; saveProfile(p);
     const r = await syncStore(p.store!);
-    if (!r.ok) { on.locked = false; saveProfile(p); document.getElementById('lk-msg')!.textContent = r.error; return; }
-    career('store');
+    if (!r.ok) { on.locked = false; saveProfile(p); const m = document.getElementById('lk-msg'); if (m) m.textContent = r.error; return; }
+    if (document.getElementById('lk-yes')) career('store'); // still on this card (「不用」 may have been pressed while waiting)
   };
 }
 

@@ -16,7 +16,7 @@ import type {
   ActKind, CustomerKind, DayStats, GameEvent, Held, Phase, Snapshot, StoreSave, Target,
 } from './protocol.ts';
 import { BASE_MODS, Food, Incident, ShiftConfig, ShiftResult } from './career.ts';
-import { bagmanAtDoor, changeAnswer, SPECIAL_CLOCK } from './genkarens.ts';
+import { bagmanAtDoor, changeAnswer, GEN_TUNE, GUARD_SKIP, SPECIAL_CLOCK, TYPHOON } from './genkarens.ts';
 
 export function mulberry32(seed: number) {
   let a = seed >>> 0;
@@ -385,7 +385,7 @@ function spawnCustomer(w: World, kind: CustomerKind, express = false) {
     for (let i = 0; i < count; i++) c.shopping.push(extra && w.rng() < 0.25 ? 'extra' : w.rng() < 0.4 ? 'drinks' : w.rng() < 0.6 ? 'snacks' : 'bento');
     if (w.cfg.foods.length && w.rng() < w.cfg.foodChance) c.want = pick(w, w.cfg.foods);
     // 颱風夜: half the shelter crowd is stocking up on instant noodles (the snack line)
-    if (w.cfg.special === 'typhoon' && !express && w.rng() < 0.45) c.shopping = Array.from({ length: 3 + Math.floor(w.rng() * 2) }, () => 'snacks' as Product);
+    if (w.cfg.special === 'typhoon' && !express && w.rng() < TYPHOON.hoardShare) c.shopping = Array.from({ length: TYPHOON.hoardMin + Math.floor(w.rng() * TYPHOON.hoardSpread) }, () => 'snacks' as Product);
     if (express) {
       // the day's first customer grabbed their things by the door on the way in and heads straight for the till
       c.want = null;
@@ -1021,11 +1021,11 @@ function genSpawn(w: World, c: Customer) {
   if (c.kind === 'lottery' || c.kind === 'change') {
     // shops like everyone else, then holds up the till
     c.shopping.push(pick(w, PRODUCTS)); if (w.rng() < 0.5) c.shopping.push(pick(w, PRODUCTS));
-    c.patienceMax = 400; c.life = c.kind === 'lottery' ? 45 : 40; c.lifeMax = c.life;
+    c.patienceMax = 400; c.life = c.kind === 'lottery' ? GEN_TUNE.lottery.life : GEN_TUNE.change.life; c.lifeMax = c.life;
   } else if (c.kind === 'bagman') {
-    c.speed = 1.6; c.life = 28; c.lifeMax = 28; c.knockTimer = 3.5;
+    c.speed = 1.6; c.life = GEN_TUNE.bagman.life; c.lifeMax = c.life; c.knockTimer = GEN_TUNE.bagman.knock;
   } else if (c.kind === 'toilet') {
-    c.speed = 1.9; c.life = 60; c.lifeMax = 60; c.knockTimer = 5; c.phase = 1;
+    c.speed = 1.9; c.life = GEN_TUNE.toilet.life; c.lifeMax = c.life; c.knockTimer = GEN_TUNE.toilet.flush; c.phase = 1;
   }
 }
 
@@ -1102,12 +1102,12 @@ function genUpdate(w: World, c: Customer, dt: number, arrived: boolean): boolean
         c.life -= dt; c.knockTimer -= dt;
         if (c.knockTimer <= 0) {
           // pulls a fistful of free bags and slips something off the shelf into one
-          c.knockTimer = 3.5; w.money -= 1; adjChaos(w, 1);
+          c.knockTimer = GEN_TUNE.bagman.knock; w.money -= 1; adjChaos(w, 1);
           const stocked = PRODUCTS.filter(p => w.shelves[p] > 0);
           if (stocked.length) { const p = pick(w, stocked); w.shelves[p]--; c.eaten.push(p); }
           ev(w, { e: 'sfx', name: 'rustle', x: c.x, z: c.z });
         }
-        if (c.life <= 0 || c.eaten.length >= 5) {
+        if (c.life <= 0 || c.eaten.length >= GEN_TUNE.bagman.bagMax) {
           c.state = 'toExit'; c.speed = 1.2; setGoal(c, SPAWN_OUTSIDE);
           toast(w, '🛍 免費袋子阿伯提著鼓鼓的袋子往門口走了！在門口攔他', 'bad');
         } else if (arrived) setGoal(c, randomWanderSpot(w));
@@ -1139,7 +1139,7 @@ function genUpdate(w: World, c: Customer, dt: number, arrived: boolean): boolean
       const inside = toiletGroup(w, c).filter(m => m.state === 'toilet').length;
       c.knockTimer -= dt * (0.5 + inside / 2);
       if (c.knockTimer <= 0) {
-        c.knockTimer = 5; adjChaos(w, 1);
+        c.knockTimer = GEN_TUNE.toilet.flush; adjChaos(w, 1);
         addSpill(w, TOILET_SPOT.x + (w.rng() - 0.5) * 2.2, TOILET_SPOT.z + 0.6 + w.rng() * 2.4);
         ev(w, { e: 'sfx', name: 'flush', x: TOILET_SPOT.x, z: TOILET_SPOT.z });
       }
@@ -1534,9 +1534,9 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target, opt?: numb
         ev(w, { e: 'money', amount: total, x: c!.x, z: c!.z });
         leave(w, c!, false);
       } else {
-        c!.hits++; c!.life = Math.max(1, c!.life - 8);
+        c!.hits++; c!.life = Math.max(0.05, c!.life - GEN_TUNE.change.wrongCost); adjRating(w, -GEN_TUNE.change.wrongRating); // never refills: spamming wrong picks ends it
         ev(w, { e: 'sfx', name: 'error', x: c!.x, z: c!.z });
-        toast(w, opt === -1 ? '🪙 找零找太慢，她嘆了一口氣又從頭數（-8 秒）' : '🪙「不對啦，金額不對」找零計較姐從頭再數一次（-8 秒）', 'bad');
+        toast(w, opt === -1 ? `🪙 找零找太慢，她嘆了一口氣又從頭數（-${GEN_TUNE.change.wrongCost} 秒）` : `🪙「不對啦，金額不對」找零計較姐從頭再數一次（-${GEN_TUNE.change.wrongCost} 秒）`, 'bad');
       }
       break;
     case 'stopBag':
@@ -1915,7 +1915,7 @@ function specialTick(w: World, dt: number) {
     // the roof leaks: a puddle somewhere in the store every so often
     sp.leakT -= dt;
     if (sp.leakT <= 0) {
-      sp.leakT = 24 + w.rng() * 8;
+      sp.leakT = TYPHOON.leakEvery + w.rng() * TYPHOON.leakSpread;
       const at = pick(w, WANDER_SPOTS);
       addSpill(w, at.x, at.z);
       if (sp.cd++ === 0) toast(w, '💧 屋頂漏水了！拖把準備好', 'bad');
@@ -2056,7 +2056,7 @@ export function tick(w: World, dt: number) {
   if (w.phase === 'open' || w.phase === 'closing') {
     trackEmptyShelves(w);
     // 颱風夜: everyone expects a wet floor tonight, so puddles weigh less on the mood (there are a lot more of them)
-    const wet = w.cfg.special === 'typhoon' ? 0.55 : 1;
+    const wet = w.cfg.special === 'typhoon' ? TYPHOON.wet : 1;
     adjRating(w, -0.0008 * Math.min(6, w.spills.length) * dt * wet);
     w.chaosTimer += dt;
     if (w.chaosTimer >= 8) {
@@ -2072,7 +2072,7 @@ export function tick(w: World, dt: number) {
       w.guardTimer -= dt;
       if (w.guardTimer <= 0) {
         w.guardTimer = guardInterval(w.cfg.mods.guard);
-        const k = w.customers.filter(c => c.kind !== 'normal' && c.kind !== 'boss' && !c.resolved && !c.gone && !c.heldBy && !c.fly && Math.hypot(c.x - ENTRANCE.x, c.z - ENTRANCE.z) < 5.5)[0];
+        const k = w.customers.filter(c => c.kind !== 'normal' && c.kind !== 'boss' && !GUARD_SKIP.includes(c.kind) && !c.resolved && !c.gone && !c.heldBy && !c.fly && Math.hypot(c.x - ENTRANCE.x, c.z - ENTRANCE.z) < 5.5)[0];
         if (k) eject(w, k, null, 'guard');
       }
     }

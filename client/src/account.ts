@@ -95,7 +95,9 @@ export const isNativeApp = () => !!(window as unknown as { Capacitor?: { isNativ
 /** Home-screen web app (iOS profile web clip / "Add to Home Screen" in full-screen mode). Google's popup sign-in
  *  can't hand the result back there, so it uses the same "sign in with the browser" link flow as the app. */
 export const isStandaloneWeb = () => {
-  try { return (navigator as unknown as { standalone?: boolean }).standalone === true || window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches; }
+  // (display-mode: fullscreen) also matches a normal browser tab after the game's own 全螢幕 / landscape request
+  // (Fullscreen API): that is still the web page, where the normal Google button works.
+  try { return (navigator as unknown as { standalone?: boolean }).standalone === true || window.matchMedia('(display-mode: standalone)').matches || (window.matchMedia('(display-mode: fullscreen)').matches && !document.fullscreenElement); }
   catch { return false; }
 };
 export interface LinkStart { code: string; pollToken: string; expiresIn: number }

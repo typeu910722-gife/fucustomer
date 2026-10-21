@@ -1,5 +1,5 @@
 // Unified input: keyboard + mouse (pointer lock), gamepad, and multi-touch virtual controls.
-import { GAME_BINDINGS, isDown, radialDeadzone, stickLook } from './padmap.ts';
+import { GAME_BINDINGS, isDown, qteKeepsBinding, qtePadPick, radialDeadzone, stickLook } from './padmap.ts';
 import { currentPad, inputMode, padActive, setMode } from './pad.ts';
 
 export type Action = 'interact' | 'alt' | 'drop' | 'ping' | 'menu' | 'quick' | 'shop' | 'ready' | 'tab' | 'grab' | 'spin' | 'ultimate' | 'hit'
@@ -34,6 +34,8 @@ export class Input {
   padL = { x: 0, y: 0 }; padR = { x: 0, y: 0 };
   /** The page isn't allowed to capture the mouse (e.g. shown inside another site's frame): look by dragging instead. */
   lockBlocked = false;
+  /** The exact-change prompt is open: the pad's D-pad ← ↑ → answer it (q1–q3) and nothing else on the pad acts or moves. */
+  qteActive = false;
 
   constructor(private canvas: HTMLCanvasElement, public touch: boolean) {
     window.addEventListener('keydown', e => this.onKey(e, true));
@@ -170,16 +172,21 @@ export class Input {
       for (const i of [...this.padHeldOver]) if (!b[i]) this.padHeldOver.delete(i);
       const live = (i: number) => !!b[i] && !this.padHeldOver.has(i);
       const l = radialDeadzone(gp.axes[0] ?? 0, gp.axes[1] ?? 0, 0.18);
-      x += l.x; y -= l.y;
+      if (!this.qteActive) { x += l.x; y -= l.y; }
       if (this.enabled) {
         const lk = stickLook(gp.axes[2] ?? 0, gp.axes[3] ?? 0, dt, this.padSens, this.padInvertY);
         this.padDX += lk.dx; this.padDY += lk.dy;
       }
+      if (this.qteActive) {
+        const pick = qtePadPick(this.padPrev, b.map((_, i) => live(i)));
+        if (pick >= 0) this.pressed.add(`q${pick + 1}` as Action);
+      }
       for (const [i, a] of GAME_BINDINGS) {
+        if (this.qteActive && !qteKeepsBinding(i)) continue;
         if (a === 'run') { if (live(i)) run = true; continue; }
         if (live(i) && !this.padPrev[i]) this.pressed.add(a);
       }
-      if (live(0)) this.holdInteract = true; else if (this.padPrev[0]) this.holdInteract = false;
+      if (live(0) && !this.qteActive) this.holdInteract = true; else if (this.padPrev[0]) this.holdInteract = false;
       this.padPrev = b;
     }
     this.wasEnabled = this.enabled;

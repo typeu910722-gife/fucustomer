@@ -162,3 +162,31 @@ export function pickSpatial(from: Rect, cands: Rect[], dir: Dir): number {
 export function looksLikeBack(id: string, text: string): boolean {
   return /(^|-)(back|close)$/.test(id) || /^\s*←/.test(text) || /^(返回|關閉|取消|算了)/.test(text.trim());
 }
+
+// ---------------- 找零計較姐: the exact-change quick-time prompt (pad / touch / keyboard) ----------------
+/** D-pad ← / ↑ / → pick handful 1 / 2 / 3 (keyboard 1 / 2 / 3, touch: tap the handful). */
+export const QTE_PAD: readonly number[] = [BTN.LEFT, BTN.UP, BTN.RIGHT];
+/** Option index (0–2) picked by a fresh D-pad press this frame (`prev` = last frame's buttons), or -1. */
+export function qtePadPick(prev: readonly boolean[], cur: readonly boolean[]): number {
+  for (let i = 0; i < QTE_PAD.length; i++) { const b = QTE_PAD[i]; if (cur[b] && !prev[b]) return i; }
+  return -1;
+}
+/** While the prompt is open the pad only answers it: every other binding is swallowed except Menu (pause still works). */
+export function qteKeepsBinding(button: number): boolean { return button === BTN.MENU; }
+
+/** Which device's labels a prompt should show: a pad wins (also on a tablet), then touch buttons, else keys. */
+export type PromptDevice = 'kb' | 'pad' | 'touch';
+export function promptDevice(mode: 'kb' | 'pad', touch: boolean): PromptDevice { return mode === 'pad' ? 'pad' : touch ? 'touch' : 'kb'; }
+/** Label in an interaction prompt's key chip: the key / pad glyph, or on touch the text of the on-screen button. */
+export function promptKey(a: PadAction, dev: PromptDevice, style: PadStyle, touchLabel: string): string {
+  return dev === 'touch' ? touchLabel : actionLabel(a, dev, style);
+}
+/** Badge on handful `i` of the exact-change prompt. */
+export function qteGlyph(i: number, dev: PromptDevice, style: PadStyle): string {
+  return dev === 'pad' ? buttonGlyph(QTE_PAD[i], style) : String(i + 1);
+}
+/** Help line under the exact-change prompt. */
+export function qteHelp(dev: PromptDevice, style: PadStyle): string {
+  const how = dev === 'pad' ? `按 十字 ${QTE_PAD.map(b => buttonGlyph(b, style).replace('十字', '')).join('／')} 選` : dev === 'touch' ? '點一下要給的那把' : '按 1／2／3 或點一下';
+  return `${how}・選錯她會從頭數（−8 秒）`;
+}

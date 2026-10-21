@@ -8,7 +8,7 @@ import { buildShiftConfig, buildDailyConfig, dailyPlan, newProfile, sanitizeProf
 import { GEN_KINDS, KAREN_INFO, type GenKind } from '../shared/constants.ts';
 import { DEX, DEX_ORDER, GEN_AFTERMATH, addHandled, aftermathLine, dexCount, sanitizeDex } from '../shared/karendex.ts';
 import { ENTRANCE, KIOSK_SPOT, REGISTERS, STORE_D, TOILET_SPOT, applyMap } from '../shared/map.ts';
-import { SPECIAL_CLOCK, SPECIAL_DAYS, SPECIAL_IDS, changeAnswer, changeDue, changeOptions, coinTotal, bagmanAtDoor } from '../shared/genkarens.ts';
+import { GEN_TUNE, SPECIAL_CLOCK, SPECIAL_DAYS, SPECIAL_IDS, changeAnswer, changeDue, changeOptions, coinTotal, bagmanAtDoor } from '../shared/genkarens.ts';
 import { applySpecialResult, buildSpecialConfig, specialOfShift, specialShiftId, SPECIAL_FIRST_BONUS } from '../shared/specialdays.ts';
 import { ROUND27_WEEK, TWIST_IDS, buildWeeklyConfig, weeklyPlan } from '../shared/weekly.ts';
 import { Room } from '../shared/room.ts';
@@ -140,7 +140,7 @@ test('找零計較姐: the exact-change prompt has one right handful; right = ha
   assert.equal(act(w, p, 'exactChange', c, 7).ok, false, 'choice out of range');
   const wrong = (changeAnswer(7) + 1) % 3;
   assert.equal(act(w, p, 'exactChange', c, wrong).ok, true);
-  assert.equal(c.resolved, false); assert.equal(c.life, 32); assert.equal(c.hits, 1);
+  assert.equal(c.resolved, false); assert.equal(c.life, 40 - GEN_TUNE.change.wrongCost); assert.equal(c.hits, 1);
   const rev = w.dayStats.revenue;
   assert.equal(act(w, p, 'exactChange', c, changeAnswer(7)).ok, true);
   assert.equal(c.resolved, true); assert.equal(c.state, 'leaving');

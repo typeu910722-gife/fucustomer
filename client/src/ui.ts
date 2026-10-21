@@ -13,7 +13,7 @@ import { backupScreen } from './backup-ui.ts';
 import { desktop, isApp, isFullscreen, setFullscreen } from './platform.ts';
 import { BTN, buttonGlyph, controlsLine } from './padmap.ts';
 import { padStyle } from './pad.ts';
-import { isTouch } from './storage.ts';
+import { cleanServerUrl, isTouch } from './storage.ts';
 import { levelBarHtml } from './progress-ui.ts';
 import type { StoreProg } from '../../shared/progression.ts';
 
@@ -295,12 +295,13 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
     master: Number(val('s-master')), fpsCap: Number(val('s-fps-cap')), adaptive: chk('s-adapt'), renderScale: Number(val('s-scale')),
     invertY: chk('s-inv'), showFps: chk('s-fps'), padSens: Number(val('s-pad')), padInvertY: chk('s-pinv'), rumble: chk('s-rumble'), fullscreen, shake: chk('s-shake'), reduceMotion: chk('s-rmotion'),
     colorblind: val('s-cb') as Settings['colorblind'], textScale: Number(val('s-text')), captions: chk('s-cap'),
-    serverUrl: val('s-url').trim(),
+    serverUrl: cleanServerUrl(val('s-url')), // not a ws(s):// address: the default server (what a reload would do anyway)
   });
   // accessibility options take effect right away (preview), and again on 完成
   for (const id of ['s-cb', 's-text', 's-cap', 's-rmotion']) on(id, 'change', () => applyA11y(collect()));
   const done = (st: Settings) => { applyA11y(st); onDone(st); };
-  on('s-backup', 'click', () => backupScreen(() => settingsMenu(collect(), onDone, overlay)));
+  // read the form now: once the backup screen is up these controls are gone (← 返回設定 used to throw here)
+  on('s-backup', 'click', () => { const cur = collect(); backupScreen(() => settingsMenu(cur, onDone, overlay)); });
   on('s-ok', 'click', () => done(collect()));
   on('s-ok2', 'click', () => done(collect()));
 }

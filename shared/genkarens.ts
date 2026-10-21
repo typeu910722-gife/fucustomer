@@ -7,6 +7,43 @@ export function bagmanAtDoor(c: { kind: string; state: string; x: number; z: num
   return c.kind === 'bagman' && !c.resolved && c.state === 'toExit' && c.z > STORE_D - 3.4 && Math.abs(c.x - ENTRANCE.x) < 3.4;
 }
 
+// ---------------- tuning numbers (balance harness: docs/BALANCE.md「第五輪」) ----------------
+/**
+ * Timers and penalties of the four general karens (read by shared/sim.ts). `life` = seconds before the karen gets
+ * away with it (at the till for 對獎／找零, wandering for the 阿伯, in the restroom for the 廁所大隊).
+ */
+export const GEN_TUNE = {
+  lottery: { life: 45 },
+  /** wrongCost / wrongRating = seconds she takes off and the rating lost when handed the wrong change (or too slowly). */
+  change: { life: 32, wrongCost: 10, wrongRating: 0.03 },
+  /** knock = seconds between fistfuls of free bags (and one item off a shelf); exits after `life` s or `bagMax` items. */
+  bagman: { life: 28, knock: 3.5, bagMax: 5 },
+  /** flush = seconds between restroom puddles (sped up by the number of members inside). */
+  toilet: { life: 60, flush: 5 },
+};
+/**
+ * Karens the 保全 (guard gear) leaves alone: 發票對獎魔人 and 找零計較姐 are paying customers holding up the till, not
+ * troublemakers — and the registers stand inside the guard's 5.5 m round by the door, so otherwise he would show nearly
+ * every one of them out before anyone got to escort him / count her change (docs/BALANCE.md「第五輪」).
+ */
+export const GUARD_SKIP: readonly string[] = ['lottery', 'change'];
+/** 颱風夜 numbers (read by shared/sim.ts): noodle hoarders, roof leaks, how much puddles weigh on the mood. */
+export const TYPHOON = {
+  /** Share of ordinary customers who stock up on the snack line, and how many they take (min + 0…spread−1). */
+  hoardShare: 0.45, hoardMin: 3, hoardSpread: 2,
+  /** Seconds between roof leaks (every + 0…spread). */
+  leakEvery: 24, leakSpread: 8,
+  /** Puddle effect on chaos / rating (everyone expects a wet floor tonight). */
+  wet: 0.55,
+  /** Fewer customers: spawn interval ×spawnMul, max customers −maxDrop (at least 6); spills ×spillMul; an outage every outageEvery s. */
+  spawnMul: 1.5, maxDrop: 2, spillMul: 1.8, outageEvery: 24,
+  /**
+   * Instant noodles piled on the snack shelf before opening (may exceed the shelf's capacity: a stack in front of it).
+   * The hoarders empty a 6-item box every few customers; without this pile the line stood empty ~110 s of 180.
+   */
+  prestock: 18,
+};
+
 // ---------------- 找零計較姐: the exact-change quick-time prompt ----------------
 /** Coins a till hands out, largest first. */
 export const COINS = [50, 10, 5, 1] as const;
@@ -58,7 +95,7 @@ export const SPECIAL_DAYS: Record<SpecialId, SpecialDayDef> = {
   typhoon: {
     name: '颱風夜', icon: '🌀',
     desc: '店裡變成避難所：客人少、地上一直濕、屋頂漏水、電燈常閃，大家都在囤泡麵',
-    rules: '颱風夜：客人比較少，但將近一半的人一次掃 3–4 包零食架上的東西（囤泡麵），零食架很快就空；屋頂會漏水、停電次數多但很短（大家知道外面在下雨，地上濕比較不會被嫌）。借廁所大隊也來避難了。',
+    rules: '颱風夜：客人比較少，但將近一半的人一次掃 3–4 包零食架上的東西（囤泡麵）。開店前零食架先多堆了一批泡麵，賣完就得一直補；屋頂會漏水、停電次數多但很短（大家知道外面在下雨，地上濕比較不會被嫌）。借廁所大隊也來避難了。',
     karens: ['toilet', 'bagman'], goal: 0.85,
   },
   newyear: {
@@ -75,6 +112,7 @@ export const isSpecialId = (v: unknown): v is SpecialId => typeof v === 'string'
 interface CfgLike {
   karens: string[]; events: string[]; firstEvent: number; eventEvery?: number; spawnEvery: number; maxCustomers: number;
   spillMul?: number; special?: SpecialId; hints: string[];
+  start?: { shelves: Record<string, number> };
 }
 /**
  * Turns a shift config into the special day (mutates it). `oneKind` = the day is a one-karen-type day (daily
@@ -84,9 +122,10 @@ export function applySpecialDay(cfg: CfgLike, id: SpecialId, oneKind = false): n
   const d = SPECIAL_DAYS[id];
   cfg.special = id;
   if (id === 'typhoon') {
-    cfg.spawnEvery *= 1.5; cfg.maxCustomers = Math.max(6, cfg.maxCustomers - 2);
-    cfg.spillMul = Math.max(cfg.spillMul ?? 1, 1.8);
-    cfg.events = [...new Set([...cfg.events, 'outage'])]; cfg.firstEvent = Math.min(cfg.firstEvent, 20); cfg.eventEvery = 24;
+    cfg.spawnEvery *= TYPHOON.spawnMul; cfg.maxCustomers = Math.max(6, cfg.maxCustomers - TYPHOON.maxDrop);
+    cfg.spillMul = Math.max(cfg.spillMul ?? 1, TYPHOON.spillMul);
+    cfg.events = [...new Set([...cfg.events, 'outage'])]; cfg.firstEvent = Math.min(cfg.firstEvent, 20); cfg.eventEvery = TYPHOON.outageEvery;
+    if (cfg.start) cfg.start.shelves.snacks = (cfg.start.shelves.snacks ?? 0) + TYPHOON.prestock;
   } else {
     // the countdown rush is its own event: no random rushes on top of it
     cfg.events = cfg.events.filter(e => e !== 'rush');

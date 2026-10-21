@@ -58,6 +58,17 @@ const YIELD_R = 1.4;
 /** Bots keep this far from people when they walk (players pass through each other, but a bot inside your view is a wall). */
 const PERSONAL_SPACE = 0.75;
 
+/**
+ * How a bot plays, beyond its role. The default bot (all off) grabs and throws out every karen it can from chapter 3
+ * on, which is the fastest way but skips each karen's own mechanic. `proper` ("照規矩處理", round 28 balance):
+ * - never grabs / mop-spins / clears the store unless the karen has turned violent (self-defence; the 奧客之王 always is),
+ *   so every karen is dealt with by its intended action (escort to the 對獎機, the change quick-time, waiting at the door
+ *   for the 免費袋子阿伯, finding the 借廁所大隊 leader, the store-signature fetch-and-act…);
+ * - answers the 找零計較姐 quick-time like a person: `think` seconds to read the three handfuls, then picks a wrong one
+ *   with probability `changeErr` (each try is a fresh roll; a wrong pick costs her 8 s and he reads again).
+ */
+export interface BotStyle { proper?: boolean; changeErr?: number; think?: number }
+
 export class Bot {
   private path: { x: number; z: number }[] = [];
   private goalKey = '';
@@ -79,7 +90,13 @@ export class Bot {
   /** The task keys this bot currently holds (see BotTeam.claims). */
   claimKeys(): string[] { return [this.goalKey, this.intent].filter(exclusiveKey); }
   get currentGoal() { return this.goalKey; }
-  constructor(public role: 'any' | 'cashier' | 'stocker' | 'cleaner' = 'any', private seed = Math.random()) {}
+  /** proper mode: seconds spent reading the change prompt so far, and a private random stream (only proper mode rolls). */
+  private thinkT = 0;
+  private rs: number;
+  constructor(public role: 'any' | 'cashier' | 'stocker' | 'cleaner' = 'any', private seed = Math.random(), public style: BotStyle = {}) {
+    this.rs = Math.floor(seed * 4294967296) ^ 0x9e3779b9;
+  }
+  private rnd() { let t = (this.rs = (this.rs + 0x6d2b79f5) | 0); t = Math.imul(t ^ (t >>> 15), 1 | t); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
 
   update(s: Snapshot, me: PlayerSnap, dt: number, team: BotTeam | null = null): BotOutput {
     this.team = team; this.meId = me.id; this.clock += dt;
@@ -97,7 +114,8 @@ export class Bot {
     const open = s.phase === 'open' || s.phase === 'closing';
     const karens = s.customers.filter(c => c.kind !== 'normal' && !c.resolved && c.revealed && c.state !== 'leaving' && !c.flying);
     // full burst: clear the store
-    if (open && ab.includes('ultimate') && s.burst >= 100 && this.cooldown <= 0 && (karens.length >= 2 || karens.some(k => k.kind === 'boss' && k.phase === 5))) {
+    const proper = !!this.style.proper;
+    if (open && ab.includes('ultimate') && s.burst >= 100 && this.cooldown <= 0 && ((!proper && karens.length >= 2) || karens.some(k => k.kind === 'boss' && k.phase === 5))) {
       out.ultimate = true; this.cooldown = 0.5; return out;
     }
     // self-defence: smack a karen who has lost it (never one with connections)
@@ -106,7 +124,7 @@ export class Bot {
       if (v) { out.hit = v.id; out.yaw = Math.atan2(v.x - me.x, v.z - me.z); this.cooldown = 0.8; return out; }
     }
     // mop spin when a karen is close and no regular customer would get hit
-    if (open && ab.includes('spin') && me.spinCd <= 0 && me.grabbing == null && this.cooldown <= 0) {
+    if (open && !proper && ab.includes('spin') && me.spinCd <= 0 && me.grabbing == null && this.cooldown <= 0) {
       const near = (r: number) => s.customers.filter(c => !c.flying && !c.held && Math.hypot(c.x - me.x, c.z - me.z) < r);
       // gear widens the whirlwind up to ~4.3 m, so look that far for bystanders
       const hit = near(3.2), reach = near(4.5);
@@ -143,7 +161,7 @@ export class Bot {
       this.goalKey = '';
       return out;
     }
-    if (goal.key !== this.goalKey) { this.goalKey = goal.key; this.path = findPath(me, goal.pos); this.stuck = 0; this.crowdT = 0; }
+    if (goal.key !== this.goalKey) { this.goalKey = goal.key; this.path = findPath(me, goal.pos); this.stuck = 0; this.crowdT = 0; this.thinkT = 0; }
     if (goal.wait) {
       // escorting / waiting at the door: get there and stand still, facing the customer
       const tc = goal.target.t === 'customer' ? s.customers.find(c => c.id === (goal.target as { id: number }).id) : null;
@@ -156,7 +174,16 @@ export class Bot {
       // in range but standing in someone's face (the till is right next to the coffee machine / microwave):
       // walk on to the proper spot first, then start working (a busy bot stands still for seconds)
       if (this.crowdT < 1.5 && this.crowding(s, me) && Math.hypot(goal.pos.x - me.x, goal.pos.z - me.z) > 0.3 && goal.target.t !== 'customer') { this.crowdT += dt; const o = this.giveWay(s, me, this.walk(me, out, dt, goal.pos)); o.yaw = yaw; return o; }
-      if (this.cooldown <= 0) { out.act = { kind: goal.kind, target: goal.target, ...(goal.opt !== undefined ? { opt: goal.opt } : {}) }; this.cooldown = 0.35; }
+      if (goal.kind === 'exactChange' && this.style.proper && goal.opt !== undefined) {
+        // a person reads the three handfuls first, and sometimes picks the wrong one
+        this.thinkT += dt;
+        if (this.thinkT >= (this.style.think ?? 0) && this.cooldown <= 0) {
+          this.thinkT = 0;
+          const ok = this.rnd() >= (this.style.changeErr ?? 0);
+          out.act = { kind: goal.kind, target: goal.target, opt: ok ? goal.opt : (goal.opt + 1 + Math.floor(this.rnd() * 2)) % 3 };
+          this.cooldown = 0.35;
+        }
+      } else if (this.cooldown <= 0) { out.act = { kind: goal.kind, target: goal.target, ...(goal.opt !== undefined ? { opt: goal.opt } : {}) }; this.cooldown = 0.35; }
       out.yaw = yaw;
       return out;
     }
@@ -238,7 +265,7 @@ export class Bot {
     const sigs = C.filter(c => isSig(c.kind) && !c.resolved && c.revealed && c.state !== 'leaving' && !c.flying && !c.held && !sigWaitReason(c.kind, c.state)
       && this.free('sigAct' + c.id) && !personNear(c.x, c.z));
     for (const sig of sigs) {
-      if (canGrabNow && (!sig.heavy || sig.stun > 0)) break;
+      if (canGrabNow && (!sig.heavy || sig.stun > 0) && (!this.style.proper || sig.violent)) break;
       const d = SIG_KARENS[sig.kind as keyof typeof SIG_KARENS];
       const has = (n: SigNeed) => n === 'box' || n === 'mop' ? held?.kind === n : held?.kind === n || me.held2?.kind === n;
       const intent = 'sigAct' + sig.id;
@@ -269,6 +296,18 @@ export class Bot {
       return null;
     }
     if (held?.kind === 'mop') {
+      // the 借廁所大隊 floods the restroom faster than anyone can mop: talk to the leader first (hands needn't be free)
+      const flood = C.find(c => c.kind === 'toilet' && c.phase === 1 && !c.resolved && c.revealed && (c.state === 'toToilet' || c.state === 'toilet')
+        && !c.flying && !c.held && !personNear(c.x, c.z));
+      if (flood) { const g = take(cust(flood, 'toiletRule')); if (g) return g; }
+      // a customer waiting at a till nobody is on: put the mop back and go check them out (the till needs free hands;
+      // on a 特殊營業日 the floor never stays dry, and mopping on while the queue walks out loses the shift). Only in
+      // proper mode / on special days, so the main-story numbers of docs/BALANCE.md stay comparable.
+      const others = s.players.filter(p => p.id !== me.id && p.connected && !p.raider);
+      const tillWaits = (this.style.proper || !!s.shift?.special) && (s.upgrades.register2 > 0 ? REGISTERS : [REGISTERS[0]]).some(r => this.free('co' + r.idx)
+        && C.some(c => c.state === 'atRegister' && Math.abs(c.x - r.customer.x) < 0.6 && Math.abs(c.z - r.customer.z) < 0.6)
+        && !others.some(p => Math.hypot(p.x - r.cashier.x, p.z - r.cashier.z) < 1.3));
+      if (tillWaits) return { pos: { x: 1.3, z: 12.7 }, kind: 'returnMop', target: { t: 'mop' }, key: 'rm' };
       // a spill another mop (a bot's claim, or a person standing on it with a mop) is already on goes to them
       const mopper = people.filter(p => p.held?.kind === 'mop');
       const sp = nearest(me, s.spills.filter(x => this.free('cl' + x.id) && !mopper.some(p => Math.hypot(p.x - x.x, p.z - x.z) <= Math.min(YIELD_R, Math.hypot(me.x - x.x, me.z - x.z)))));
@@ -299,7 +338,8 @@ export class Bot {
       // a person dealing with it (standing next to it) keeps it — unless it turned violent or they've been at it for 6 s
       && (c.violent || !personNear(c.x, c.z) || !this.yielding(c.id)));
     for (const k of karens) {
-      const g = this.karenGoal(k, canGrab, cust);
+      // proper mode: grab only a karen who has turned violent (self-defence)
+      const g = this.karenGoal(k, canGrab && (!this.style.proper || k.violent), cust);
       if (g && this.free(g.key)) return g;
     }
     // restocking covers every product line of the current map (including a fourth 'extra' line), emptiest shelf first;
