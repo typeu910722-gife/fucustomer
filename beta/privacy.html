@@ -13,7 +13,7 @@ main{max-width:720px;margin:0 auto}h1{font-size:28px;margin:0 0 4px}h2{font-size
 <p>本遊戲不要求註冊帳號，不收集你的電子郵件、電話、生日、位置、聯絡人、照片，也不含廣告、第三方分析或追蹤工具。</p>
 
 <h2>存在你裝置上的資料</h2>
-<p>遊戲進度（職級、星星、設定、你輸入的暱稱、外觀道具）只存在你的裝置上。刪除 App 或清除瀏覽器資料就會刪除。</p>
+<p>遊戲進度（職級、星星、設定、你輸入的暱稱、外觀道具）存在你的裝置上。刪除 App 或清除瀏覽器資料就會刪除。除非你自己使用下面的「雲端備份」，進度不會上傳。</p>
 
 <h2>Google 登入（選用）</h2>
 <ul>
@@ -22,6 +22,15 @@ main{max-width:720px;margin:0 auto}h1{font-size:28px;margin:0 0 4px}h2{font-size
 <li>我們<b>不保存</b>你的電子郵件、電話或 Google 帳號的其他資料。</li>
 <li>證照資料是公開的：知道你證號的人都看得到。</li>
 <li>按「登出」會讓該裝置的登入失效。要刪除證照資料，請透過下方聯絡方式告訴我們，我們會刪除。</li>
+</ul>
+
+<h2>雲端備份（選用，需要 Google 登入）</h2>
+<ul>
+<li><b>什麼資料</b>：只有在你按「☁ 上傳到雲端」，或自己打開「自動上傳」時，才會把你的遊戲進度存檔（跟「存檔碼」同樣的內容：職級、星星、薪資點數、成就、外觀道具、各店面的存檔、遊戲設定、暱稱與頭像）上傳。伺服器另外記錄上傳時間和摘要（等級、星數等）。</li>
+<li><b>不包含</b>：電子郵件、Google 登入憑證、多人連線用的重連代碼、自訂伺服器網址、付費擴充包的購買紀錄（擴充包請用商城的「恢復購買」）。</li>
+<li><b>存在哪裡</b>：遊戲伺服器（Cloudflare Workers／Durable Objects），以 Google 帳號 ID 的雜湊值為索引，跟你的證照放在一起。只有登入同一個 Google 帳號的裝置能讀取；證照公開頁不會顯示雲端存檔。</li>
+<li><b>保存多久</b>：每個帳號只保留最新一份和前一份。最後一次上傳後 365 天沒有再上傳，會自動刪除。</li>
+<li><b>怎麼刪除</b>：在遊戲「設定 → 存檔備份 → 刪除雲端存檔」按兩次即可立即刪除；也可以透過下方聯絡方式請我們刪除。刪除雲端存檔不會影響你裝置上的進度。</li>
 </ul>
 
 <h2>多人連線與好友的店（選用）</h2>
@@ -40,6 +49,15 @@ main{max-width:720px;margin:0 auto}h1{font-size:28px;margin:0 0 4px}h2{font-size
 
 <h2>服務提供者</h2>
 <p>網站與遊戲伺服器由 Cloudflare 託管；Google 登入由 Google 提供，適用各自的隱私權政策。</p>
+
+<h2>English summary — Cloud save (optional, Google sign-in only)</h2>
+<ul>
+<li><b>What</b>: only when you press "☁ Upload to cloud" or turn on auto-upload, your game progress (the same content as a save code: level, stars, wage points, achievements, cosmetics, store saves, settings, nickname and avatar) is uploaded, together with the upload time and a short summary (level, stars…).</li>
+<li><b>Not included</b>: e-mail, Google sign-in credentials, multiplayer rejoin tokens, custom server addresses, or paid expansion purchases (use "Restore purchases" in the shop).</li>
+<li><b>Where</b>: our game server on Cloudflare (Workers / Durable Objects), indexed by a SHA-256 hash of your Google account ID next to your licence card. Only devices signed in to the same Google account can read it; it is never shown on the public card.</li>
+<li><b>How long</b>: the newest copy and the one before it. A cloud save with no upload for 365 days is deleted automatically.</li>
+<li><b>How to delete</b>: Settings → Save backup → "Delete cloud save" (press twice) deletes it immediately, or contact us below. Deleting the cloud copy does not touch the progress on your device.</li>
+</ul>
 
 <h2>聯絡方式</h2>
 <p>對本政策有任何問題或要刪除資料，請寄信至 Google 登入畫面上顯示的開發者支援信箱。</p>
