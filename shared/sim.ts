@@ -4,18 +4,19 @@ import type { Outfit } from './shop.ts';
 import {
   BOSS_PHASES, BOX_SIZE, BURST_MAX, EMPTY_SHELF_GRACE, CHAOS_MAX, CLOSE_MINUTE, CLOSING_MAX_SECONDS, FOOD_INFO, DAILY_RENT, DAY_OPEN_SECONDS, KAREN_INFO,
   KarenKind, OPEN_MINUTE, PREP_SECONDS, PRODUCTS, ALL_PRODUCTS, type StockIn, PRODUCT_INFO, Product, RUN_SPEED, SERVER_INTERACT_RANGE,
-  UPGRADES, UPGRADE_IDS, UpgradeId, brewTime, checkoutTime, heatTime, shelfCapacity, matSkip, selfcheckEvery, doorbellBoost, cameraCalm,
+  UPGRADES, UPGRADE_IDS, UpgradeId, brewTime, checkoutTime, heatTime, shelfCapacity, matSkip, selfcheckEvery, doorbellBoost, cameraCalm, isGen, GEN_KINDS,
 } from './constants.ts';
 import {
   CHARGE_SPOT, COFFEE_MACHINE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DECOR, DOOR_X0, DOOR_X1, ENTRANCE, MICROWAVE, MOP_RACK,
   PLAYER_SPAWNS, QUEUE_SPOTS, REGISTERS, SHELVES, SPAWN_OUTSIDE, STORE_D, WANDER_SPOTS, CURRENT_MAP, TRYON_SPOTS, CAMP_SPOTS, clampToStore, distToAABB, findPath,
-  resolveCollision, shelfBrowseSpots, applyMap,
+  resolveCollision, shelfBrowseSpots, applyMap, KIOSK_SPOT, TOILET_SPOT, walkableNear,
 } from './map.ts';
 import { SIG_KARENS, SigKarenDef, SigNeed, isSig, sigDef, sigWaitReason } from './sigkarens.ts';
 import type {
   ActKind, CustomerKind, DayStats, GameEvent, Held, Phase, Snapshot, StoreSave, Target,
 } from './protocol.ts';
 import { BASE_MODS, Food, Incident, ShiftConfig, ShiftResult } from './career.ts';
+import { bagmanAtDoor, changeAnswer, SPECIAL_CLOCK } from './genkarens.ts';
 
 export function mulberry32(seed: number) {
   let a = seed >>> 0;
@@ -28,7 +29,7 @@ export function mulberry32(seed: number) {
   };
 }
 
-export interface Busy { kind: ActKind; target: Target; start: number; dur: number; rid: string; reserved?: Product }
+export interface Busy { kind: ActKind; target: Target; start: number; dur: number; rid: string; reserved?: Product; opt?: number }
 export interface PlayerState {
   id: string; name: string; color: number; x: number; z: number; yaw: number; pitch: number;
   held: Held | null; held2: Held | null; connected: boolean; away: boolean; ready: boolean; busy: Busy | null;
@@ -46,7 +47,9 @@ export interface PlayerState {
 type CState =
   | 'enter' | 'toShelf' | 'browse' | 'toFood' | 'waitFood' | 'queue' | 'toRegister' | 'atRegister'
   | 'leaving' | 'toComplain' | 'complain' | 'wander' | 'flee' | 'toEat' | 'eat' | 'held' | 'flying' | 'toSummon' | 'summon' | 'toCharge' | 'charge' | 'toTry' | 'tryon'
-  | 'toCamp' | 'camp';
+  | 'toCamp' | 'camp'
+  /** General karens (round 27): walking to / standing at the 對獎機, the restroom, and heading out with a full bag. */
+  | 'toKiosk' | 'kiosk' | 'toToilet' | 'toilet' | 'toExit';
 
 export interface Flight { vx: number; vy: number; vz: number; y: number; t: number; thrown: boolean; by: string }
 
@@ -71,6 +74,10 @@ export interface Customer {
   shoveAt?: number;
   /** Store-signature karens: how long they keep it up in total (for the overhead bar). */
   lifeMax?: number;
+  /** 借廁所大隊: a follower's leader (the leader itself has none; its followers are in `minions`). */
+  leader?: number;
+  /** 跨年夜: this karen has been drinking (wobbles, takes longer to listen, spills drinks). drunkT = next spill. */
+  drunk?: boolean; drunkT?: number;
 }
 
 export interface World {
@@ -103,13 +110,16 @@ export interface World {
   emptySince: Partial<Record<Product, number>>;
   /** Karens handled today, by kind (goes into the shift result for the 奧客圖鑑). */
   handled: Record<string, number>;
+  /** Special business days (cfg.special): roof-leak timer, countdown progress (shared/genkarens.ts). */
+  sp?: { leakT: number; cd: number; rushT: number; rushOn: boolean };
 }
 
 /** Default multiplayer "business day" configuration: every mechanic enabled. */
 export function dayConfig(): ShiftConfig {
   return {
     mode: 'day', id: 'day', title: '合作營業日', chapter: 0, length: DAY_OPEN_SECONDS, goal: 0, map: CURRENT_MAP.id,
-    karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', ...(CURRENT_MAP.karens ?? [])], firstKaren: 22, karenEvery: 50, maxKarens: 1,
+    // the general karens (round 27) can turn up in any store's business day
+    karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', ...GEN_KINDS, ...(CURRENT_MAP.karens ?? [])], firstKaren: 22, karenEvery: 50, maxKarens: 1,
     spawnEvery: 9, maxCustomers: 6, foods: ['coffee', 'meal'], foodChance: CURRENT_MAP.foodChance, events: ['rush', 'outage'], firstEvent: 70,
     register2: false, abilities: ['grab', 'spin', 'ultimate'],
     start: { money: 200, rating: 3, backstock: { drinks: 24, snacks: 24, bento: 18, extra: 24 }, shelves: { drinks: 8, snacks: 8, bento: 6, extra: 8 } },
@@ -374,6 +384,8 @@ function spawnCustomer(w: World, kind: CustomerKind, express = false) {
     const extra = PRODUCTS.includes('extra');
     for (let i = 0; i < count; i++) c.shopping.push(extra && w.rng() < 0.25 ? 'extra' : w.rng() < 0.4 ? 'drinks' : w.rng() < 0.6 ? 'snacks' : 'bento');
     if (w.cfg.foods.length && w.rng() < w.cfg.foodChance) c.want = pick(w, w.cfg.foods);
+    // 颱風夜: half the shelter crowd is stocking up on instant noodles (the snack line)
+    if (w.cfg.special === 'typhoon' && !express && w.rng() < 0.45) c.shopping = Array.from({ length: 3 + Math.floor(w.rng() * 2) }, () => 'snacks' as Product);
     if (express) {
       // the day's first customer grabbed their things by the door on the way in and heads straight for the till
       c.want = null;
@@ -410,12 +422,15 @@ function spawnCustomer(w: World, kind: CustomerKind, express = false) {
     c.speed = 1.7; c.life = 70; c.knockTimer = 6;
   } else if (kind === 'boss') {
     c.speed = 1.9; c.phase = 1; c.patienceMax = 1e9; c.life = 1e9; c.anger = 0;
-  } else if (isSig(kind)) sigSpawn(w, c, SIG_KARENS[kind]);
+  } else if (isGen(kind)) genSpawn(w, c);
+  else if (isSig(kind)) sigSpawn(w, c, SIG_KARENS[kind]);
   c.patience = c.patienceMax;
   if (kind !== 'normal' && kind !== 'boss' && w.cfg.mode === 'shift') {
     if (w.cfg.chapter >= 3 && w.rng() < 0.2) { c.heavy = true; c.speed *= 0.85; }
     if (w.cfg.chapter >= 2 && w.rng() < 0.12) c.vip = true;
   }
+  // 跨年夜: every karen has had a few drinks
+  if (kind !== 'normal' && kind !== 'boss' && w.cfg.special === 'newyear') { c.drunk = true; c.drunkT = 9; c.speed *= 0.85; }
   w.customers.push(c);
   if (kind !== 'normal') {
     ev(w, { e: 'karen', kind, id: c.id });
@@ -424,6 +439,7 @@ function spawnCustomer(w: World, kind: CustomerKind, express = false) {
   }
   ev(w, { e: 'sfx', name: 'door', x: SPAWN_OUTSIDE.x, z: SPAWN_OUTSIDE.z });
   nextStep(w, c);
+  if (kind === 'toilet') spawnToiletGroup(w, c);
 }
 
 function nextStep(w: World, c: Customer) {
@@ -439,6 +455,11 @@ function nextStep(w: World, c: Customer) {
   if (c.kind === 'hog' && !c.resolved) { goEat(w, c); return; }
   if (c.kind === 'charger' && !c.resolved) { c.state = 'toCharge'; setGoal(c, CHARGE_SPOT); return; }
   if (c.kind === 'tryhard' && !c.resolved) { c.state = 'toTry'; setGoal(c, pick(w, TRYON_SPOTS)); return; }
+  if (c.kind === 'bagman' && !c.resolved) {
+    if (c.state === 'toExit') setGoal(c, SPAWN_OUTSIDE); else { c.state = 'wander'; c.speed = 1.5; setGoal(c, randomWanderSpot(w)); }
+    return;
+  }
+  if (c.kind === 'toilet' && !c.resolved) { c.state = 'toToilet'; setGoal(c, toiletSpot(w, c)); return; }
   if (isSig(c.kind) && !c.resolved && sigNextStep(w, c, SIG_KARENS[c.kind])) return;
   if (c.shopping.length) {
     c.state = 'toShelf';
@@ -554,7 +575,8 @@ function eject(w: World, c: Customer, by: PlayerState | null, how: 'throw' | 'gu
   c.downT = 2.2; c.yaw = Math.PI; // facing the store: lying on the back, head toward the street
   c.path = [{ x: c.x, z: STORE_D + 1.6 }, { x: c.x < 12 ? -3 : 27, z: STORE_D + 1.7 }];
   if (c.kind === 'boss') { w.dayStats.ejected++; if (by) by.stats.ejected++; bossDefeat(w, c, by); ev(w, { e: 'fx', name: 'ultimate', x, z, by: by?.name }); }
-  const wasResolved = c.resolved;
+  // a 借廁所大隊 follower is part of his leader's karen: shown out without counting as another one
+  const wasResolved = c.resolved || c.leader != null;
   if (c.kind !== 'normal' && c.kind !== 'boss') {
     const was = wasResolved;
     w.dayStats.ejected++; if (by) by.stats.ejected++;
@@ -625,10 +647,18 @@ function updateCustomer(w: World, c: Customer, dt: number) {
   const m = w.cfg.mods;
   if (c.downT && c.downT > 0) { c.downT = Math.max(0, c.downT - dt); c.moving = false; return; }
   if (c.stunT && c.stunT > 0) { c.stunT = Math.max(0, c.stunT - dt); c.moving = false; return; }
+  if (c.drunk && !c.resolved && c.state !== 'leaving') {
+    // 跨年夜: a drunk karen knocks a drink over every now and then
+    c.drunkT = (c.drunkT ?? 9) - dt;
+    if (c.drunkT <= 0) { c.drunkT = 15; addSpill(w, c.x, c.z); adjChaos(w, 1); }
+  }
+  // 發票對獎魔人 on his way to the 對獎機 only walks while a worker stays with him
+  if (c.kind === 'lottery' && c.state === 'toKiosk' && !c.resolved && escortPaused(w, c, dt)) return;
   const arrived = moveAlong(c, dt);
   const drain = (cutterActive(w) && c.kind !== 'cutter' ? 2.2 : 1) * (w.power < 1 ? 1.3 : 1)
     * (w.customers.some(s => s.kind === 'streamer' && !s.resolved && Math.hypot(s.x - c.x, s.z - c.z) < 3) ? 1.35 : 1)
-    * (c.kind === 'normal' ? sigDrain(w, c) : 1);
+    * (c.kind === 'normal' ? sigDrain(w, c) * genDrain(w, c) : 1);
+  if (isGen(c.kind) && genUpdate(w, c, dt, arrived)) return;
   if (isSig(c.kind) && !c.resolved && sigUpdate(w, c, dt, arrived)) return;
   switch (c.state) {
     case 'enter': if (arrived) nextStep(w, c); break;
@@ -763,6 +793,11 @@ function updateCustomer(w: World, c: Customer, dt: number) {
       }
       break;
     }
+    case 'kiosk':
+      // checking receipts at the 對獎機 (already handled): then back in line to pay like everyone else
+      c.timer -= dt;
+      if (c.timer <= 0) { c.patienceMax = (55 + w.rating * 6) * m.patience; c.patience = c.patienceMax; nextStep(w, c); }
+      break;
     case 'toEat': if (arrived) { c.state = 'eat'; c.timer = 3.5; c.yaw = faceShelf(c); } break;
     case 'eat':
       c.timer -= dt;
@@ -981,6 +1016,145 @@ function faceDecor(c: Customer) {
 /** For the overhead bar: states in which his countdown is running. */
 function sigBarState(c: Customer) { return c.state === 'camp' || c.state === 'wander' || c.state === 'flee' || c.state === 'complain' || c.state === 'atRegister'; }
 
+// ---------------- general karens (round 27; names / texts in constants.ts, helpers in genkarens.ts) ----------------
+function genSpawn(w: World, c: Customer) {
+  if (c.kind === 'lottery' || c.kind === 'change') {
+    // shops like everyone else, then holds up the till
+    c.shopping.push(pick(w, PRODUCTS)); if (w.rng() < 0.5) c.shopping.push(pick(w, PRODUCTS));
+    c.patienceMax = 400; c.life = c.kind === 'lottery' ? 45 : 40; c.lifeMax = c.life;
+  } else if (c.kind === 'bagman') {
+    c.speed = 1.6; c.life = 28; c.lifeMax = 28; c.knockTimer = 3.5;
+  } else if (c.kind === 'toilet') {
+    c.speed = 1.9; c.life = 60; c.lifeMax = 60; c.knockTimer = 5; c.phase = 1;
+  }
+}
+
+/** 借廁所大隊: the leader brings two followers (no extra alarm / toast; they are part of the same karen). */
+function spawnToiletGroup(w: World, leader: Customer) {
+  for (let i = 0; i < 2; i++) {
+    const f: Customer = {
+      ...leader, id: w.nextId++, x: leader.x + (i ? 0.7 : -0.7), z: leader.z + 0.4 + i * 0.3, path: [], shopping: [], items: [], eaten: [], minions: [],
+      look: Math.floor(w.rng() * 1000), speed: 1.8 + w.rng() * 0.3, phase: 2, leader: leader.id, lifeMax: undefined, heavy: false, vip: false,
+    };
+    w.customers.push(f); leader.minions.push(f.id);
+    nextStep(w, f);
+  }
+}
+/** Restroom spot: the leader at the door, followers queue beside him. */
+function toiletSpot(w: World, c: Customer) {
+  const L = c.leader != null ? customer(w, c.leader) : c;
+  const i = L && c !== L ? L.minions.indexOf(c.id) + 1 : 0;
+  return i ? walkableNear({ x: TOILET_SPOT.x + (i === 1 ? -0.75 : 0.75), z: TOILET_SPOT.z + 0.35 }) : TOILET_SPOT;
+}
+/** The live members of a toilet group still at it (leader first). */
+function toiletGroup(w: World, leader: Customer) {
+  return [leader, ...leader.minions.map(id => customer(w, id)).filter((m): m is Customer => !!m && !m.resolved && !m.gone && m.state !== 'leaving')];
+}
+
+/** 發票對獎魔人 escort: true = nobody is with him, so he stands there (and after 4 s goes back to cut in at the till). */
+function escortPaused(w: World, c: Customer, dt: number): boolean {
+  const near = nearestPlayer(w, c);
+  if (near && near.d < 3.2) { c.timer = Math.max(0, c.timer - dt); return false; }
+  c.moving = false; c.timer += dt;
+  if (c.timer >= 4) {
+    c.timer = 0; c.speed = 1.7;
+    toast(w, '🧾 沒人陪著，發票對獎魔人又跑回收銀台插隊了！', 'bad');
+    joinQueue(w, c, true);
+  }
+  return true;
+}
+
+/** Customers in line while a 發票對獎魔人 / 找零計較姐 holds up a till lose patience faster. */
+function genDrain(w: World, c: Customer) {
+  if (c.state !== 'queue' && c.state !== 'toRegister' && c.state !== 'atRegister') return 1;
+  return w.customers.some(k => (k.kind === 'lottery' || k.kind === 'change') && !k.resolved && k.state === 'atRegister') ? 1.3 : 1;
+}
+
+/** Per-kind behaviour; true = it took care of this tick. */
+function genUpdate(w: World, c: Customer, dt: number, arrived: boolean): boolean {
+  if (c.resolved) return false;
+  switch (c.kind) {
+    case 'lottery':
+      if (c.state === 'toKiosk') {
+        if (arrived) {
+          c.state = 'kiosk'; c.timer = 6; c.yaw = -Math.PI / 2;
+          resolveKaren(w, c, null, 0.12, '🎰 發票對獎魔人到了對獎機前，專心對他的發票去了（口碑 +0.12）');
+        }
+        return true;
+      }
+      if (c.state === 'atRegister') {
+        c.life -= dt;
+        if (c.life <= 0) {
+          w.money -= 20;
+          failKaren(w, c, -0.2, 8, '🧾 發票對中 200 元，硬要收銀台現場兌換，整排人等到翻白眼（損失 $20）');
+          leave(w, c, true); return true;
+        }
+      }
+      return false;
+    case 'change':
+      if (c.state === 'atRegister') {
+        c.life -= dt;
+        if (c.life <= 0) { failKaren(w, c, -0.25, 8, '🪙 找零計較姐數到一半說「你們一定找錯了」，吵著要找店長，東西也不買了'); leave(w, c, true); return true; }
+      }
+      return false;
+    case 'bagman':
+      if (c.state === 'wander' || c.state === 'flee') {
+        c.life -= dt; c.knockTimer -= dt;
+        if (c.knockTimer <= 0) {
+          // pulls a fistful of free bags and slips something off the shelf into one
+          c.knockTimer = 3.5; w.money -= 1; adjChaos(w, 1);
+          const stocked = PRODUCTS.filter(p => w.shelves[p] > 0);
+          if (stocked.length) { const p = pick(w, stocked); w.shelves[p]--; c.eaten.push(p); }
+          ev(w, { e: 'sfx', name: 'rustle', x: c.x, z: c.z });
+        }
+        if (c.life <= 0 || c.eaten.length >= 5) {
+          c.state = 'toExit'; c.speed = 1.2; setGoal(c, SPAWN_OUTSIDE);
+          toast(w, '🛍 免費袋子阿伯提著鼓鼓的袋子往門口走了！在門口攔他', 'bad');
+        } else if (arrived) setGoal(c, randomWanderSpot(w));
+        return true;
+      }
+      if (c.state === 'toExit') {
+        // dawdles at the door looking around (the moment to stop him)
+        c.speed = c.z > STORE_D - 3.4 ? 0.8 : 1.2;
+        if (arrived || c.z > STORE_D + 0.4) {
+          const lost = c.eaten.reduce((n, p) => n + PRODUCT_INFO[p].price, 0) + 4;
+          w.money -= lost; c.eaten = [];
+          failKaren(w, c, -0.25, 8, `🛍 免費袋子阿伯拎著一袋商品和一把購物袋走出店門（損失 $${lost}）`);
+          leave(w, c, false);
+        }
+        return true;
+      }
+      return false;
+    case 'toilet': {
+      if (c.leader != null) { // a follower: does what the group does
+        const L = customer(w, c.leader);
+        if (!L || L.gone || L.resolved || L.state === 'leaving') { c.resolved = true; c.items.length || c.shopping.length ? nextStep(w, c) : leave(w, c, false); return true; }
+        if (c.state === 'toToilet') { if (arrived) { c.state = 'toilet'; c.yaw = Math.PI; } return true; }
+        return c.state === 'toilet';
+      }
+      if (c.state === 'toToilet') { if (arrived) { c.state = 'toilet'; c.yaw = Math.PI; } return true; }
+      if (c.state !== 'toilet') return false;
+      c.life -= dt;
+      // the more of them inside, the faster the water comes out
+      const inside = toiletGroup(w, c).filter(m => m.state === 'toilet').length;
+      c.knockTimer -= dt * (0.5 + inside / 2);
+      if (c.knockTimer <= 0) {
+        c.knockTimer = 5; adjChaos(w, 1);
+        addSpill(w, TOILET_SPOT.x + (w.rng() - 0.5) * 2.2, TOILET_SPOT.z + 0.6 + w.rng() * 2.4);
+        ev(w, { e: 'sfx', name: 'flush', x: TOILET_SPOT.x, z: TOILET_SPOT.z });
+      }
+      if (c.life <= 0) {
+        w.money -= 20;
+        for (let i = 0; i < 2; i++) addSpill(w, TOILET_SPOT.x + (w.rng() - 0.5) * 2, TOILET_SPOT.z + 1 + w.rng() * 2);
+        failKaren(w, c, -0.25, 8, '🚽 借廁所大隊用完一哄而散，廁所整個淹水（水電行 $20）');
+        for (const m of toiletGroup(w, c)) { m.resolved = true; leave(w, m, false); }
+      }
+      return true;
+    }
+  }
+  return false;
+}
+
 // ---------------- actions ----------------
 function targetDist(w: World, p: PlayerState, t: Target): number {
   switch (t.t) {
@@ -1000,7 +1174,13 @@ function targetDist(w: World, p: PlayerState, t: Target): number {
 type Check = { ok: true; dur: number } | { ok: false; reason: string };
 
 /** Validates an action; returns its channel duration. Called at start and again at completion. */
-function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = false): Check {
+function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = false, opt?: number): Check {
+  const r = checkAct(w, p, kind, t, completing, opt);
+  // 跨年夜: a drunk karen takes longer to get through to
+  if (r.ok && r.dur > 0 && t.t === 'customer' && customer(w, t.id)?.drunk && kind !== 'grab') return { ok: true, dur: r.dur * 1.3 };
+  return r;
+}
+function checkAct(w: World, p: PlayerState, kind: ActKind, t: Target, completing: boolean, opt?: number): Check {
   if (w.phase === 'summary') return { ok: false, reason: '已經結算' };
   if (!!p.raider !== (kind === 'knock' || kind === 'heckle')) return { ok: false, reason: p.raider ? '你是來搗亂的，不是來上班的' : '店員不能搗亂' };
   if (targetDist(w, p, t) > SERVER_INTERACT_RANGE) return { ok: false, reason: '距離太遠' };
@@ -1018,6 +1198,8 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
       const cc = id != null ? customer(w, id) : undefined;
       if (!cc || cc.state !== 'atRegister') return { ok: false, reason: '沒有顧客等待結帳' };
       if (cc.kind === 'custom' && !cc.resolved) return { ok: false, reason: '他還在改單！先對他「複誦點單」' };
+      if (cc.kind === 'lottery' && !cc.resolved) return { ok: false, reason: '他在對發票！先「帶他去對獎機」' };
+      if (cc.kind === 'change' && !cc.resolved) return { ok: false, reason: '她要你一個一個數零錢！「陪她數零錢」或找剛好的零錢' };
       if (isSig(cc.kind) && !cc.resolved && (SIG_KARENS[cc.kind].tpl === 'till' || SIG_KARENS[cc.kind].tpl === 'haggle')) return { ok: false, reason: `${SIG_KARENS[cc.kind].name}還卡著！先對他「${SIG_KARENS[cc.kind].act}」` };
       if (p.held && !isFood(p.held)) return { ok: false, reason: '手上有東西' };
       return { ok: true, dur: checkoutTime(w.upgrades.scanner) * m.checkout };
@@ -1111,6 +1293,23 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
       if (!c || c.kind !== 'charger' || c.resolved) return { ok: false, reason: '不需要' };
       if (p.held?.kind !== 'coffee' && p.held2?.kind !== 'coffee') return { ok: false, reason: CURRENT_MAP.coffee ? `先去${FOOD_INFO.coffee.verb}` : '這間店沒有飲料可以請他' };
       return { ok: true, dur: 0.3 };
+    case 'escort':
+      if (!c || c.kind !== 'lottery' || c.resolved) return { ok: false, reason: '不需要' };
+      if (c.state !== 'atRegister') return { ok: false, reason: c.state === 'toKiosk' ? '跟在他旁邊走到對獎機就好' : '他還在挑，到收銀台才會掏出發票' };
+      return { ok: true, dur: 0.8 / m.calm };
+    case 'countChange': case 'exactChange':
+      if (!c || c.kind !== 'change' || c.resolved) return { ok: false, reason: '不需要' };
+      if (c.state !== 'atRegister') return { ok: false, reason: '她還在挑，到收銀台才會開始數零錢' };
+      if (kind === 'exactChange' && (typeof opt !== 'number' || !Number.isInteger(opt) || opt < -1 || opt > 2)) return { ok: false, reason: '選一把零錢' };
+      return { ok: true, dur: kind === 'countChange' ? 3.2 / m.calm : 0 };
+    case 'stopBag':
+      if (!c || c.kind !== 'bagman' || c.resolved) return { ok: false, reason: '不需要' };
+      if (!bagmanAtDoor(c)) return { ok: false, reason: c.state === 'toExit' ? '還沒到門口！先去門口等他' : '他裝作在逛街，等他提著袋子走到門口再攔' };
+      return { ok: true, dur: 0.6 };
+    case 'toiletRule':
+      if (!c || c.kind !== 'toilet' || c.resolved) return { ok: false, reason: '不需要' };
+      if (c.state !== 'toToilet' && c.state !== 'toilet') return { ok: false, reason: '不需要' };
+      return { ok: true, dur: 0.8 / m.calm };
     case 'sigAct': case 'sigAlt': {
       if (!c || c.resolved) return { ok: false, reason: '不需要' };
       const d = sigDef(c.kind);
@@ -1147,7 +1346,18 @@ function check(w: World, p: PlayerState, kind: ActKind, t: Target, completing = 
   return { ok: false, reason: '未知動作' };
 }
 
-function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
+/** A customer pays at the till: items + prepared food + tip (ordinary customers only). Returns the amount. */
+function takePayment(w: World, p: PlayerState, cc: Customer, m: ReturnType<typeof effMods>) {
+  let total = cc.items.reduce((s, it) => s + PRODUCT_INFO[it].price, 0) + (cc.foodDone ? (cc.want === 'meal' ? FOOD_INFO.meal.price : FOOD_INFO.coffee.price) : 0);
+  const tip = cc.kind === 'normal' ? Math.round(total * 0.18 * m.tips * Math.max(0, cc.mood) / 100 * (w.rating / 5) * (cc.patience / cc.patienceMax + 0.3)) : 0;
+  total += tip;
+  w.money += total; w.dayStats.revenue += total; w.dayStats.tips += tip; w.dayStats.served++; w.totals.revenue += total; w.totals.served++;
+  p.stats.served++;
+  adjChaos(w, -2);
+  return total;
+}
+
+function complete(w: World, p: PlayerState, kind: ActKind, t: Target, opt?: number) {
   const n = activePlayers(w);
   const m = effMods(w);
   const c = t.t === 'customer' ? customer(w, t.id) : undefined;
@@ -1155,12 +1365,7 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
     case 'checkout': {
       if (t.t !== 'register') return;
       const cc = customer(w, w.registers[t.idx]!)!;
-      let total = cc.items.reduce((s, it) => s + PRODUCT_INFO[it].price, 0) + (cc.foodDone ? (cc.want === 'meal' ? FOOD_INFO.meal.price : FOOD_INFO.coffee.price) : 0);
-      const tip = cc.kind === 'normal' ? Math.round(total * 0.18 * m.tips * Math.max(0, cc.mood) / 100 * (w.rating / 5) * (cc.patience / cc.patienceMax + 0.3)) : 0;
-      total += tip;
-      w.money += total; w.dayStats.revenue += total; w.dayStats.tips += tip; w.dayStats.served++; w.totals.revenue += total; w.totals.served++;
-      p.stats.served++;
-      adjChaos(w, -2);
+      const total = takePayment(w, p, cc, m);
       if (cc.kind === 'boss') {
         adjChaos(w, 8); toast(w, '👑 奧客之王結完帳還不滿意！', 'bad'); bossAdvance(w, cc, p, '插隊得逞');
         ev(w, { e: 'money', amount: total, x: cc.x, z: cc.z });
@@ -1310,6 +1515,48 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
       ev(w, { e: 'sfx', name: 'deliver', x: c!.x, z: c!.z });
       leave(w, c!, false);
       break;
+    case 'escort':
+      detachFromLines(w, c!);
+      c!.state = 'toKiosk'; c!.timer = 0; c!.speed = 1.7; setGoal(c!, KIOSK_SPOT);
+      ev(w, { e: 'sfx', name: 'calm', x: c!.x, z: c!.z });
+      toast(w, `🧾 ${p.name}：「對獎機在那邊，我帶您去」——跟在他旁邊走，離太遠他會跑回收銀台`, 'info');
+      break;
+    case 'countChange':
+      resolveKaren(w, c!, p, 0.08, `🪙 ${p.name} 陪找零計較姐一枚一枚數完，她說「嗯，這樣才對」（口碑 +0.08）`);
+      break;
+    case 'exactChange':
+      if (opt === changeAnswer(c!.look)) {
+        ev(w, { e: 'sfx', name: 'coins', x: c!.x, z: c!.z });
+        resolveKaren(w, c!, p, 0.15, `🪙 ${p.name} 一次找剛好！找零計較姐愣了一下：「……你數學很好喔」（口碑 +0.15）`);
+        // exact change = she pays on the spot and goes
+        const total = takePayment(w, p, c!, m);
+        adjRating(w, 0.025 * Math.max(0.2, c!.mood / 100));
+        ev(w, { e: 'money', amount: total, x: c!.x, z: c!.z });
+        leave(w, c!, false);
+      } else {
+        c!.hits++; c!.life = Math.max(1, c!.life - 8);
+        ev(w, { e: 'sfx', name: 'error', x: c!.x, z: c!.z });
+        toast(w, opt === -1 ? '🪙 找零找太慢，她嘆了一口氣又從頭數（-8 秒）' : '🪙「不對啦，金額不對」找零計較姐從頭再數一次（-8 秒）', 'bad');
+      }
+      break;
+    case 'stopBag':
+      c!.items = c!.eaten.length ? [...c!.eaten] : [pick(w, PRODUCTS)]; c!.eaten = [];
+      resolveKaren(w, c!, p, 0.12, `🛍 ${p.name} 在門口攔下免費袋子阿伯！袋子裡的東西只好拿去結帳（口碑 +0.12）`);
+      c!.speed = 1.6; joinQueue(w, c!, false);
+      break;
+    case 'toiletRule': {
+      ev(w, { e: 'sfx', name: 'calm', x: c!.x, z: c!.z });
+      if (c!.leader != null) {
+        // only a follower: he goes, the leader (and the flood) stays
+        c!.resolved = true; leave(w, c!, false);
+        toast(w, `🚽 ${p.name} 請走了一位團員……舉旗的領隊 🚩 還在，水照樣淹`, 'info');
+        break;
+      }
+      const group = toiletGroup(w, c!);
+      resolveKaren(w, c!, p, 0.12, `🚩 ${p.name} 說服了領隊：「廁所限消費使用」——整團 ${group.length} 人跟著他去買東西（口碑 +0.12）`);
+      for (const g of group) { g.resolved = true; g.shopping = [pick(w, PRODUCTS)]; g.speed = 1.7; nextStep(w, g); }
+      break;
+    }
     case 'sigAct': sigAct(w, p, c!, false); break;
     case 'sigAlt': sigAct(w, p, c!, true); break;
     case 'checkBag':
@@ -1337,7 +1584,7 @@ function complete(w: World, p: PlayerState, kind: ActKind, t: Target) {
 }
 
 /** Request an action. Duplicate request ids return the original result (no double effects). */
-export function requestAct(w: World, playerId: string, rid: string, kind: ActKind, target: Target) {
+export function requestAct(w: World, playerId: string, rid: string, kind: ActKind, target: Target, opt?: number) {
   const p = w.players.get(playerId);
   if (!p) return;
   const prev = p.recent.get(rid);
@@ -1348,12 +1595,12 @@ export function requestAct(w: World, playerId: string, rid: string, kind: ActKin
     w.results.push({ playerId, rid, ok, reason });
   };
   if (p.busy) return remember(false, '正在忙');
-  const r = check(w, p, kind, target);
+  const r = check(w, p, kind, target, false, opt);
   if (!r.ok) return remember(false, r.reason);
-  if (r.dur <= 0) { complete(w, p, kind, target); return remember(true); }
+  if (r.dur <= 0) { complete(w, p, kind, target, opt); return remember(true); }
   let reserved: Product | undefined;
   if (kind === 'heat') { w.backstock.bento--; reserved = 'bento'; } // reserve the ingredient, refunded on cancel
-  p.busy = { kind, target, start: w.time, dur: r.dur, rid, reserved };
+  p.busy = { kind, target, start: w.time, dur: r.dur, rid, reserved, ...(opt !== undefined ? { opt } : {}) };
   remember(true);
 }
 
@@ -1617,6 +1864,7 @@ export function finishShift(w: World, failReason: string) {
     score: w.cfg.endless ? score : w.raid ? w.raid.score : undefined, survived, bossDefeated: w.cfg.boss ? w.bossDefeated : undefined,
     date: w.cfg.daily?.date, week: w.cfg.weekly?.week, tips: d.tips, incidents: w.incidents.length ? [...w.incidents] : undefined,
     handled: Object.keys(w.handled).length ? { ...w.handled } : undefined,
+    ...(w.cfg.special ? { special: w.cfg.special } : {}),
   };
   if (w.cfg.endless) w.result.failReason = failReason ? `${failReason}・撐了 ${survived} 秒` : `主動下班・撐了 ${survived} 秒`;
   clearFloor(w);
@@ -1639,9 +1887,60 @@ function updateEvents(w: World, dt: number) {
   if (w.nextEvent <= 0) {
     w.nextEvent = w.cfg.eventEvery ?? 42;
     const kind = pick(w, w.cfg.events);
-    w.event = { kind, left: kind === 'rush' ? 14 : 11, pulse: 0 };
-    if (kind === 'outage') { w.power = 0.35; toast(w, '⚡ 突然停電！備用照明啟動，顧客比較不耐煩', 'bad'); ev(w, { e: 'sfx', name: 'outage' }); }
+    const flicker = kind === 'outage' && w.cfg.special === 'typhoon';
+    w.event = { kind, left: kind === 'rush' ? 14 : flicker ? 4 : 11, pulse: 0 };
+    if (flicker) { w.power = 0.35; toast(w, '⚡ 風太大，電燈閃了一下……（颱風夜：停電比較短，但很常來）', 'bad'); ev(w, { e: 'sfx', name: 'outage' }); }
+    else if (kind === 'outage') { w.power = 0.35; toast(w, '⚡ 突然停電！備用照明啟動，顧客比較不耐煩', 'bad'); ev(w, { e: 'sfx', name: 'outage' }); }
     else toast(w, '🚶 尖峰人潮！接下來客人暴增', 'bad');
+  }
+}
+
+// ---------------- 特殊營業日 (cfg.special; configs in shared/specialdays.ts) ----------------
+function specialOpen(w: World) {
+  w.sp = { leakT: 14, cd: 0, rushT: 0, rushOn: false };
+  if (w.cfg.special === 'typhoon') {
+    w.clock = OPEN_MINUTE;
+    toast(w, `🌀 颱風夜：店裡變成避難所。客人不多，但地上會一直濕、電燈會閃，大家都在囤${PRODUCT_INFO.snacks.name}！`, 'info');
+  } else if (w.cfg.special === 'newyear') {
+    w.clock = SPECIAL_CLOCK.from;
+    toast(w, '🎆 跨年夜：23:50 會湧進倒數人潮，奧客們也都喝了一點……', 'info');
+  }
+}
+/** Real seconds after opening at which the shift clock shows `minute` (跨年夜 clock). */
+function atClock(w: World, minute: number) { return w.openTime + w.cfg.length * (minute - SPECIAL_CLOCK.from) / (SPECIAL_CLOCK.to - SPECIAL_CLOCK.from); }
+
+function specialTick(w: World, dt: number) {
+  const sp = w.sp!;
+  if (w.cfg.special === 'typhoon') {
+    // the roof leaks: a puddle somewhere in the store every so often
+    sp.leakT -= dt;
+    if (sp.leakT <= 0) {
+      sp.leakT = 24 + w.rng() * 8;
+      const at = pick(w, WANDER_SPOTS);
+      addSpill(w, at.x, at.z);
+      if (sp.cd++ === 0) toast(w, '💧 屋頂漏水了！拖把準備好', 'bad');
+    }
+    return;
+  }
+  if (w.cfg.special !== 'newyear') return;
+  const n = activePlayers(w);
+  const rushAt = atClock(w, SPECIAL_CLOCK.rush), mid = atClock(w, SPECIAL_CLOCK.midnight), rushEnd = atClock(w, SPECIAL_CLOCK.rushEnd);
+  if (!sp.rushOn && w.time >= rushAt && w.time < rushEnd) { sp.rushOn = true; toast(w, '🎆 23:50！倒數人潮湧進來了，收銀台頂住！', 'bad'); ev(w, { e: 'sfx', name: 'crowd' }); }
+  if (sp.rushOn && w.time < rushEnd) {
+    sp.rushT -= dt;
+    if (sp.rushT <= 0) { sp.rushT = 1.6; if (w.customers.length < w.cfg.maxCustomers + 3 * n + 6) spawnCustomer(w, 'normal'); }
+  }
+  // countdown: 10, 5, 3-2-1, then fireworks and a happy store
+  const marks = [10, 5, 3, 2, 1, 0];
+  while (sp.cd < marks.length && w.time >= mid - marks[sp.cd]) {
+    const k = marks[sp.cd++];
+    if (k > 0) toast(w, k === 10 ? '⏱ 跨年倒數 10 秒！' : `⏱ ${k}！`, 'info');
+    else {
+      toast(w, '🎉 新年快樂！外面的煙火炸開了，店裡的客人心情大好', 'good');
+      ev(w, { e: 'fx', name: 'fireworks', x: ENTRANCE.x, z: STORE_D + 6 });
+      ev(w, { e: 'sfx', name: 'fireworks' });
+      for (const c of w.customers) if (c.kind === 'normal') { c.mood = Math.min(100, c.mood + 20); c.patience = Math.min(c.patienceMax, c.patience + c.patienceMax * 0.2); }
+    }
   }
 }
 
@@ -1656,8 +1955,8 @@ export function tick(w: World, dt: number) {
     const b = p.busy;
     if (w.time >= b.start + b.dur) {
       p.busy = null;
-      const r = check(w, p, b.kind, b.target, true);
-      if (r.ok) complete(w, p, b.kind, b.target);
+      const r = check(w, p, b.kind, b.target, true, b.opt);
+      if (r.ok) complete(w, p, b.kind, b.target, b.opt);
       else { if (b.reserved) w.backstock[b.reserved]++; toast(w, `${p.name}：動作中斷（${r.reason}）`, 'info'); }
     } else if (targetDist(w, p, b.target) > SERVER_INTERACT_RANGE + 0.4) {
       cancelBusy(w, p);
@@ -1676,13 +1975,15 @@ export function tick(w: World, dt: number) {
         toast(w, shift ? `🏪 ${w.cfg.title}：開始上班！目標營業額 $${w.cfg.goal}` : `🏪 第 ${w.day} 天開始營業！`, 'good');
         ev(w, { e: 'sfx', name: 'open' });
         openStore(w);
+        if (w.cfg.special) specialOpen(w);
         // the express customer stands in for the first regular arrival, so the second one comes on the usual schedule
         w.spawnTimer = 2 + w.cfg.spawnEvery;
       }
       break;
     case 'open': {
       w.phaseLeft -= dt;
-      w.clock = OPEN_MINUTE + (1 - Math.max(0, w.phaseLeft) / w.cfg.length) * (CLOSE_MINUTE - OPEN_MINUTE);
+      const [c0, c1] = w.cfg.special === 'newyear' ? [SPECIAL_CLOCK.from, SPECIAL_CLOCK.to] : [OPEN_MINUTE, CLOSE_MINUTE];
+      w.clock = c0 + (1 - Math.max(0, w.phaseLeft) / w.cfg.length) * (c1 - c0);
       const playerScale = 0.7 + 0.3 * n;
       const ratingScale = 0.6 + w.rating * 0.16;
       const adsScale = 1 + 0.2 * w.upgrades.ads;
@@ -1696,7 +1997,7 @@ export function tick(w: World, dt: number) {
         w.karenTimer -= dt * (0.8 + 0.2 * n);
         if (w.karenTimer <= 0) {
           w.karenTimer = w.cfg.karenEvery * (0.85 + w.rng() * 0.4);
-          const active = w.customers.filter(c => c.kind !== 'normal' && c.kind !== 'boss' && !c.resolved && !c.gone);
+          const active = w.customers.filter(c => c.kind !== 'normal' && c.kind !== 'boss' && !c.resolved && !c.gone && c.leader == null);
           if (active.length < Math.floor(w.cfg.maxKarens) + Math.floor((n - 1) / 2)) {
             const avail = w.cfg.karens.filter(k => !active.some(a => a.kind === k));
             // the shift's featured karen (listed first, the one its hint explains) comes first; after that avoid
@@ -1709,6 +2010,7 @@ export function tick(w: World, dt: number) {
         }
       }
       updateEvents(w, dt);
+      if (w.sp) specialTick(w, dt);
       if (w.cfg.boss && !w.bossSpawned) { w.bossTimer -= dt; if (w.bossTimer <= 0) { w.bossSpawned = true; spawnCustomer(w, 'boss'); } }
       if (w.cfg.endless) {
         w.rampTimer += dt;
@@ -1753,10 +2055,12 @@ export function tick(w: World, dt: number) {
 
   if (w.phase === 'open' || w.phase === 'closing') {
     trackEmptyShelves(w);
-    adjRating(w, -0.0008 * Math.min(6, w.spills.length) * dt);
+    // 颱風夜: everyone expects a wet floor tonight, so puddles weigh less on the mood (there are a lot more of them)
+    const wet = w.cfg.special === 'typhoon' ? 0.55 : 1;
+    adjRating(w, -0.0008 * Math.min(6, w.spills.length) * dt * wet);
     w.chaosTimer += dt;
     if (w.chaosTimer >= 8) {
-      w.chaosTimer = 0; adjChaos(w, w.spills.length * 0.8);
+      w.chaosTimer = 0; adjChaos(w, w.spills.length * 0.8 * wet);
       if (w.customers.some(c => c.kind === 'boss' && !c.resolved)) adjChaos(w, 2);
     }
     if ((w.upgrades.selfcheck ?? 0) > 0) selfCheckout(w, dt);
@@ -1820,11 +2124,12 @@ export function snapshot(w: World, now: number): Snapshot {
     customers: w.customers.map(c => ({
       id: c.id, kind: c.kind, x: r2(c.x), z: r2(c.z), yaw: r2(c.yaw), state: c.state === 'camp' && sigDef(c.kind)?.sit ? 'charge' : c.state,
       patience: Math.max(0, Math.min(1, c.state === 'waitFood' ? c.timer / c.patienceMax : c.kind === 'charger' ? c.life / 75
-        : c.lifeMax && !c.resolved && sigBarState(c) ? c.life / c.lifeMax : c.patience / c.patienceMax)),
+        : c.lifeMax && !c.resolved && (sigBarState(c) || c.state === 'toilet') ? c.life / c.lifeMax : c.patience / c.patienceMax)),
       anger: Math.round(c.anger), resolved: c.resolved, revealed: reveal(c), items: c.items.length,
       want: c.want && !c.foodDone && !c.foodFailed ? c.want : null, look: c.look, moving: c.moving,
       y: c.fly ? r2(c.fly.y) : c.state === 'held' ? 0.25 : 0, held: c.state === 'held', flying: !!c.fly, down: c.downT ? r2(c.downT) : 0,
-      heavy: !!c.heavy, vip: !!c.vip && near4(c), stun: c.stunT ? r2(c.stunT) : 0, violent: c.kind !== 'normal' && !c.resolved && isViolent(w, c), phase: c.kind === 'charger' || c.kind === 'fickle' || isSig(c.kind) ? c.hits : c.phase,
+      heavy: !!c.heavy, vip: !!c.vip && near4(c), stun: c.stunT ? r2(c.stunT) : 0, violent: c.kind !== 'normal' && !c.resolved && isViolent(w, c), phase: c.kind === 'charger' || c.kind === 'fickle' || isSig(c.kind) || (isGen(c.kind) && c.kind !== 'toilet') ? c.hits : c.phase,
+      ...(c.drunk && !c.resolved ? { drunk: true } : {}),
     })),
     spills: w.spills.map(s => ({ id: s.id, x: r2(s.x), z: r2(s.z) })),
     items: w.items.map(i => ({ id: i.id, x: r2(i.x), z: r2(i.z), held: i.held })),
@@ -1834,6 +2139,7 @@ export function snapshot(w: World, now: number): Snapshot {
     event: w.event ? { kind: w.event.kind, left: r2(w.event.left) } : null,
     shift: {
       mode: w.cfg.mode, id: w.cfg.id, title: w.cfg.title, chapter: w.cfg.chapter, goal: w.cfg.goal, length: w.cfg.length, abilities: w.cfg.abilities, foods: w.cfg.foods, endless: w.cfg.endless, boss: w.cfg.boss,
+      ...(w.cfg.special ? { special: w.cfg.special } : {}),
       staminaMax: w.cfg.mods.staminaMax, staminaRegen: w.cfg.mods.staminaRegen, speed: w.cfg.mods.speed,
     },
     result: w.result,

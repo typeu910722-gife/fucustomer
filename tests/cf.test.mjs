@@ -16,6 +16,8 @@ import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 import { generateKeyPairSync, sign } from 'node:crypto';
 import WebSocket from 'ws';
+import { newProfile } from '../shared/career.ts';
+import { checksum, parseSaveCode } from '../shared/savecode.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const CF_DIR = path.resolve(HERE, '..', 'cloudflare');
@@ -42,7 +44,7 @@ async function startWrangler() {
   if (process.env.CF_URL) return;
   const bin = path.join(CF_DIR, 'node_modules', '.bin', 'wrangler');
   if (!existsSync(bin)) throw new Error('wrangler not installed: run `cd cloudflare && npm install` first');
-  proc = spawn(bin, ['dev', '--local', '--ip', '127.0.0.1', '--port', String(PORT), '--persist-to', PERSIST, '--log-level', 'warn', '--var', 'BK_TIME_SCALE:6', '--var', 'BK_HOST_AFK_S:4', '--var', `GOOGLE_CLIENT_ID:${CLIENT_ID}`, '--var', `GOOGLE_CERTS_URL:${JWKS_URL}`], {
+  proc = spawn(bin, ['dev', '--local', '--ip', '127.0.0.1', '--port', String(PORT), '--persist-to', PERSIST, '--log-level', 'warn', '--var', 'BK_TIME_SCALE:6', '--var', 'BK_HOST_AFK_S:4', '--var', 'BK_CLOUDSAVE_MIN_S:2', '--var', `GOOGLE_CLIENT_ID:${CLIENT_ID}`, '--var', `GOOGLE_CERTS_URL:${JWKS_URL}`], {
     cwd: CF_DIR, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
     env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: '1' },
   });
@@ -393,6 +395,49 @@ test('link via browser (app sign-in) over HTTP: start → complete → poll once
   const codes = [];
   for (let i = 0; i < 12; i++) codes.push((await api('POST', '/api/auth/link/start', {})).status);
   assert.ok(codes.includes(429), `start limited: ${codes}`);
+});
+
+// ---- 雲端備份 (cloud save) parity: worker validates + re-encodes, LicenseDO stores one slot (latest + previous) ----
+function cloudCode(level, extra = {}) {
+  const p = newProfile(); p.level = level; p.shop.entitlements = ['pack_supporter', 'pack_nightlife'];
+  const body = Buffer.from(JSON.stringify({ v: 1, at: 1000 + level, career: p, settings: { name: '雲端', serverUrl: 'wss://evil.example/ws' }, flags: {}, avatar: null, solo: {}, coop: null, ...extra }), 'utf8').toString('base64url');
+  return `FUC1-${body}-${checksum(body)}`;
+}
+test('cloud save over HTTP (worker + LicenseDO): auth, validation, size cap, interval, versions, entitlements stripped, delete', { skip: !!process.env.CF_URL }, async () => {
+  const opt = await fetch(HTTP + '/api/cloudsave', { method: 'OPTIONS' });
+  assert.match(opt.headers.get('access-control-allow-methods') ?? '', /DELETE/);
+  const a = await api('POST', '/api/auth/google', { credential: idToken({ ...goodClaims(), sub: 'cloud-cf-1' }) });
+  assert.equal(a.status, 200);
+  assert.equal((await api('PUT', '/api/cloudsave', { code: cloudCode(3) })).status, 401, 'no session');
+  assert.equal((await api('PUT', '/api/cloudsave', { code: cloudCode(3) }, undefined, 'bad')).status, 401, 'bad session');
+  assert.equal((await api('GET', '/api/cloudsave', undefined, undefined, 'bad')).status, 401);
+  assert.equal((await api('GET', '/api/cloudsave', undefined, undefined, a.data.session)).status, 404, 'nothing yet');
+  assert.equal((await api('PUT', '/api/cloudsave', { code: 'hello' }, undefined, a.data.session)).status, 400);
+  assert.equal((await api('PUT', '/api/cloudsave', { code: cloudCode(3).slice(0, -2) + 'zz' }, undefined, a.data.session)).status, 400, 'checksum');
+  const huge = await api('PUT', '/api/cloudsave', { code: cloudCode(3, { flags: { pad: 'x'.repeat(80_000) } }) }, undefined, a.data.session);
+  assert.equal(huge.status, 413);
+  const raw = cloudCode(5);
+  const u1 = await api('PUT', '/api/cloudsave', { code: raw }, undefined, a.data.session);
+  assert.equal(u1.status, 200, JSON.stringify(u1.data)); assert.equal(u1.data.summary.level, 5); assert.equal(u1.data.used, 1); assert.equal(u1.data.max, 20);
+  const fast = await api('PUT', '/api/cloudsave', { code: cloudCode(6) }, undefined, a.data.session);
+  assert.equal(fast.status, 429, 'minimum interval'); assert.match(fast.data.error, /秒後再試/);
+  await sleep(2100);
+  assert.equal((await api('PUT', '/api/cloudsave', { code: cloudCode(8) }, undefined, a.data.session)).status, 200);
+  const g = await api('GET', '/api/cloudsave', undefined, undefined, a.data.session);
+  assert.equal(g.status, 200);
+  assert.equal(g.data.latest.summary.level, 8); assert.equal(g.data.prev.summary.level, 5, 'previous version kept');
+  assert.equal(g.data.quota.used, 2);
+  assert.notEqual(g.data.prev.code, raw, 'stored copy is re-encoded');
+  const back = parseSaveCode(g.data.latest.code); assert.ok(back.ok);
+  assert.deepEqual(back.payload.career.shop.entitlements, [], 'no paid entitlements in the cloud copy');
+  assert.ok(!Buffer.from(g.data.latest.code.split('-')[1], 'base64url').toString().includes('evil.example'), 'no server URL');
+  // other account: separate slot
+  const b = await api('POST', '/api/auth/google', { credential: idToken({ ...goodClaims(), sub: 'cloud-cf-2' }) });
+  assert.equal((await api('GET', '/api/cloudsave', undefined, undefined, b.data.session)).status, 404);
+  const d = await api('DELETE', '/api/cloudsave', undefined, undefined, a.data.session);
+  assert.equal(d.status, 200); assert.equal(d.data.deleted, true);
+  assert.equal((await api('GET', '/api/cloudsave', undefined, undefined, a.data.session)).status, 404, 'gone');
+  assert.equal((await api('DELETE', '/api/cloudsave', undefined, undefined, a.data.session)).data.deleted, false);
 });
 
 // ---- round 25 parity: the same shared/room.ts co-op features through the RoomDO (relay and direct mode) ----

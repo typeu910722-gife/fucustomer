@@ -10,13 +10,14 @@ export const CAPTION_TEXT: Record<string, string> = {
   win: '[下班鈴]', lose: '[失敗音效]', levelup: '[升級！]', achievement: '[成就解鎖]', slap: '[啪！]', trombone: '[哀怨的喇叭]',
   ping: '[隊友標記]', quick: '[隊友訊息]', hit: '[出手]', open: '[開店音樂]', cash: '[收銀機]', ooh: '[圍觀：喔～]',
   calm: '[客人冷靜了]', brew: '[咖啡機]',
+  rustle: '[塑膠袋沙沙聲]', flush: '[廁所沖水・淹水了]', coins: '[零錢叮噹]', fireworks: '[煙火砰砰]', crowd: '[倒數人潮湧入]',
 };
 /** A new caption line at most this often (bursts are dropped, the most important line survives via priority). */
 export const MIN_GAP_MS = 220;
 export const SHOW_MS = 2600;
 export const MAX_LINES = 3;
 /** Higher wins when lines must be dropped. */
-const PRIO: Record<string, number> = { karen: 3, siren: 3, angry: 3, ultimate: 3, bassdrop: 3, outage: 3, door: 2, eject: 2, crash: 2, win: 3, lose: 3 };
+const PRIO: Record<string, number> = { karen: 3, siren: 3, angry: 3, ultimate: 3, bassdrop: 3, outage: 3, door: 2, eject: 2, crash: 2, win: 3, lose: 3, flush: 2, crowd: 3, fireworks: 2 };
 
 export interface CaptionLine { text: string; count: number; until: number; prio: number; far: boolean }
 

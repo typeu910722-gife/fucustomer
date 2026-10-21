@@ -56,3 +56,18 @@ FUCustomer ("the game") respects your privacy.
 - 證照資料是公開的：知道你證號的人都看得到。
 - 在 App 裡用「用瀏覽器登入」時，伺服器會暫存一組 6 碼連結代碼、App 專用暗碼的雜湊值，以及登入完成後要交給 App 的那組登入，**最多 10 分鐘**；App 領走或過期就刪除。
 - 按「登出」會讓這台裝置的登入失效。要刪除證照資料可以聯絡開發者（正式上線前會加刪除按鈕）。
+
+## 雲端備份（選用，需要 Google 登入，2026-10-20 新增）
+- **什麼資料**：只有玩家按「☁ 上傳到雲端」或自己打開「自動上傳」（預設關閉）時，才上傳遊戲進度存檔（內容同存檔碼：職級、星星、薪資點數、成就、外觀道具、各店面存檔、設定、暱稱、頭像），以及上傳時間與摘要（等級、星數…）。
+- **不包含**：email、Google 登入 session、多人重連 token、自訂伺服器網址、付費擴充包紀錄（伺服器會重新編碼存檔，把這些拿掉）。
+- **存在哪裡**：遊戲伺服器（Cloudflare Workers／Durable Objects 的 LicenseDO；Node 自架版是 `data/cloudsaves/`），以 Google 帳號 ID 的 SHA-256 雜湊為索引，跟證照放在一起。只有登入同一帳號的裝置能讀；公開證照不顯示。
+- **保存多久**：每帳號只留最新一份＋前一份；365 天沒有上傳自動刪除。
+- **怎麼刪除**：遊戲內「設定 → 存檔備份 → 刪除雲端存檔」（按兩次）立即刪除；或聯絡開發者。刪除不影響裝置上的進度。
+- 細節與免費方案用量評估見 `docs/CLOUD-SAVE.md`。
+
+## Cloud save (optional, Google sign-in only — added 2026-10-20)
+- **What**: only when the player presses "Upload to cloud" or turns on auto-upload (off by default): the game progress (same content as a save code) plus the upload time and a short summary.
+- **Not included**: e-mail, Google sign-in session, multiplayer rejoin token, custom server URL, paid expansion entitlements (the server re-encodes the save without them).
+- **Where**: the game server (Cloudflare Workers / Durable Objects), keyed by a SHA-256 hash of the Google account ID, next to the licence card. Readable only by devices signed in to the same account; never on the public card.
+- **How long**: newest copy + the previous one; deleted automatically after 365 days without an upload.
+- **How to delete**: in game, Settings → Save backup → "Delete cloud save" (press twice), or contact the developer. Deleting it does not affect the progress on the device.

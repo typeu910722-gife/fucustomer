@@ -16,6 +16,8 @@ import { lockedPack, ownStoreLockHtml, shopHtml, wireShop } from './shop-ui.ts';
 import { dexHtml, dexSwitch } from './dex-ui.ts';
 import { WEEKLY_ID, WEEKLY_TWISTS, BADGE_POINTS, isoWeek, weekBadge, weeklyPlan, weeklyUnlocked } from '../../shared/weekly.ts';
 import { ARCS, arcState } from '../../shared/regulars.ts';
+import { SPECIAL_DAYS } from '../../shared/genkarens.ts';
+import { SPECIAL_FIRST_BONUS, specialOfShift } from '../../shared/specialdays.ts';
 import { getCosmetic } from '../../shared/shop.ts';
 import { chainHtml, recordsHtml } from './progress-ui.ts';
 import { canOpenBranch, openBranch } from '../../shared/progression.ts';
@@ -234,7 +236,7 @@ function dailyHtml(p: CareerProfile) {
   const dm = getMap(plan.map);
   return `<div class="chapter daily"><div class="chhead"><b>📅 每日挑戰・${today}</b><span class="muted">今天在：${dm.icon} ${esc(dm.name)}</span>
       <span class="tag ${d.rewarded ? 'ok' : ''}">${d.rewarded ? '✅ 今日獎勵已領' : '🎁 今日獎勵未領'}</span>${p.daily.streak ? `<span class="tag">🔥 連續 ${p.daily.streak} 天</span>` : ''}</div>
-    <div class="muted story">${plan.mods.map(m => `<b>${DAILY_MODS[m].name}</b>：${DAILY_MODS[m].desc}`).join('　')}${d.best ? `　・今日最佳 $${d.best}` : ''}</div>
+    <div class="muted story">${plan.mods.map(m => `<b>${DAILY_MODS[m].name}</b>：${DAILY_MODS[m].desc}`).join('　')}${plan.gen ? `　・今日新奧客：<b>${esc(KAREN_INFO[plan.gen].name)}</b>` : ''}${d.best ? `　・今日最佳 $${d.best}` : ''}</div>
     <button class="btn primary" data-play="${DAILY_ID}">開始今日挑戰</button></div>`;
 }
 
@@ -245,6 +247,7 @@ function weeklyHtml(p: CareerProfile) {
   const badge = p.weekly.badges.includes(week);
   return `<div class="chapter daily weekly" id="weekly-card"><div class="chhead"><b>🗓 每週挑戰・${esc(week)}</b><span class="muted">本週：${tw.icon} ${esc(tw.name)}・${m.icon} ${esc(m.name)}</span>
       <span class="tag ${badge ? 'ok' : ''}">${badge ? `🏅 週章「${esc(tw.badge)}」到手` : `🎯 ${[0, 1, 2].filter(i => done & (1 << i)).length}/3`}</span>${p.weekly.badges.length ? `<span class="tag">🏅 ×${p.weekly.badges.length}</span>` : ''}</div>
+    ${plan.special || plan.gen ? `<div class="muted story">${plan.special ? `<b>${SPECIAL_DAYS[plan.special].icon} 本週加碼：${esc(SPECIAL_DAYS[plan.special].name)}</b>（${esc(SPECIAL_DAYS[plan.special].desc)}）　` : ''}${plan.gen ? `本週新奧客：<b>${esc(KAREN_INFO[plan.gen].name)}</b>` : ''}</div>` : ''}
     <div class="muted story">${esc(tw.desc)}。全世界這週都是同一關，成功下班時每個目標每週第一次達成發薪資點數，三個都完成再加 ${BADGE_POINTS} 點和一枚週章（掛在高級社畜證照上）。</div>
     <ul class="goal-list">${plan.goals.map((g, i) => `<li class="${done & (1 << i) ? 'ok' : 'no'}">${done & (1 << i) ? '✅' : '⬜'} ${esc(g.text)}　<small>💰${g.points}</small></li>`).join('')}</ul>
     <button class="btn primary" data-play="${WEEKLY_ID}">開始每週挑戰</button></div>`;
@@ -327,6 +330,7 @@ export function resultScreen(r: ShiftResult, reward: Reward, p: CareerProfile, f
   if (r.shiftId === ENDLESS_ID) return endlessResult(r, reward, p, fresh, h);
   if (r.shiftId === DAILY_ID) return dailyResult(r, reward, p, fresh, h);
   if (r.shiftId === WEEKLY_ID) return weeklyResult(r, reward, p, fresh, h);
+  if (specialOfShift(r.shiftId)) return specialResult(r, reward, p, fresh, h);
   const f = findShift(r.shiftId)!;
   const idx = f.chapter.shifts.findIndex(s => s.id === r.shiftId);
   let nextId: string | null = f.chapter.shifts[idx + 1]?.id ?? CHAPTERS.find(c => c.n === f.chapter.n + 1)?.shifts[0]?.id ?? null;
@@ -388,6 +392,30 @@ function dailyResult(r: ShiftResult, reward: Reward, p: CareerProfile, fresh: Ac
       <div class="reward">${rewardLine}</div>
       ${lvl}${achHtml(fresh)}${arcResultHtml(reward)}
       <div class="row"><button class="btn" id="r-retry">🔁 再挑戰（刷新紀錄）</button><button class="btn primary" id="r-career">回職涯</button></div>
+    </div>`);
+  document.getElementById('r-retry')!.onclick = () => h.retry();
+  document.getElementById('r-career')!.onclick = () => h.career();
+}
+
+/** 特殊營業日 (free play): today's reward, the first-win bonus and the record. */
+function specialResult(r: ShiftResult, reward: Reward, p: CareerProfile, fresh: Achievement[], h: { retry(): void; career(): void }) {
+  const id = specialOfShift(r.shiftId)!, d = SPECIAL_DAYS[id], st = p.special[id];
+  const lvl = reward.levels.length ? `<div class="levelup">🎉 升級！Lv.${reward.levels[reward.levels.length - 1]}「${rankOf(reward.levels[reward.levels.length - 1])}」</div>` : '';
+  const rewardLine = !r.won ? '沒達標：這次沒有獎勵（成績仍會記錄）' : reward.daily?.already && !reward.firstClear ? '今日獎勵已經領過了（成績仍會記錄）'
+    : `EXP +${reward.exp}　💰 +${reward.wallet}${reward.firstClear ? `（含首次通關獎金 ${SPECIAL_FIRST_BONUS}）` : ''}`;
+  show(`
+    <div class="card wide result ${r.won ? 'won' : 'lost'}">
+      <div class="muted">🎆 特殊營業日・${d.icon} ${esc(d.name)}</div>
+      <h1 class="title">${r.won ? (id === 'newyear' ? '新年快樂，下班！' : '撐過颱風夜！') : '差一點！'}</h1>
+      <div class="bigstars">${[1, 2, 3].map(i => `<span class="${i <= reward.stars ? 'on' : ''}" style="animation-delay:${i * 0.25}s">★</span>`).join('')}</div>
+      ${r.won ? '' : `<p class="err" style="text-align:center">${esc(r.failReason)}</p>`}
+      <div class="grid2">
+        <div><div class="stat"><span>營業額 / 目標</span><b>$${r.revenue} / $${r.goal}</b></div><div class="stat"><span>今日最佳</span><b>$${st?.best ?? r.revenue}</b></div></div>
+        <div><div class="stat"><span>奧客處理 成功/失敗</span><b>${r.karensResolved} / ${r.karensFailed}</b></div><div class="stat"><span>累計過關</span><b>${st?.wins ?? 0} 次</b></div></div>
+      </div>
+      <div class="reward">${rewardLine}</div>
+      ${lvl}${achHtml(fresh)}
+      <div class="row"><button class="btn" id="r-retry">🔁 再一次</button><button class="btn primary" id="r-career">回職涯</button></div>
     </div>`);
   document.getElementById('r-retry')!.onclick = () => h.retry();
   document.getElementById('r-career')!.onclick = () => h.career();

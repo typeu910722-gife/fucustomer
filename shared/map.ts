@@ -65,6 +65,17 @@ export let TRYON_SPOTS: { x: number; z: number }[] = [];
 /** Where squatting store-signature karens settle (see MapDef.campSpots). */
 export let CAMP_SPOTS: { x: number; z: number }[] = [];
 export let SOLIDS: AABB[] = [];
+/**
+ * Fixtures of the shared shell used by the general karens (round 27): the 對獎機 (receipt-lottery kiosk) against the
+ * front wall east of the door, and the restroom door on the stockroom's south wall. The *_SPOT points are where a
+ * customer stands, nudged per map to the nearest walkable cell.
+ */
+export let KIOSK_AT = { x: 0.35, z: 14.75 };
+/** Where the kiosk may stand (first one clear of the map's own furniture wins). */
+const KIOSK_CANDIDATES = [{ x: 0.35, z: 14.75 }, { x: 0.35, z: 11.25 }, { x: 9.4, z: 15.65 }, { x: 14.6, z: 15.65 }];
+export let KIOSK_SPOT = { x: 1.05, z: 14.75 };
+export const TOILET_DOOR = { x: 5.35, z: 5.25 };
+export let TOILET_SPOT = { x: 5.35, z: 5.95 };
 /** Original product names/prices of the default map, so switching back restores them. */
 const BASE_PRODUCTS = JSON.parse(JSON.stringify(PRODUCT_INFO)) as typeof PRODUCT_INFO;
 
@@ -97,7 +108,18 @@ export function applyMap(id?: string): MapDef {
   Object.assign(FOOD_INFO.coffee, m.coffee ? { name: m.coffee.food, station: m.coffee.station, verb: m.coffee.verb, icon: m.coffee.icon, price: m.coffee.price } : { name: '', station: '', verb: '', icon: '', price: 0 });
   Object.assign(FOOD_INFO.meal, m.meal ? { name: m.meal.food, station: m.meal.station, verb: m.meal.verb, icon: m.meal.icon, price: m.meal.price, uses: m.meal.uses } : { name: '', station: '', verb: '', icon: '', price: 0, uses: '' });
   rebuildGrid();
+  KIOSK_AT = KIOSK_CANDIDATES.find(k => !SOLIDS.some(b => b.kind !== 'wall' && distToAABB(k.x, k.z, b) < 0.55)) ?? KIOSK_CANDIDATES[0];
+  KIOSK_SPOT = walkableNear(KIOSK_AT.z > 15 ? { x: KIOSK_AT.x, z: KIOSK_AT.z - 0.7 } : { x: KIOSK_AT.x + 0.7, z: KIOSK_AT.z });
+  TOILET_SPOT = walkableNear({ x: TOILET_DOOR.x, z: TOILET_DOOR.z + 0.7 });
   return m;
+}
+
+/** The centre of the nearest walkable path-finding cell (a point a customer can actually stand on). */
+export function walkableNear(p: { x: number; z: number }): { x: number; z: number } {
+  const c = toCell(p);
+  if (!isBlockedCell(c.gx, c.gz)) return { x: p.x, z: p.z };
+  const f = nearestFree(c.gx, c.gz);
+  return { x: (f.gx + 0.5) * CELL, z: (f.gz + 0.5) * CELL };
 }
 
 /** Points customers stand at to browse a shelf. Wall units are browsed from their open side. */

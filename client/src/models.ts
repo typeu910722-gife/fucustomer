@@ -8,7 +8,7 @@ import { CURRENT_MAP } from '../../shared/map.ts';
 import type { CustomerSnap, Held } from '../../shared/protocol.ts';
 import type { Quality } from './storage.ts';
 import { INK, Label, UI_FONT, roundRect } from './labels.ts';
-import { buildKarenProp } from './karen-props.ts';
+import { KAREN_PROP_KINDS, buildKarenProp } from './karen-props.ts';
 import { isSig } from '../../shared/sigkarens.ts';
 import type { Outfit } from '../../shared/shop.ts';
 import { apronColor, wearOutfit } from './cosmetics.ts';
@@ -732,6 +732,11 @@ function baseLook(c: CustomerSnap) {
   if (c.kind === 'custom') return { ...base, shirt: 0xf59f00, hairStyle: 4, accessory: 1 };
   if (c.kind === 'fickle') return { ...base, shirt: 0xf783ac, hair: 0x343a40, hairStyle: 5, accessory: 2 };
   if (c.kind === 'tryhard') return { ...base, shirt: 0x9775fa, pants: 0xe64980, hairStyle: 1, accessory: 0 };
+  // general karens (round 27)
+  if (c.kind === 'lottery') return { ...base, shirt: 0xfff3bf, pants: 0x495057, hair: 0x868e96, hairStyle: 0, accessory: 1 };
+  if (c.kind === 'change') return { ...base, shirt: 0xd6336c, pants: 0x343a40, hair: 0x5c4033, hairStyle: 1, accessory: 1 };
+  if (c.kind === 'bagman') return { ...base, shirt: 0x868e96, pants: 0x5c4033, hair: 0xdee2e6, hairStyle: 2, accessory: 2, build: 1.12 };
+  if (c.kind === 'toilet') return c.phase === 1 ? { ...base, shirt: 0xfab005, pants: 0x1c3f6e, hairStyle: 0, accessory: 2 } : { ...base, accessory: 2 };
   const sig = SIG_LOOK[c.kind];
   if (sig) return { ...base, shirt: sig[0], pants: sig[1], hairStyle: sig[2], accessory: sig[3], ...(sig[4] ? { build: sig[4] } : {}) };
   return base;
@@ -805,7 +810,7 @@ export function karenAccessory(q: Quality, h: Human, kind: string) {
     put(h.armL, RB(0.24, 0.3, 0.04, 0.015), mat(0x63e6be, q), 0, -0.48, 0.12);
     put(h.armL, TOR(0.12, 0.01, 3, 10, Math.PI), basic(0xadb5bd), 0, -0.33, 0.12);
   }
-  if (isSig(kind)) { // store-signature karens: their prop in the right hand (origin = grip)
+  if (isSig(kind) || KAREN_PROP_KINDS.includes(kind)) { // store-signature and general karens: their prop in the right hand (origin = grip)
     const prop = buildKarenProp(kind);
     if (prop) { prop.position.set(0, -0.33, 0.03); h.armR.add(prop); }
     put(extra, SPH(0.035, 6, 4), basic(0xff3b30), 0.2, 0.22, onHead(0.2, 0.22)); // little red "trouble" dot like the other karens' marks

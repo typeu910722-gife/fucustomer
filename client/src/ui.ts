@@ -273,7 +273,7 @@ export function settingsMenu(s: Settings, onDone: (s: Settings) => void, overlay
         </section>
       </div>
       <label class="field">自訂伺服器（留空使用預設）<input type="text" id="s-url" placeholder="wss://example.com/ws" value="${esc(s.serverUrl)}"></label>
-      ${overlay ? '' : '<button class="btn info" id="s-backup">💾 存檔備份（換裝置）<span class="sub">匯出／匯入存檔碼，網頁、Android、Windows 互通</span></button>'}
+      ${overlay ? '' : '<button class="btn info" id="s-backup">💾 存檔備份（換裝置）<span class="sub">存檔碼或雲端備份（Google 登入），網頁、Android、Windows 互通</span></button>'}
       <button class="btn primary" id="s-ok">完成</button>
     </div>`, overlay ? 'screen overlay' : 'screen');
   (document.getElementById('s-q') as HTMLSelectElement).value = s.quality;
@@ -592,8 +592,16 @@ export function summaryHtml(s: Snapshot, selfId: string) {
 }
 
 /** Free play: pick a store type. Each map keeps its own save. */
-export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map: string, fresh: boolean): void; back(): void; pack?(packId: string): void; records?(): void; hire?: { wage: number; hired: Record<string, boolean>; set(map: string, on: boolean): void } }, progs: Record<string, StoreProg> = {}) {
+/** 特殊營業日 row at the top of the free-play store picker (null = still locked). */
+export interface SpecialRow { id: string; icon: string; name: string; desc: string; done: boolean; wins: number }
+export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map: string, fresh: boolean): void; back(): void; pack?(packId: string): void; records?(): void; hire?: { wage: number; hired: Record<string, boolean>; set(map: string, on: boolean): void }; special?(id: string): void }, progs: Record<string, StoreProg> = {}, specials: SpecialRow[] | null = null) {
+  const sp = specials ? `<div class="chapter daily special-days"><div class="chhead"><b>🎆 特殊營業日</b><span class="muted">每天第一次達標有獎勵，第一次通關另有獎金</span></div>
+      <div class="grid2">${specials.map(x => `<div class="shopitem"><b>${x.icon} ${esc(x.name)}</b><span class="muted">${esc(x.desc)}</span>
+        <span class="tag ${x.done ? 'ok' : ''}">${x.done ? '✅ 今日獎勵已領' : '🎁 今日獎勵未領'}</span>${x.wins ? `<span class="tag">過關 ${x.wins} 次</span>` : ''}
+        <button class="btn primary" data-special="${esc(x.id)}">${x.icon} 開始${esc(x.name)}</button></div>`).join('')}</div></div>`
+    : `<div class="chapter locked"><div class="chhead"><b>🎆 特殊營業日</b></div><div class="muted story">🔒 通過第 1 章「店長來巡店」後解鎖（颱風夜、跨年夜）</div></div>`;
   show(`<div class="card wide"><div class="row" style="align-items:center"><h2 style="flex:1;margin:0">選擇店面</h2>${h.records ? '<button class="btn small" id="mp-records" style="flex:0">🏆 我的紀錄</button>' : ''}<button class="btn small" id="mp-back" style="flex:0">← 返回</button></div>
+    ${h.special ? sp : ''}
     <p class="muted">每種店賣的東西、擺設和工作站都不一樣。各自有獨立的存檔。每撐過一天，店面就會累積名聲（Lv1–10），解鎖免費小獎勵。</p>
     <div class="grid2">${MAPS.map(m => {
       const sv = saves[m.id];
@@ -613,6 +621,7 @@ export function mapPicker(saves: Record<string, StoreSave | null>, h: { play(map
   document.getElementById('mp-back')!.onclick = () => h.back();
   on('mp-records', 'click', () => h.records?.());
   document.querySelectorAll<HTMLButtonElement>('[data-map-pack]').forEach(b => { b.onclick = () => h.pack?.(b.dataset.mapPack!); });
+  document.querySelectorAll<HTMLButtonElement>('[data-special]').forEach(b => { b.onclick = () => h.special?.(b.dataset.special!); });
   document.querySelectorAll<HTMLInputElement>('[data-hire]').forEach(c => { c.onchange = () => h.hire?.set(c.dataset.hire!, c.checked); });
   document.querySelectorAll<HTMLButtonElement>('[data-map-cont]').forEach(b => { b.onclick = () => h.play(b.dataset.mapCont!, false); });
   document.querySelectorAll<HTMLButtonElement>('[data-map]').forEach(b => {

@@ -17,9 +17,11 @@ const TRIM: Record<string, number> = {
   clean: 14, calm: 12.5, ping: 10, buy: 15.5, upgrade: 13.5, open: 12, karen: 14, error: 19.5, step: 36,
   quick: 15, heave: 19, whoosh: 16, ding: 13, ooh: 22.5, stamp: 12.5, star: 16.5, dust: 28, rise: 18.5,
   bassdrop: 3.5, slap: 10.5, siren: 19.5, chime: 16, trombone: 26,
+  // round 27: general karens / special days
+  rustle: 17, flush: 14, coins: 13, fireworks: 9, crowd: 20,
 };
 /** Long or loud one-shots allowed only one voice at a time; everything else at most `MAX_VOICES`. */
-const SOLO = new Set(['ultimate', 'bassdrop', 'trombone', 'siren', 'achievement', 'levelup', 'win', 'lose', 'ooh', 'outage', 'open', 'door', 'brew']);
+const SOLO = new Set(['ultimate', 'bassdrop', 'trombone', 'siren', 'achievement', 'levelup', 'win', 'lose', 'ooh', 'outage', 'open', 'door', 'brew', 'fireworks', 'crowd', 'flush']);
 const MAX_VOICES = 3;
 
 export class Audio {
@@ -132,7 +134,8 @@ export class Audio {
   private live = new Map<string, number[]>();
   /** Minimum gap between two plays of the same effect (ms); loud one-shots get a longer gap. */
   private static GAP: Record<string, number> = { step: 120, knock: 120, cash: 70, impact: 150, crash: 250, karen: 600, ultimate: 800, error: 200, achievement: 400, levelup: 400,
-    heave: 200, ooh: 900, ding: 300, trombone: 2500, siren: 1500, bassdrop: 800, stamp: 90, chime: 150, rise: 400, whoosh: 60, slap: 90 };
+    heave: 200, ooh: 900, ding: 300, trombone: 2500, siren: 1500, bassdrop: 800, stamp: 90, chime: 150, rise: 400, whoosh: 60, slap: 90,
+    rustle: 400, flush: 1500, coins: 300, fireworks: 2500, crowd: 3000 };
 
   /** `k` (0–1.4): strength of the juice layers (throw power, distance falloff for other players' actions). */
   play(name: string, x?: number, z?: number, k = 1) {
@@ -222,6 +225,27 @@ export class Audio {
         for (let i = 0; i < 4; i++) this.tone(i % 2 ? 660 : 880, 0.22, 'square', 0.05, 0.2 + i * 0.22, i % 2 ? 640 : 900);
         break;
       case 'chime': this.tone(1318, 0.35, 'sine', 0.08 * v); this.tone(1760, 0.45, 'sine', 0.06 * v, 0.07); this.tone(2637, 0.3, 'triangle', 0.025 * v, 0.14); break;
+      // ---- round 27: general karens / special days ----
+      case 'rustle': // 免費袋子阿伯 grabbing plastic bags: crinkly band-passed noise bursts
+        for (let i = 0; i < 3; i++) this.noise(0.07, 0.12 * v, 3800 + i * 600, i * 0.06, 'bandpass', 2);
+        break;
+      case 'flush': // 借廁所大隊: a toilet flush (rushing water) and a gurgle
+        this.noise(0.9, 0.16 * v, 900, 0, 'lowpass'); this.sweep(0.7, 0.08 * v, 1600, 400, 0.1);
+        this.tone(320, 0.12, 'sine', 0.06 * v, 0.75, 180); this.tone(260, 0.12, 'sine', 0.05 * v, 0.88, 150); break;
+      case 'coins': // exact change: coins clinking onto the counter
+        [2637, 3136, 2349, 2794].forEach((f, i) => this.tone(f, 0.09, 'triangle', 0.06 * v, i * 0.055));
+        this.noise(0.05, 0.05 * v, 6000, 0, 'bandpass', 3); break;
+      case 'fireworks': // 跨年夜 midnight: a whistle up, then pops and crackle
+        for (let i = 0; i < 3; i++) {
+          const at = i * 0.42;
+          this.tone(900, 0.32, 'sine', 0.03, at, 2200);
+          this.noise(0.25, 0.3, 500, at + 0.34); this.tone(90, 0.3, 'sine', 0.16, at + 0.34, 45);
+          for (let j = 0; j < 5; j++) this.noise(0.03, 0.06, 4500, at + 0.45 + j * 0.07 + Math.random() * 0.03, 'bandpass', 3);
+        }
+        break;
+      case 'crowd': // 23:50 countdown crowd surging in: a swell of voices
+        for (const [f, d] of [[160, 0], [210, 0.05], [250, 0.02], [300, 0.08], [190, 0.12]] as const) this.voice(f, f * 1.18, 1.1, 0.03, 650, d, f * 0.95);
+        this.noise(1.0, 0.05, 700, 0, 'bandpass'); break;
       case 'trombone': // sad "wah wah wah waaah"
         [[392, 0], [370, 0.3], [349, 0.6]].forEach(([f, at]) => this.voice(f / 2, f / 2 * 0.98, 0.28, 0.06, 900, at));
         this.voice(165, 150, 0.8, 0.07, 800, 0.9, undefined, 5.5); break;

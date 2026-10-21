@@ -10,7 +10,9 @@ import { FOOD_INFO, PRODUCT_INFO, PRODUCTS, Product, shelfCapacity, EYE_HEIGHT }
 import {
   AABB, COFFEE_MACHINE, MICROWAVE, COFFEE_PICKUP, COMPLAINT_SPOT, COUNTER, CRATES, DECOR, DOOR_X0, DOOR_X1, MOP_RACK, REGISTERS, SHELVES,
   CURRENT_MAP, CAMP_SPOTS, OUTLET, STORE_D, STORE_W, WALLS, shelfFacing, SOLIDS, QUEUE_SPOTS, PLAYER_SPAWNS, WANDER_SPOTS, TRYON_SPOTS, CHARGE_SPOT, distToAABB,
+  KIOSK_AT, KIOSK_SPOT, TOILET_DOOR, TOILET_SPOT,
 } from '../../shared/map.ts';
+import { bagmanAtDoor } from '../../shared/genkarens.ts';
 import type { CustomerSnap, Held, PlayerSnap, Snapshot } from '../../shared/protocol.ts';
 import type { Quality } from './storage.ts';
 import { sigDef } from '../../shared/sigkarens.ts';
@@ -240,6 +242,7 @@ const GOOD = '#39c96b', BAD = '#ff5d5d', WARN = '#ffc23d';
 const KAREN_BG: Record<string, string> = {
   cutter: '#ff9f1c', rager: '#ff5d5d', streamer: '#8f6bff', hog: '#868e96', litterer: '#4fb35a', charger: '#48a6ff',
   custom: '#ffc23d', fickle: '#ff7eb6', tryhard: '#9775fa', boss: '#5f3dc4',
+  lottery: '#e8590c', change: '#f59f00', bagman: '#2f9e44', toilet: '#1c7ed6',
 };
 const SIG_BG: Record<string, string> = { haggle: '#ff5d5d', camp: '#ff9f1c', roam: '#8f6bff', till: '#48a6ff', redo: '#ff7eb6', sneak: '#868e96', refund: '#4fb35a' };
 const q20 = (v: number) => Math.round(Math.max(0, Math.min(1, v)) * 20) / 20;
@@ -278,8 +281,15 @@ function customerTag(c: CustomerSnap): Tag | null {
       case 'custom': name = c.state === 'atRegister' ? '🍳 我要改單…' : '🍳 客製魔人'; break;
       case 'fickle': name = c.phase ? '🧋 我要改甜度！' : '🧋 改單達人'; break;
       case 'tryhard': name = '👕 試穿中…'; break;
+      case 'lottery': name = c.state === 'toKiosk' ? '🧾 跟我走…對獎機在哪' : c.state === 'atRegister' ? '🧾 我對一下發票喔' : '🧾 發票對獎魔人';
+        if (c.state === 'atRegister') bar = { v: q20(c.patience), color: '#3bc9db' }; break;
+      case 'change': name = c.state === 'atRegister' ? `🪙 一、二、三…${c.phase ? '重數！' : ''}` : '🪙 找零計較姐';
+        if (c.state === 'atRegister') bar = { v: q20(c.patience), color: '#3bc9db' }; break;
+      case 'bagman': name = c.state === 'toExit' ? (bagmanAtDoor(c) ? '🛍 現在攔他！' : '🛍 要溜了！') : '🛍 袋子拿好拿滿'; break;
+      case 'toilet': name = c.phase === 1 ? '🚩 借廁所大隊（領隊）' : '🚽 團員'; if (c.phase === 1 && c.state === 'toilet') bar = { v: q20(c.patience), color: '#3bc9db' }; break;
       default: return null;
     }
+    if (c.drunk) name += ' 🍺';
     const bg = c.violent ? '#d6336c' : KAREN_BG[c.kind] ?? SIG_BG[sd?.tpl ?? ''] ?? '#ff5d5d', fg = bg === WARN ? INK : undefined;
     const icon = name.split(' ')[0] + (c.violent && c.kind !== 'rager' ? '🤬' : '') + badge;
     return {
@@ -391,6 +401,7 @@ export class StoreView {
     const before = new Set(this.scene.children);
     this.build();
     this.buildUpgradeProps();
+    this.buildGenFixtures();
     buildShopDecor(this.scene, this.q); // 商城 decorations (free play / own store only)
     this.atlas.pack();
     this.mergeStatic(before);
@@ -697,7 +708,8 @@ export class StoreView {
     const q = this.q, S = this.scene, TH = CURRENT_MAP.theme;
     type Face = 'N' | 'W' | 'E' | 'SS' | 'SN';
     // posters / signs already on the walls: [face, t0, t1, y0]
-    const reserved: [Face, number, number, number][] = [['N', 7.9, 9.3, 1.9], ['N', 10.8, 13.2, 1.3], ['N', 14.9, 16.3, 1.9], ['SS', 2.5, 4.3, 0]];
+    const reserved: [Face, number, number, number][] = [['N', 7.9, 9.3, 1.9], ['N', 10.8, 13.2, 1.3], ['N', 14.9, 16.3, 1.9], ['SS', 2.5, 4.3, 0], ['SS', TOILET_DOOR.x - 0.55, TOILET_DOOR.x + 0.55, 0]]; // (the last: the restroom door)
+    if (KIOSK_AT.x < 1) reserved.push(['W', KIOSK_AT.z - 0.45, KIOSK_AT.z + 0.45, 0]); // the 發票對獎機 and its sign
     const blocked = (f: Face, t0: number, t1: number, y0: number) => {
       for (const b of SOLIDS) {
         if (b.kind === 'wall') continue;
@@ -823,7 +835,7 @@ export class StoreView {
   private freeSpot(x: number, z: number, r: number) {
     if (x < r || z < r || x > STORE_W - r || z > STORE_D - r) return false;
     for (const b of SOLIDS) if (b.kind !== 'wall' && distToAABB(x, z, b) < r) return false;
-    const spots = [...QUEUE_SPOTS, ...PLAYER_SPAWNS, ...WANDER_SPOTS, ...TRYON_SPOTS, CHARGE_SPOT, COFFEE_PICKUP, COMPLAINT_SPOT, ...REGISTERS.flatMap(g => [g.cashier, g.customer])];
+    const spots = [...QUEUE_SPOTS, ...PLAYER_SPAWNS, ...WANDER_SPOTS, ...TRYON_SPOTS, CHARGE_SPOT, COFFEE_PICKUP, COMPLAINT_SPOT, ...REGISTERS.flatMap(g => [g.cashier, g.customer]), KIOSK_AT, KIOSK_SPOT, TOILET_SPOT];
     for (const p of spots) if (Math.hypot(p.x - x, p.z - z) < r + 0.7) return false;
     if (Math.abs(x - (DOOR_X0 + DOOR_X1) / 2) < 2 && z > STORE_D - 2.5) return false; // door lane
     return true;
@@ -1136,6 +1148,94 @@ export class StoreView {
     }
   }
 
+  /** Fixtures of the general karens (round 27): the 發票對獎機 kiosk and the restroom door on the stockroom wall. */
+  private buildGenFixtures() {
+    const q = this.q, S = this.scene;
+    const k = new THREE.Group(); k.name = 'kiosk';
+    k.position.set(KIOSK_AT.x, 0, KIOSK_AT.z);
+    k.rotation.y = KIOSK_AT.z > 15 ? Math.PI : Math.PI / 2; // faces into the store
+    put(k, RB(0.55, 1.35, 0.45, 0.06), mat(0xe8590c, q), 0, 0.675, 0);
+    put(k, RB(0.47, 0.36, 0.05, 0.03), mat(0x343a40, q), 0, 1.05, 0.21);
+    put(k, B(0.4, 0.29, 0.01), this.glowMat(0x8ce99a), 0, 1.05, 0.24);
+    put(k, B(0.3, 0.03, 0.06), mat(0x212529, q), 0, 0.72, 0.24); // receipt slot
+    const kl = this.atlas.mesh(0.52, 0.16, () => textCanvas([{ text: '發票對獎機', size: 60, color: '#fff' }], 512, 156, '#c92a2a'));
+    kl.position.set(0, 1.42, 0.235); k.add(kl);
+    S.add(k);
+    const d = new THREE.Group(); d.name = 'restroom';
+    d.position.set(TOILET_DOOR.x, 0, TOILET_DOOR.z + 0.02);
+    put(d, B(0.9, 2.05, 0.04), mat(0x74c0fc, q), 0, 1.03, 0.0);
+    put(d, B(0.98, 0.06, 0.05), mat(0x495057, q), 0, 2.08, 0.0);
+    put(d, CYL(0.03, 0.03, 0.12, 6), mat(0xced4da, q, { metal: 0.6, rough: 0.3 }), 0.32, 1.0, 0.06, Math.PI / 2);
+    const dl = this.atlas.mesh(0.62, 0.2, () => textCanvas([{ text: '🚻 廁所', size: 64, color: '#fff' }], 512, 164, '#1971c2'));
+    dl.position.set(0, 1.62, 0.03); d.add(dl);
+    const rule = this.atlas.mesh(0.62, 0.15, () => textCanvas([{ text: '限消費使用', size: 56, color: '#2a1f3d' }], 512, 124, '#fff3bf'));
+    rule.position.set(0, 1.32, 0.03); d.add(rule);
+    S.add(d);
+  }
+
+  // ---------- 特殊營業日 weather / sky (round 27) ----------
+  private special = '';
+  private rain: THREE.LineSegments | null = null;
+  private flashT = 0; private nextFlash = 6;
+  private sparks: { mesh: THREE.Mesh; v: THREE.Vector3; life: number }[] = [];
+  /** 颱風夜: dark stormy sky, rain outside and lightning; 跨年夜: night sky. Ordinary days: the usual daytime. */
+  setSpecial(id: string) {
+    if (id === this.special) return;
+    this.special = id;
+    const S = this.scene;
+    const sky = id === 'typhoon' ? 0x3d4b5c : id === 'newyear' ? 0x15163a : 0x9ec9ef;
+    S.background = new THREE.Color(sky);
+    // stormy / night air outside: the buildings across the street fade into it (the store itself stays clear)
+    S.fog = new THREE.Fog(sky, id ? 15 : 30, id === 'typhoon' ? 34 : id ? 42 : 90);
+    if (this.rain) { S.remove(this.rain); this.rain.geometry.dispose(); this.rain = null; }
+    if (id === 'typhoon') {
+      const n = this.q === 'low' ? 260 : 700, pos = new Float32Array(n * 6);
+      for (let i = 0; i < n; i++) {
+        const x = -6 + Math.random() * 36, y = Math.random() * 12, z = 16.6 + Math.random() * (i % 2 ? 6 : 16); // denser near the windows
+        pos.set([x, y, z, x - 0.12, y - 0.6, z + 0.05], i * 6);
+      }
+      const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      this.rain = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xd0ebff, transparent: true, opacity: 0.8, fog: false }));
+      this.rain.frustumCulled = false;
+      S.add(this.rain);
+    }
+  }
+  private specialFrame(dt: number) {
+    if (this.rain) {
+      const a = this.rain.geometry.getAttribute('position') as THREE.BufferAttribute, arr = a.array as Float32Array;
+      for (let i = 0; i < arr.length; i += 6) {
+        let y = arr[i + 1] - 16 * dt, x = arr[i] - 3 * dt;
+        if (y < 0) { y += 12; x = -6 + Math.random() * 36; }
+        arr[i] = x; arr[i + 1] = y; arr[i + 3] = x - 0.12; arr[i + 4] = y - 0.6;
+      }
+      a.needsUpdate = true;
+      // lightning: the sky flashes white for a moment every few seconds
+      this.nextFlash -= dt;
+      if (this.nextFlash <= 0) { this.nextFlash = 7 + Math.random() * 9; this.flashT = 0.18; }
+      if (this.flashT > 0) { this.flashT -= dt; (this.scene.background as THREE.Color).setHex(this.flashT > 0 && Math.random() < 0.7 ? 0xdbe4ff : 0x3d4b5c); }
+    }
+    for (const p of this.sparks) { p.life -= dt; p.v.y -= 2.2 * dt; p.v.multiplyScalar(Math.pow(0.5, dt)); p.mesh.position.addScaledVector(p.v, dt); p.mesh.scale.setScalar(Math.max(0.01, Math.min(1, p.life))); }
+    this.sparks = this.sparks.filter(p => { if (p.life <= 0) { this.scene.remove(p.mesh); return false; } return true; });
+  }
+  /** 跨年夜 midnight: a few firework bursts in the sky over the street (fewer with reduced motion / low quality). */
+  fireworks(reduce = false) {
+    const shells = reduce ? 2 : this.q === 'low' ? 4 : 7;
+    const cols = [0xff6b6b, 0xffd43b, 0x69db7c, 0x74c0fc, 0xda77f2, 0xffa94d];
+    for (let s = 0; s < shells; s++) {
+      window.setTimeout(() => {
+        // low over the road, so they show through the front windows from inside the store
+        const cx = 4 + Math.random() * 16, cy = 3.6 + Math.random() * 2, cz = 22 + Math.random() * 4, col = cols[s % cols.length];
+        const n = this.q === 'low' ? 18 : 34, m = new THREE.MeshBasicMaterial({ color: col, fog: false }); // glowing through the night air
+        for (let i = 0; i < n; i++) {
+          const mesh = new THREE.Mesh(B(0.16, 0.16, 0.16), m);
+          const th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1), sp = 2.6 + Math.random() * 1.6;
+          mesh.position.set(cx, cy, cz); this.scene.add(mesh);
+          this.sparks.push({ mesh, v: new THREE.Vector3(Math.sin(ph) * Math.cos(th) * sp, Math.cos(ph) * sp, Math.sin(ph) * Math.sin(th) * sp), life: 1.6 + Math.random() * 0.6 });
+        }
+      }, s * 420);
+    }
+  }
+
   private mergeStatic(before: Set<THREE.Object3D>) {
     const groups = new Map<THREE.Material, THREE.BufferGeometry[]>();
     const remove: THREE.Mesh[] = [];
@@ -1259,6 +1359,8 @@ export class StoreView {
   update(snap: Snapshot, selfId: string, dt: number, renderPlayers: (id: string) => { x: number; z: number; yaw: number } | null) {
     this.time += dt;
     const q = this.q;
+    this.setSpecial(snap.shift.special ?? '');
+    this.specialFrame(dt);
     // shelves
     const cap = shelfCapacity(snap.upgrades.shelves);
     for (const p of PRODUCTS) {
@@ -1305,7 +1407,7 @@ export class StoreView {
       let e = this.customers.get(c.id);
       if (!e) {
         const h = new Human(q, customerLook(c));
-        if (c.kind !== 'normal') karenAccessory(q, h, c.kind);
+        if (c.kind !== 'normal') karenAccessory(q, h, c.kind === 'toilet' && c.phase === 2 ? 'toiletMember' : c.kind);
         e = { h, s: { x: c.x, z: c.z, yaw: c.yaw }, kind: c.kind, tag: null, compactT: 0, sq: 0, spinY: 0, bx: h.group.scale.x, by: h.group.scale.y };
         this.customers.set(c.id, e); this.scene.add(h.group);
       }
@@ -1348,6 +1450,8 @@ export class StoreView {
         e.h.icon.sprite.position.copy(_v);
       }
       if (c.kind === 'rager' && !c.resolved && c.state === 'complain') e.h.group.position.x += Math.sin(this.time * 40) * 0.02 * (c.anger / 100);
+      // 跨年夜: drunk karens sway on their feet
+      if (c.drunk && !c.held && !c.flying && !lying) { e.h.group.rotation.z = Math.sin(this.time * 2.6 + c.id) * 0.13; e.h.group.position.x += Math.sin(this.time * 1.7 + c.id) * 0.06; }
     }
     for (const [id, e] of this.customers) if (!seen.has(id)) { this.scene.remove(e.h.group); e.h.dispose(); this.customers.delete(id); }
 

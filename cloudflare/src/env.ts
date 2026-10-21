@@ -14,6 +14,8 @@ export interface Env {
   BK_TIME_SCALE?: string;
   /** Test only: host-AFK threshold in seconds (default HOST_AFK_S). */
   BK_HOST_AFK_S?: string;
+  /** Test only: minimum seconds between two cloud-save uploads of one account (default 60). */
+  BK_CLOUDSAVE_MIN_S?: string;
 }
 
 /** Shared limits (same numbers as server/index.ts). */

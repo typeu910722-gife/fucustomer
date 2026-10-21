@@ -21,10 +21,14 @@
 //   POST /api/auth/link/poll          → { pending, expiresIn } | { no, session, card }  (app, body { pollToken })
 //   PUT  /api/license                 → card (x-session)
 //   GET  /api/license/:no             → public card
+//   PUT  /api/cloudsave               → { at, size, summary, used, max }  (x-session, body { code: "FUC1-…" }, ≤ 72 KB)
+//   GET  /api/cloudsave               → { latest, prev, quota }  (x-session)
+//   DELETE /api/cloudsave             → { deleted }  (x-session)
 import { PROTOCOL_VERSION, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH } from '../../shared/constants.ts';
 import { closeReason, MAX_MSG_BYTES, type Env } from './env.ts';
 import { STORE_CODE_ALPHABET, STORE_CODE_LENGTH, type Result } from './store-do.ts';
 import { GOOGLE_CERTS, jwksFetcher, verifyGoogleIdToken } from './auth.ts';
+import { CLOUD_ERR, CLOUD_MAX_BODY, prepareUpload, utcDay } from '../../shared/cloudsave.ts';
 
 export { RoomDO } from './room-do.ts';
 export { StoreDO } from './store-do.ts';
@@ -33,7 +37,7 @@ export { LicenseDO } from './license-do.ts';
 const CORS = {
   'access-control-allow-origin': '*',
   'access-control-allow-headers': 'content-type, x-owner-token, x-session',
-  'access-control-allow-methods': 'GET, POST, PUT, OPTIONS',
+  'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS',
 };
 const json = (status: number, body: unknown) =>
   new Response(status === 204 ? null : JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...CORS } });
@@ -65,10 +69,12 @@ function rateLimited(ip: string) {
   return false;
 }
 
-async function readBody(req: Request): Promise<Record<string, unknown>> {
+let cloudBusyDay = '';
+
+async function readBody(req: Request, max = 8192): Promise<Record<string, unknown>> {
   try {
     const text = await req.text();
-    if (text.length > 8192) return {};
+    if (text.length > max) return {};
     const v = JSON.parse(text || '{}');
     return v && typeof v === 'object' && !Array.isArray(v) ? v : {};
   } catch { return {}; }
@@ -237,6 +243,25 @@ async function handleApi(req: Request, env: Env, url: URL): Promise<Response> {
     if (parts[2] && req.method === 'GET') {
       const no = decodeURIComponent(parts[2]);
       return /^\d{4}-\d{4}$/.test(no) ? out(await licenseStub(env).get(no)) : json(404, { error: '查無此證照' });
+    }
+  }
+  if (parts[1] === 'cloudsave' && !parts[2]) {
+    // once the LicenseDO said today's cloud budget is used up, this isolate answers 503 itself until the UTC day changes
+    if (cloudBusyDay === utcDay(Date.now())) return out(CLOUD_ERR.busy);
+    if (!session) return out(CLOUD_ERR.auth); // never wake the Durable Object without a session
+    let r: Result<unknown> | null = null;
+    if (req.method === 'PUT') {
+      if (Number(req.headers.get('content-length') ?? 0) > CLOUD_MAX_BODY) return out(CLOUD_ERR.big);
+      const text = await req.text();
+      if (text.length > CLOUD_MAX_BODY) return out(CLOUD_ERR.big);
+      let body: unknown = null; try { body = JSON.parse(text); } catch { /* → 400 below */ }
+      const p = prepareUpload(body); // validated + re-encoded here, so junk never reaches the Durable Object
+      r = p.ok ? await licenseStub(env).cloudPut(session, p.value.code, p.value.summary) : p;
+    } else if (req.method === 'GET') r = await licenseStub(env).cloudGet(session);
+    else if (req.method === 'DELETE') r = await licenseStub(env).cloudDelete(session);
+    if (r) {
+      if (!r.ok && r.status === 503 && r.error === CLOUD_ERR.busy.error) cloudBusyDay = utcDay(Date.now());
+      return out(r);
     }
   }
   if (parts[1] === 'stores') {

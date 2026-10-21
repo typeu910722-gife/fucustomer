@@ -10,7 +10,9 @@
 // are a consistency check of the data, not a substitute for play-testing.
 import { Room } from '../shared/room.ts';
 import { Bot, botMessages } from '../shared/bot.ts';
-import { CHAPTERS, GEAR_IDS, STAR_CHAOS, STAR_RATING, STAR_REVENUE, buildShiftConfig, modsFor, newProfile, starsFor, type CareerProfile } from '../shared/career.ts';
+import { CHAPTERS, GEAR_IDS, STAR_CHAOS, STAR_RATING, STAR_REVENUE, buildShiftConfig, modsFor, newProfile, starsFor, type CareerProfile, type ShiftConfig } from '../shared/career.ts';
+import { buildSpecialConfig } from '../shared/specialdays.ts';
+import { SPECIAL_IDS } from '../shared/genkarens.ts';
 import { KAREN_INFO, type KarenKind } from '../shared/constants.ts';
 import type { Snapshot } from '../shared/protocol.ts';
 import { writeFileSync } from 'node:fs';
@@ -58,8 +60,17 @@ function rng(seed: number) { let a = seed >>> 0; return () => { a = (a + 0x6d2b7
 export function playShift(id: string, skill: Skill, seed: number): Run {
   const found = CHAPTERS.find(c => c.shifts.some(s => s.id === id));
   if (!found) throw new Error('unknown shift ' + id);
-  const prof = profileFor(found.n, found.minLevel, skill);
-  const cfg = buildShiftConfig(prof, id);
+  return playConfig(id, found.n, found.minLevel, skill, seed, prof => buildShiftConfig(prof, id));
+}
+
+/**
+ * Plays any shift config (special days, daily-style configs) with the skill model of a chapter: the profile has
+ * cleared every earlier chapter, so progress-based configs (daily / 特殊營業日) pick that chapter's difficulty.
+ */
+export function playConfig(id: string, chapter: number, minLevel: number, skill: Skill, seed: number, build: (p: CareerProfile) => ShiftConfig): Run {
+  const prof = profileFor(chapter, minLevel, skill);
+  for (const c of CHAPTERS) if (c.n < chapter) for (const s of c.shifts) prof.stars[s.id] = 1;
+  const cfg = build(prof);
   const model = SKILL_MODEL[skill];
   let t = 0;
   const room = new Room('B', null, { solo: true, now: () => t, shift: cfg, seed });
@@ -221,8 +232,34 @@ export function report(rows: Row[], seeds: number): string {
 }
 
 // ---------------- CLI ----------------
+/**
+ * 特殊營業日 (round 27) next to the ordinary shift of the same difficulty: the free-play special-day config is built
+ * from chapter n's third shift (like the daily challenge), so each row compares it with that shift scaled to 180 s.
+ */
+export function specialReport(seeds: number, chapters = [2, 3, 4, 5, 6], seedBase = 1000, log?: (s: string) => void): string {
+  const out = ['| 難度（章） | 特殊營業日 | 新手 過關 | 一般 過關 | 一般 ★ | 高手 ★ | 一般 營收/目標 | 一般 收班口碑 | 一般 奧客失敗 | 同章第 3 班 一般 過關（對照） |', '|---|---|---|---|---|---|---|---|---|---|'];
+  for (const n of chapters) {
+    const ch = CHAPTERS[n - 1];
+    const base = ch.shifts[Math.min(2, ch.shifts.length - 1)];
+    const ref = Array.from({ length: seeds }, (_, i) => playShift(base.id, 'average', seedBase + i * 17));
+    for (const id of SPECIAL_IDS) {
+      const rs = Object.fromEntries(SKILL_IDS.map(sk => [sk, Array.from({ length: seeds }, (_, i) => playConfig('sp-' + id, n, ch.minLevel, sk, seedBase + i * 17, p => buildSpecialConfig(p, id)))])) as Record<Skill, Run[]>;
+      const pass = (r: Run[]) => pct(r.filter(x => x.stars > 0).length / r.length);
+      const av = rs.average;
+      out.push(`| ${n} | ${id === 'typhoon' ? '🌀颱風夜' : '🎆跨年夜'} | ${pass(rs.weak)} | ${pass(av)} | ${mean(av.map(r => r.stars)).toFixed(2)} | ${mean(rs.strong.map(r => r.stars)).toFixed(2)} | ${mean(av.map(r => r.revenue / r.goal)).toFixed(2)} | ${mean(av.map(r => r.rating)).toFixed(2)} | ${mean(av.map(r => r.karensFailed)).toFixed(1)} | ${base.id} ${pass(ref)} |`);
+      log?.(`ch${n} ${id} weak ${pass(rs.weak)} avg ${pass(av)}`);
+    }
+  }
+  return out.join('\n');
+}
+
 if (process.argv[1]?.endsWith('scripts/balance.ts')) {
   const arg = (k: string) => { const i = process.argv.indexOf(k); return i >= 0 ? process.argv[i + 1] : undefined; };
+  if (process.argv.includes('--special')) {
+    const md = specialReport(Number(arg('--seeds') ?? 6), undefined, Number(arg('--seed-base') ?? 1000), s => process.stderr.write(s + '\n'));
+    if (arg('--md')) writeFileSync(arg('--md')!, md + '\n'); else console.log(md);
+    process.exit(0);
+  }
   const seeds = Number(arg('--seeds') ?? 6);
   const ids = mainShiftIds(arg('--only') ?? '');
   const skills = (arg('--skills')?.split(',') as Skill[] | undefined) ?? SKILL_IDS;

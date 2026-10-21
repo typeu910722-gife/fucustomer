@@ -4,10 +4,11 @@ import { BOX_SIZE, PRODUCTS, Product, SERVER_INTERACT_RANGE, WALK_SPEED, loungeP
 import { COFFEE_MACHINE, CRATES, ENTRANCE, MICROWAVE, MOP_RACK, REGISTERS, SHELVES, findPath, shelfBrowseSpots } from './map.ts';
 import type { ActKind, ClientMsg, CustomerSnap, PlayerSnap, Snapshot, Target } from './protocol.ts';
 import { SIG_KARENS, SigNeed, isSig, sigWaitReason } from './sigkarens.ts';
+import { bagmanAtDoor, changeAnswer } from './genkarens.ts';
 
 export interface BotOutput {
   x: number; z: number; yaw: number;
-  act?: { kind: ActKind; target: Target };
+  act?: { kind: ActKind; target: Target; opt?: number };
   drop?: boolean; buy?: string; ready?: boolean;
   throw?: { yaw: number; pitch: number }; spin?: boolean; ultimate?: boolean;
   /** Customer id to hit (the bot only ever hits in self-defence, never anyone with connections). */
@@ -17,7 +18,7 @@ export interface BotOutput {
 /** Turn a bot decision into the same protocol messages a real client sends. */
 export function botMessages(o: BotOutput, rid: () => string): ClientMsg[] {
   const out: ClientMsg[] = [{ type: 'input', x: o.x, z: o.z, yaw: o.yaw, pitch: 0, seq: 0 }];
-  if (o.act) out.push({ type: 'act', rid: rid(), kind: o.act.kind, target: o.act.target });
+  if (o.act) out.push({ type: 'act', rid: rid(), kind: o.act.kind, target: o.act.target, ...(o.act.opt !== undefined ? { opt: o.act.opt } : {}) });
   if (o.drop) out.push({ type: 'drop', rid: rid() });
   if (o.buy) out.push({ type: 'buy', rid: rid(), item: o.buy });
   if (o.ready) out.push({ type: 'ready', ready: true });
@@ -32,7 +33,10 @@ const THROW_SPOT = { x: 12, z: 13.1 };
 /** Where an idle fill-in bot waits: inside the stockroom (the same fixed shell on every map), next to the crates. */
 const STANDBY = { x: 3.4, z: 3.4 };
 
-interface Goal { pos: { x: number; z: number }; kind: ActKind; target: Target; key: string }
+/** opt: extra choice sent with the action; wait: only walk to `pos` and stand there (escorting, waiting at the door). */
+interface Goal { pos: { x: number; z: number }; kind: ActKind; target: Target; key: string; opt?: number; wait?: boolean }
+/** Where a bot waits for the 免費袋子阿伯 to reach the door. */
+const DOOR_WAIT = { x: 12, z: 14.1 };
 
 /**
  * What the other fill-in bots in the room are doing, so they split the work instead of chasing the same task
@@ -140,13 +144,19 @@ export class Bot {
       return out;
     }
     if (goal.key !== this.goalKey) { this.goalKey = goal.key; this.path = findPath(me, goal.pos); this.stuck = 0; this.crowdT = 0; }
+    if (goal.wait) {
+      // escorting / waiting at the door: get there and stand still, facing the customer
+      const tc = goal.target.t === 'customer' ? s.customers.find(c => c.id === (goal.target as { id: number }).id) : null;
+      if (Math.hypot(goal.pos.x - me.x, goal.pos.z - me.z) < 0.9) { if (tc) out.yaw = Math.atan2(tc.x - me.x, tc.z - me.z); return out; }
+      return this.giveWay(s, me, this.walk(me, out, dt, goal.pos));
+    }
     const dist = goalDistance(s, me, goal);
     if (dist < SERVER_INTERACT_RANGE - 0.9) {
       const yaw = Math.atan2(goal.pos.x - me.x, goal.pos.z - me.z);
       // in range but standing in someone's face (the till is right next to the coffee machine / microwave):
       // walk on to the proper spot first, then start working (a busy bot stands still for seconds)
       if (this.crowdT < 1.5 && this.crowding(s, me) && Math.hypot(goal.pos.x - me.x, goal.pos.z - me.z) > 0.3 && goal.target.t !== 'customer') { this.crowdT += dt; const o = this.giveWay(s, me, this.walk(me, out, dt, goal.pos)); o.yaw = yaw; return o; }
-      if (this.cooldown <= 0) { out.act = { kind: goal.kind, target: goal.target }; this.cooldown = 0.35; }
+      if (this.cooldown <= 0) { out.act = { kind: goal.kind, target: goal.target, ...(goal.opt !== undefined ? { opt: goal.opt } : {}) }; this.cooldown = 0.35; }
       out.yaw = yaw;
       return out;
     }
@@ -330,7 +340,15 @@ export class Bot {
       return null;
     }
     if (k.kind === 'cutter' && ['queue', 'toRegister', 'atRegister'].includes(k.state)) return cust(k, 'askQueue');
+    // 借廁所大隊: only the leader matters (his followers go with him)
+    if (k.kind === 'toilet' && k.phase !== 1) return null;
+    // 發票對獎魔人 on the way to the 對獎機: walk next to him (he only moves while someone is with him)
+    if (k.kind === 'lottery' && k.state === 'toKiosk') return { ...cust(k, 'escort'), key: 'esc' + k.id, wait: true };
     if (canGrab && k.kind !== 'cutter' && (!k.heavy || k.stun > 0)) return cust(k, 'grab');
+    if (k.kind === 'lottery' && k.state === 'atRegister') return cust(k, 'escort');
+    if (k.kind === 'change' && k.state === 'atRegister') return { ...cust(k, 'exactChange'), opt: changeAnswer(k.look) };
+    if (k.kind === 'bagman' && k.state === 'toExit') return bagmanAtDoor(k) ? cust(k, 'stopBag') : { ...cust(k, 'stopBag'), pos: DOOR_WAIT, key: 'bagw' + k.id, wait: true };
+    if (k.kind === 'toilet' && (k.state === 'toToilet' || k.state === 'toilet')) return cust(k, 'toiletRule');
     if (k.kind === 'rager' && k.state === 'complain') return cust(k, 'calm');
     if (k.kind === 'streamer' && this.role !== 'cashier') return cust(k, 'stopFilm');
     if (k.kind === 'hog') return cust(k, 'checkBag');

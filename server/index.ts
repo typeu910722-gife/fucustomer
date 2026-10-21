@@ -13,6 +13,8 @@ import { Conn, Room, RoomCheckpoint } from '../shared/room.ts';
 import { FriendStore, StoreRegistry } from './stores.ts';
 import { isDifficulty } from '../shared/difficulty.ts';
 import { LicenseRegistry, verifyGoogleIdToken } from './auth.ts';
+import { CloudSaveStore } from './cloudsave.ts';
+import { CLOUD_MAX_BODY, type CloudRecord } from '../shared/cloudsave.ts';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -21,6 +23,9 @@ const STATIC_DIR = process.env.STATIC_DIR ?? path.join(ROOT, 'dist');
 const DATA_DIR = process.env.DATA_DIR ?? path.join(ROOT, 'data', 'rooms');
 const STORES_DIR = process.env.STORES_DIR ?? path.join(path.dirname(DATA_DIR), 'stores');
 const LICENSES_DIR = process.env.LICENSES_DIR ?? path.join(path.dirname(DATA_DIR), 'licenses');
+const CLOUDSAVES_DIR = process.env.CLOUDSAVES_DIR ?? path.join(path.dirname(DATA_DIR), 'cloudsaves');
+/** Test only: shorter minimum time between two cloud uploads of one account (seconds). */
+const CLOUD_MIN_MS = Number(process.env.BK_CLOUDSAVE_MIN_S) >= 0 && process.env.BK_CLOUDSAVE_MIN_S ? Number(process.env.BK_CLOUDSAVE_MIN_S) * 1000 : undefined;
 /** Google OAuth client ID (public, not a secret). Without it, Google sign-in is switched off. */
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? '';
 const MAX_ROOMS = Number(process.env.MAX_ROOMS ?? 500);
@@ -111,10 +116,34 @@ async function loadLicenses() {
   }
 }
 
-function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
+// ---------- 雲端備份 (cloud save; one slot per licence, see shared/cloudsave.ts) ----------
+const cloudWrites = new Map<string, Promise<void>>();
+const cloud = new CloudSaveStore({
+  ownerOf: s => licenses.ownerOf(s),
+  minIntervalMs: CLOUD_MIN_MS,
+  persist: (owner, rec) => {
+    const file = path.join(CLOUDSAVES_DIR, `${owner}.json`);
+    const next = (cloudWrites.get(owner) ?? Promise.resolve()).then(async () => {
+      try {
+        if (!rec) { await fs.unlink(file).catch(() => {}); return; }
+        await fs.mkdir(CLOUDSAVES_DIR, { recursive: true }); await fs.writeFile(file + '.tmp', JSON.stringify(rec)); await fs.rename(file + '.tmp', file);
+      } catch (e) { log('cloud save write failed', e); }
+    });
+    cloudWrites.set(owner, next);
+  },
+});
+async function loadCloudSaves() {
+  if (!existsSync(CLOUDSAVES_DIR)) return;
+  for (const f of await fs.readdir(CLOUDSAVES_DIR)) {
+    if (!/^[0-9a-f]{64}\.json$/.test(f)) continue;
+    try { cloud.load(f.slice(0, -5), JSON.parse(await fs.readFile(path.join(CLOUDSAVES_DIR, f), 'utf8')) as CloudRecord); } catch (e) { log('bad cloud save file', f, e); }
+  }
+}
+
+function readBody(req: IncomingMessage, max = 8192): Promise<Record<string, unknown>> {
   return new Promise(resolve => {
     let size = 0; const chunks: Buffer[] = [];
-    req.on('data', (c: Buffer) => { size += c.length; if (size > 8192) { req.destroy(); resolve({}); } else chunks.push(c); });
+    req.on('data', (c: Buffer) => { size += c.length; if (size > max) { req.destroy(); resolve({}); } else chunks.push(c); });
     req.on('end', () => { try { const v = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); resolve(v && typeof v === 'object' ? v : {}); } catch { resolve({}); } });
     req.on('error', () => resolve({}));
   });
@@ -122,7 +151,7 @@ function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
 const apiHits = new Map<string, { n: number; at: number }>();
 async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL) {
   const send = (status: number, body: unknown) => {
-    res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, x-owner-token, x-session', 'access-control-allow-methods': 'GET, POST, PUT, OPTIONS' });
+    res.writeHead(status, { 'content-type': 'application/json', 'access-control-allow-origin': '*', 'access-control-allow-headers': 'content-type, x-owner-token, x-session', 'access-control-allow-methods': 'GET, POST, PUT, DELETE, OPTIONS' });
     res.end(status === 204 ? undefined : JSON.stringify(body));
   };
   if (req.method === 'OPTIONS') return send(204, {});
@@ -153,6 +182,15 @@ async function handleApi(req: IncomingMessage, res: ServerResponse, url: URL) {
   if (parts[1] === 'license') {
     if (!parts[2] && req.method === 'PUT') return out(licenses.update(req.headers['x-session'], await readBody(req)));
     if (parts[2] && req.method === 'GET') return out(licenses.get(decodeURIComponent(parts[2])));
+  }
+  if (parts[1] === 'cloudsave' && !parts[2]) {
+    const session = req.headers['x-session'];
+    if (req.method === 'PUT') {
+      if (Number(req.headers['content-length'] ?? 0) > CLOUD_MAX_BODY) return send(413, { error: '存檔太大了，無法上傳到雲端（請改用存檔碼備份）' });
+      return out(cloud.put(session, await readBody(req, CLOUD_MAX_BODY)));
+    }
+    if (req.method === 'GET') return out(cloud.get(session));
+    if (req.method === 'DELETE') return out(cloud.delete(session));
   }
   if (parts[1] === 'stores') {
     const code = (parts[2] ?? '').toUpperCase();
@@ -299,4 +337,5 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 await restoreRooms();
 await loadStores();
 await loadLicenses();
+await loadCloudSaves();
 http.listen(PORT, () => log(`FUCustomer server on :${PORT} (ws path /ws, static ${STATIC_DIR})`));

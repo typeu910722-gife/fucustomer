@@ -6,6 +6,8 @@ import {
   WEEK_RE, addExp, buildShiftConfig, chapterUnlocked, dailyUnlocked, starsFor,
 } from './career.ts';
 import { addHandled } from './karendex.ts';
+import { GEN_KINDS, type GenKind } from './constants.ts';
+import { SPECIAL_DAYS, SPECIAL_IDS, applySpecialDay, type SpecialId } from './genkarens.ts';
 import { MAPS } from './maps/index.ts';
 
 export const WEEKLY_ID = 'weekly';
@@ -53,8 +55,11 @@ export function isoWeek(d = new Date()): string {
 export function weeklySeed(week: string) { let h = 2166136261; for (const ch of 'fucustomer-weekly-' + week) { h ^= ch.charCodeAt(0); h = Math.imul(h, 16777619); } return h >>> 0; }
 function seededRng(seed: number) { let a = seed; return () => { a = (a + 0x6d2b79f5) | 0; let t = Math.imul(a ^ (a >>> 15), 1 | a); t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t; return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }; }
 
+/** From this ISO week on, a week may also be a 特殊營業日 and always brings one 通用新奧客 (earlier weeks keep their plans). */
+export const ROUND27_WEEK = '2026-W44';
+
 /** Twist, store and goals for a week — the same for every player. */
-export function weeklyPlan(week: string) {
+export function weeklyPlan(week: string): { week: string; twist: TwistId; map: string; goals: WeeklyGoal[]; special?: SpecialId; gen?: GenKind } {
   const rng = seededRng(weeklySeed(week));
   const twist = TWIST_IDS[Math.floor(rng() * TWIST_IDS.length)];
   // 寒流來襲 needs a store that makes something hot
@@ -67,6 +72,18 @@ export function weeklyPlan(week: string) {
     { id: 'goal', text: '達成營業額目標', check: (r: ShiftResult) => r.won },
     tg, extra,
   ].map((g, i) => ({ ...g, points: GOAL_POINTS[i], check: (r: ShiftResult) => r.won && g.check(r) })); // every goal needs a finished (won) shift
+  // round 27: a separate seeded roll (twist, store and goals above are unchanged): about two weeks in seven also run
+  // as a 特殊營業日, and every week brings one of the general karens
+  if (WEEK_RE.test(week) && week >= ROUND27_WEEK) {
+    const r2 = seededRng(weeklySeed(week + '#r27'));
+    let special: SpecialId | undefined;
+    if (r2() < 2 / 7) {
+      special = SPECIAL_IDS[Math.floor(r2() * SPECIAL_IDS.length)];
+      if (special === 'typhoon' && twist === 'typhoon') special = 'newyear'; // already a rainy week
+    }
+    const gen = GEN_KINDS[Math.floor(r2() * GEN_KINDS.length)];
+    return { week, twist, map, goals, ...(special ? { special } : {}), gen };
+  }
   return { week, twist, map, goals };
 }
 
@@ -103,9 +120,12 @@ export function buildWeeklyConfig(p: CareerProfile, week: string): ShiftConfig {
   const specific = new Set(MAPS.flatMap(m => m.karens ?? []));
   cfg.karens = [...new Set([...cfg.karens.filter(k => !specific.has(k)), ...(mapDef.karens ?? [])])];
   cfg.maxKarens = Math.max(1, cfg.maxKarens);
-  const mul = applyTwist(cfg, plan.twist);
+  let mul = applyTwist(cfg, plan.twist);
+  if (plan.special) mul *= applySpecialDay(cfg, plan.special);
+  if (plan.gen) cfg.karens = [...new Set([...cfg.karens, plan.gen])];
   cfg.goal = Math.round(base.goal * (WEEKLY_LENGTH / base.length) * mul * (mapDef.goalScale ?? 1) / 5) * 5;
-  cfg.hints = [`${tw.icon} ${tw.name}：${tw.desc}`, `本週目標：${plan.goals.map(g => g.text).join('／')}`];
+  cfg.hints = [`${tw.icon} ${tw.name}：${tw.desc}`, ...(plan.special ? [SPECIAL_DAYS[plan.special].rules] : []), `本週目標：${plan.goals.map(g => g.text).join('／')}`];
+  if (plan.special) cfg.title += `・${SPECIAL_DAYS[plan.special].icon}${SPECIAL_DAYS[plan.special].name}`;
   cfg.weekly = { week, twist: plan.twist };
   return cfg;
 }

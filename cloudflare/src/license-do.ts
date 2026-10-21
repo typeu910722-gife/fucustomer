@@ -11,6 +11,11 @@ import { randomToken, sha256Hex } from './auth.ts';
 import type { Env } from './env.ts';
 import { getCosmetic } from '../../shared/shop.ts';
 import { applyWeekBadges, viewWeekBadges } from '../../shared/license-card.ts';
+import {
+  CLOUD_ERR, CLOUD_MAX_SLOTS, CLOUD_MIN_INTERVAL_MS, CLOUD_RETENTION_MS, CloudOpsCounter, type CloudRecord, type CloudView,
+  applyUpload, checkUploadQuota, utcDay, viewRecord,
+} from '../../shared/cloudsave.ts';
+import type { SaveSummary } from '../../shared/savecode.ts';
 
 export interface LicenseCard {
   no: string; name: string; level: number; rank: string; title: string; avatar: string;
@@ -63,7 +68,10 @@ export class LicenseDO extends DurableObject<Env> {
     this.sql.exec(`CREATE TABLE IF NOT EXISTS licenses (owner TEXT PRIMARY KEY, no TEXT NOT NULL UNIQUE, data TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (hash TEXT NOT NULL UNIQUE, owner TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS sessions_owner ON sessions(owner);
-      CREATE TABLE IF NOT EXISTS links (code TEXT PRIMARY KEY, poll_hash TEXT NOT NULL UNIQUE, expires INTEGER NOT NULL, owner TEXT, session TEXT);`);
+      CREATE TABLE IF NOT EXISTS links (code TEXT PRIMARY KEY, poll_hash TEXT NOT NULL UNIQUE, expires INTEGER NOT NULL, owner TEXT, session TEXT);
+      CREATE TABLE IF NOT EXISTS cloudsaves (owner TEXT PRIMARY KEY, updated INTEGER NOT NULL, data TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS cloudsaves_updated ON cloudsaves(updated);
+      CREATE TABLE IF NOT EXISTS meta (k TEXT PRIMARY KEY, v TEXT NOT NULL);`);
   }
 
   private byOwner(owner: string): LicenseRecord | null {
@@ -186,6 +194,79 @@ export class LicenseDO extends DurableObject<Env> {
   async logout(session: unknown): Promise<void> {
     if (typeof session !== 'string' || !session || session.length > 200) return;
     this.sql.exec('DELETE FROM sessions WHERE hash = ?', await sha256Hex(session));
+  }
+
+  // ---------- 雲端備份 (cloud save): one slot per licence owner, rules in shared/cloudsave.ts ----------
+  // Lives in this object (a table next to the licences) so every cloud request is ONE Durable Object request: the session
+  // has to be resolved here anyway. The worker validates and re-encodes the code before calling cloudPut.
+  // Free-plan budget: a server-wide daily request counter (in memory, written to `meta` every 25 requests so an eviction
+  // loses at most 25), a slot cap kept in `meta`, and a once-a-day prune of slots older than CLOUD_RETENTION_MS.
+  private cloudOps: CloudOpsCounter | null = null;
+  private cloudPruned = '';
+  private metaGet(k: string) { return this.sql.exec<{ v: string }>('SELECT v FROM meta WHERE k = ?', k).toArray()[0]?.v ?? null; }
+  private metaSet(k: string, v: string) { this.sql.exec('INSERT INTO meta (k, v) VALUES (?, ?) ON CONFLICT(k) DO UPDATE SET v = excluded.v', k, v); }
+  private async cloudGate(session: unknown): Promise<R<string>> {
+    if (typeof session !== 'string' || !session || session.length > 200) return CLOUD_ERR.auth;
+    const row = this.sql.exec<{ owner: string }>('SELECT owner FROM sessions WHERE hash = ?', await sha256Hex(session)).toArray()[0];
+    if (!row) return CLOUD_ERR.auth;
+    const t = Date.now();
+    if (!this.cloudOps) {
+      this.cloudOps = new CloudOpsCounter();
+      const saved = JSON.parse(this.metaGet('cloud_ops') ?? 'null') as { day: string; n: number } | null;
+      if (saved && saved.day === utcDay(t)) { this.cloudOps.day = saved.day; this.cloudOps.n = saved.n; }
+    }
+    if (!this.cloudOps.take(t)) return CLOUD_ERR.busy;
+    if (this.cloudOps.n % 25 === 0) this.metaSet('cloud_ops', JSON.stringify({ day: this.cloudOps.day, n: this.cloudOps.n }));
+    return { ok: true, value: row.owner };
+  }
+  private cloudRec(owner: string): CloudRecord | null {
+    const row = this.sql.exec<{ data: string }>('SELECT data FROM cloudsaves WHERE owner = ?', owner).toArray()[0];
+    return row ? JSON.parse(row.data) : null;
+  }
+  private cloudSlots(): number {
+    const v = this.metaGet('cloud_slots');
+    if (v !== null) return Number(v);
+    const n = this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM cloudsaves').toArray()[0].n;
+    this.metaSet('cloud_slots', String(n));
+    return n;
+  }
+  private cloudPrune(t: number) {
+    const d = utcDay(t);
+    if (this.cloudPruned === d) return;
+    this.cloudPruned = d;
+    if (this.metaGet('cloud_pruned') === d) return;
+    this.metaSet('cloud_pruned', d);
+    const gone = this.sql.exec<{ n: number }>('SELECT COUNT(*) AS n FROM cloudsaves WHERE updated < ?', t - CLOUD_RETENTION_MS).toArray()[0].n;
+    if (gone) {
+      this.sql.exec('DELETE FROM cloudsaves WHERE updated < ?', t - CLOUD_RETENTION_MS);
+      this.metaSet('cloud_slots', String(Math.max(0, this.cloudSlots() - gone)));
+    }
+  }
+  /** `code`/`summary` were produced by prepareUpload() in the worker (validated, re-encoded, entitlement-free). */
+  async cloudPut(session: unknown, code: string, summary: SaveSummary): Promise<R<{ at: number; size: number; summary: SaveSummary; used: number; max: number }>> {
+    const g = await this.cloudGate(session); if (!g.ok) return g;
+    const owner = g.value, t = Date.now();
+    this.cloudPrune(t);
+    const rec = this.cloudRec(owner);
+    if (!rec && this.cloudSlots() >= CLOUD_MAX_SLOTS) return CLOUD_ERR.full;
+    const minS = Number(this.env.BK_CLOUDSAVE_MIN_S);
+    const q = checkUploadQuota(rec, t, this.env.BK_CLOUDSAVE_MIN_S && minS >= 0 ? minS * 1000 : CLOUD_MIN_INTERVAL_MS); if (!q.ok) return q;
+    const next = applyUpload(rec, code, summary, t);
+    this.sql.exec('INSERT INTO cloudsaves (owner, updated, data) VALUES (?, ?, ?) ON CONFLICT(owner) DO UPDATE SET updated = excluded.updated, data = excluded.data', owner, t, JSON.stringify(next));
+    if (!rec) this.metaSet('cloud_slots', String(this.cloudSlots() + 1));
+    const v = viewRecord(next, t);
+    return { ok: true, value: { at: t, size: next.latest.size, summary, used: v.quota.used, max: v.quota.max } };
+  }
+  async cloudGet(session: unknown): Promise<R<CloudView>> {
+    const g = await this.cloudGate(session); if (!g.ok) return g;
+    const rec = this.cloudRec(g.value);
+    return rec ? { ok: true, value: viewRecord(rec, Date.now()) } : CLOUD_ERR.none;
+  }
+  async cloudDelete(session: unknown): Promise<R<{ deleted: boolean }>> {
+    const g = await this.cloudGate(session); if (!g.ok) return g;
+    const had = this.sql.exec('SELECT 1 FROM cloudsaves WHERE owner = ?', g.value).toArray().length > 0;
+    if (had) { this.sql.exec('DELETE FROM cloudsaves WHERE owner = ?', g.value); this.metaSet('cloud_slots', String(Math.max(0, this.cloudSlots() - 1))); }
+    return { ok: true, value: { deleted: had } };
   }
 
   async get(no: string): Promise<R<LicenseCard>> {

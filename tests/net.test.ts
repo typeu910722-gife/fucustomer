@@ -3,12 +3,15 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn, ChildProcess } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import WebSocket from 'ws';
 import type { ClientMsg, GameEvent, ServerMsg, Snapshot, LobbyState } from '../shared/protocol.ts';
 import { Bot, botMessages } from '../shared/bot.ts';
+import { K, exportSaveCode, parseSaveCode } from '../shared/savecode.ts';
+import { newProfile } from '../shared/career.ts';
 
 const PORT = 18000 + Math.floor(Math.random() * 2000);
 const URL = `ws://127.0.0.1:${PORT}/ws`;
@@ -94,7 +97,12 @@ async function start(cs: Client[]) {
 const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
 // host-AFK threshold shortened to 4 s for the vote test (the real game uses HOST_AFK_S = 90)
-const TEST_ENV = { BK_HOST_AFK_S: '4' };
+// 雲端備份: a signed-in licence is seeded on disk (Google sign-in itself needs Google's keys; auth.test.ts covers it)
+const LIC_DIR = mkdtempSync(path.join(tmpdir(), 'bk-lic-')), CLOUD_DIR = mkdtempSync(path.join(tmpdir(), 'bk-cloud-'));
+const CLOUD_SESSION = 'net-test-session-' + PORT;
+const CLOUD_OWNER = createHash('sha256').update('google:net-test').digest('hex');
+writeFileSync(path.join(LIC_DIR, CLOUD_OWNER + '.json'), JSON.stringify({ owner: CLOUD_OWNER, no: '1234-5678', sessions: [createHash('sha256').update(CLOUD_SESSION).digest('hex')], createdAt: 1, updatedAt: 1, name: '雲端', level: 1, rank: '', title: '', avatar: '🧑', stars: 0, achievements: 0, storeName: '', quote: '' }));
+const TEST_ENV = { BK_HOST_AFK_S: '4', LICENSES_DIR: LIC_DIR, CLOUDSAVES_DIR: CLOUD_DIR, BK_CLOUDSAVE_MIN_S: '0' };
 before(async () => { await startServer(TEST_ENV); });
 after(async () => { await stopServer(); });
 
@@ -516,4 +524,30 @@ test('server restart: room restored from checkpoint, player rejoins with token',
   assert.equal(a2.snap!.day, day);
   assert.equal(a2.snap!.phase, 'prep');
   a2.close();
+});
+
+test('cloud save HTTP API: CORS, sign-in required, size cap, upload/download, survives a restart, delete', async () => {
+  const call = async (method: string, body?: unknown, session?: string, raw?: string) => {
+    const headers: Record<string, string> = { 'content-type': 'application/json' };
+    if (session) headers['x-session'] = session;
+    const r = await fetch(HTTP + '/api/cloudsave', { method, headers, body: raw ?? (body === undefined ? undefined : JSON.stringify(body)) });
+    return { status: r.status, methods: r.headers.get('access-control-allow-methods'), data: await r.json().catch(() => ({})) as Record<string, any> };
+  };
+  assert.match(String((await call('OPTIONS')).methods), /DELETE/);
+  const code = exportSaveCode({ [K.career]: JSON.stringify({ ...newProfile(), level: 7 }) });
+  assert.equal((await call('PUT', { code })).status, 401);
+  assert.equal((await call('GET', undefined, 'nope')).status, 401);
+  assert.equal((await call('DELETE')).status, 401);
+  assert.equal((await call('GET', undefined, CLOUD_SESSION)).status, 404);
+  assert.equal((await call('PUT', { code: 'FUC1-xx' }, CLOUD_SESSION)).status, 400);
+  assert.equal((await call('PUT', undefined, CLOUD_SESSION, JSON.stringify({ code: 'x'.repeat(80_000) }))).status, 413);
+  const up = await call('PUT', { code }, CLOUD_SESSION);
+  assert.equal(up.status, 200); assert.equal(up.data.summary.level, 7);
+  await stopServer();
+  await startServer(TEST_ENV);
+  const g = await call('GET', undefined, CLOUD_SESSION);
+  assert.equal(g.status, 200, 'kept across a restart'); assert.equal(g.data.latest.summary.level, 7); assert.equal(g.data.prev, null);
+  assert.ok(parseSaveCode(g.data.latest.code).ok);
+  assert.equal((await call('DELETE', undefined, CLOUD_SESSION)).data.deleted, true);
+  assert.equal((await call('GET', undefined, CLOUD_SESSION)).status, 404);
 });

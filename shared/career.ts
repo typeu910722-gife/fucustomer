@@ -8,6 +8,8 @@ import { ShopState, newShop, sanitizeShop } from './shop.ts';
 import { addHandled, sanitizeDex } from './karendex.ts';
 import { ARCS, type ArcState } from './regulars.ts';
 import { type StoreProg, sanitizeBranches, sanitizeFreeProg, sanitizeProg } from './progression.ts';
+import { GEN_KINDS, type GenKind } from './constants.ts';
+import { SPECIAL_DAYS, SPECIAL_IDS, type SpecialId, applySpecialDay } from './genkarens.ts';
 
 export type Ability = 'hit' | 'grab' | 'spin' | 'ultimate';
 
@@ -54,6 +56,8 @@ export interface ShiftConfig {
   spillMul?: number;
   /** Set for the weekly challenge (shared/weekly.ts). */
   weekly?: { week: string; twist: string };
+  /** 特殊營業日 (shared/specialdays.ts): 颱風夜 / 跨年夜 rules in the simulation. Omitted = an ordinary day. */
+  special?: 'typhoon' | 'newyear';
 }
 
 // ---------------- ranks & levels ----------------
@@ -125,7 +129,11 @@ export interface CareerProfile {
   arcs: Record<string, ArcState>;
   /** 店面等級 + 個人紀錄 of each free-play store, by map id (progression.ts). Old saves: none. */
   freeProg: Record<string, StoreProg>;
+  /** 特殊營業日 (specialdays.ts) played from free play: per day id, today's reward / best and total wins. Old saves: none. */
+  special: Record<string, SpecialState>;
 }
+/** One 特殊營業日's record: the date of the last run, whether that day's reward was paid, best revenue that day, wins. */
+export interface SpecialState { date: string; best: number; rewarded: boolean; wins: number }
 export function newProfile(): CareerProfile {
   return {
     version: 1, level: 1, exp: 0, wallet: 120, skillPoints: 0,
@@ -133,7 +141,7 @@ export function newProfile(): CareerProfile {
     stars: {}, clears: {}, stats: { shifts: 0, wins: 0, served: 0, ejected: 0, karens: 0, revenue: 0 }, endlessBest: 0, title: '',
     achievements: [], daily: { date: '', best: 0, rewarded: false, streak: 0, lastWin: '', wins: 0 },
     court: { trials: 0, fines: 0, acquittals: 0 }, story: [],
-    store: null, storeHistory: { opened: 0, closed: 0, lost: 0, lastReason: '' }, shop: newShop(), dex: {}, weekly: newWeekly(), arcs: {}, freeProg: {},
+    store: null, storeHistory: { opened: 0, closed: 0, lost: 0, lastReason: '' }, shop: newShop(), dex: {}, weekly: newWeekly(), arcs: {}, freeProg: {}, special: {},
   };
 }
 export function sanitizeProfile(v: unknown): CareerProfile {
@@ -166,6 +174,7 @@ export function sanitizeProfile(v: unknown): CareerProfile {
   p.weekly = sanitizeWeekly(o.weekly); // saves from before the weekly challenge: nothing played yet
   p.arcs = sanitizeArcs(o.arcs); // saves from before the 常客奧客 arcs: none started
   p.freeProg = sanitizeFreeProg(o.freeProg); // saves from before store levels: every store at Lv1
+  p.special = sanitizeSpecialState(o.special); // saves from before the 特殊營業日: none played
   if (Array.isArray(o.achievements)) p.achievements = [...new Set(o.achievements.filter((a): a is string => typeof a === 'string' && /^[A-Z0-9_]{1,24}$/.test(a)))].slice(0, 64);
   const d = o.daily, isDate = (x: unknown): x is string => typeof x === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(x);
   if (d && typeof d === 'object') {
@@ -374,7 +383,7 @@ export function buildShiftConfig(p: CareerProfile, id: string): ShiftConfig {
   if (id === ENDLESS_ID) {
     return {
       mode: 'shift', id, title: '無限夜班', chapter: 7, length: 1e6, goal: 0,
-      karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'], firstKaren: 25, karenEvery: 40, maxKarens: 2,
+      karens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger', ...GEN_KINDS], firstKaren: 25, karenEvery: 40, maxKarens: 2,
       spawnEvery: 6.5, maxCustomers: 20, foods: ['coffee', 'meal'], foodChance: 0.35, events: ['rush', 'outage'], firstEvent: 50,
       register2: true, abilities: abilitiesAt(p.level),
       start: { money: 120, rating: 3, backstock: { drinks: 40, snacks: 40, bento: 30 }, shelves: { drinks: 10, snacks: 10, bento: 8 } },
@@ -403,7 +412,7 @@ export function buildShiftConfig(p: CareerProfile, id: string): ShiftConfig {
 
 // ---------------- daily challenge ----------------
 export const DAILY_ID = 'daily';
-export type DailyModId = 'outages' | 'streamers' | 'chargers' | 'rush' | 'coffee' | 'lowstock' | 'tips';
+export type DailyModId = 'outages' | 'streamers' | 'chargers' | 'rush' | 'coffee' | 'lowstock' | 'tips' | SpecialId;
 export const DAILY_MODS: Record<DailyModId, { name: string; desc: string }> = {
   outages: { name: '停電頻繁', desc: '每 24 秒就可能停電一次' },
   streamers: { name: '全是直播主', desc: '奧客只剩直播客，而且多一個' },
@@ -412,8 +421,14 @@ export const DAILY_MODS: Record<DailyModId, { name: string; desc: string }> = {
   coffee: { name: '咖啡狂熱', desc: '大部分客人都要咖啡，目標 +25%' },
   lowstock: { name: '缺貨危機', desc: '倉庫庫存只有一半' },
   tips: { name: '小費日', desc: '小費 +60%，目標 +12%' },
+  // 特殊營業日 (round 27): rolled separately (see dailyPlan), never part of the ordinary pool
+  typhoon: { name: `${SPECIAL_DAYS.typhoon.icon}${SPECIAL_DAYS.typhoon.name}`, desc: SPECIAL_DAYS.typhoon.desc },
+  newyear: { name: `${SPECIAL_DAYS.newyear.icon}${SPECIAL_DAYS.newyear.name}`, desc: SPECIAL_DAYS.newyear.desc },
 };
-const DAILY_MOD_IDS = Object.keys(DAILY_MODS) as DailyModId[];
+/** The ordinary modifier pool (its order and size decide every date's plan: keep it as it was). */
+const DAILY_MOD_IDS = (Object.keys(DAILY_MODS) as DailyModId[]).filter(m => !(SPECIAL_IDS as string[]).includes(m));
+/** From this date on, daily challenges can be a 特殊營業日 and bring a 通用新奧客 (earlier dates keep their old plans). */
+export const ROUND27_DATE = '2026-10-22';
 
 /** Daily challenge opens after the first chapter. */
 export function dailyUnlocked(p: CareerProfile) { return (p.stars['1-5'] ?? 0) > 0; }
@@ -442,7 +457,16 @@ export function dailyPlan(p: CareerProfile, date: string) {
     mods.push(rest[Math.floor(rng() * rest.length)]);
   }
   let open = 1; for (const c of CHAPTERS) if (chapterUnlocked(p, c.n).ok) open = c.n;
-  return { date, scene, difficulty: Math.min(scene, open), mods, map };
+  const difficulty = Math.min(scene, open);
+  // round 27: a separate seeded roll (the rolls above stay exactly as they were): about one day in five is a
+  // 特殊營業日 (it takes the second modifier's place), and harder days may bring one of the general karens
+  let gen: GenKind | undefined;
+  if (date >= ROUND27_DATE) {
+    const r2 = seededRng(dailySeed(date + '#r27'));
+    if (r2() < 0.2) { const sp = SPECIAL_IDS[Math.floor(r2() * SPECIAL_IDS.length)]; mods.splice(1, 1, sp); }
+    if (difficulty >= 3 && r2() < 0.6) gen = GEN_KINDS[Math.floor(r2() * GEN_KINDS.length)];
+  }
+  return { date, scene, difficulty, mods, map, ...(gen ? { gen } : {}) };
 }
 
 export function buildDailyConfig(p: CareerProfile, date: string): ShiftConfig {
@@ -463,6 +487,9 @@ export function buildDailyConfig(p: CareerProfile, date: string): ShiftConfig {
     if (m === 'lowstock') { const st = cfg.start.backstock as Record<string, number>; for (const k of Object.keys(st)) st[k] = Math.ceil(st[k] / 2); }
     if (m === 'tips') { cfg.mods = { ...cfg.mods, tips: cfg.mods.tips * 1.6 }; goal *= 1.12; }
   }
+  const oneKind = plan.mods.includes('streamers') || plan.mods.includes('chargers');
+  for (const m of plan.mods) if ((SPECIAL_IDS as string[]).includes(m)) goal *= applySpecialDay(cfg, m as SpecialId, oneKind);
+  if (plan.gen && !oneKind) cfg.karens = [...new Set([...cfg.karens, plan.gen])];
   // store-specific karens only appear in their own store
   const specific = new Set(MAPS.flatMap(m => m.karens ?? []));
   cfg.karens = cfg.karens.filter(k => !specific.has(k) || (mapDef.karens ?? []).includes(k));
@@ -470,7 +497,7 @@ export function buildDailyConfig(p: CareerProfile, date: string): ShiftConfig {
   if (!plan.mods.includes('streamers') && !plan.mods.includes('chargers')) cfg.karens = [...new Set([...cfg.karens, ...(mapDef.karens ?? [])])];
   if (!cfg.karens.length) { cfg.karens = ['cutter']; cfg.maxKarens = Math.max(1, cfg.maxKarens); }
   cfg.goal = Math.round(goal * (mapDef.goalScale ?? 1) / 5) * 5;
-  cfg.hints = [`今日修飾：${plan.mods.map(m => DAILY_MODS[m].name).join('＋')}。每天第一次達標可領獎勵。`];
+  cfg.hints = [`今日修飾：${plan.mods.map(m => DAILY_MODS[m].name).join('＋')}。每天第一次達標可領獎勵。`, ...plan.mods.filter((m): m is SpecialId => (SPECIAL_IDS as string[]).includes(m)).map(m => SPECIAL_DAYS[m].rules)];
   cfg.daily = { date, mods: plan.mods, scene: plan.scene };
   return cfg;
 }
@@ -490,6 +517,8 @@ export interface ShiftResult {
   week?: string;
   /** Karens handled this shift, by kind (for the 奧客圖鑑). */
   handled?: Record<string, number>;
+  /** 特殊營業日 that was running (for its reward). */
+  special?: string;
 }
 /** Star thresholds (career-only; saved stars are just numbers, so changing these never breaks a save). */
 export const STAR_RATING = 2.8, STAR_CHAOS = 60, STAR_REVENUE = 1.15;
@@ -639,6 +668,20 @@ export function sanitizeWeekly(v: unknown): WeeklyState {
   return w;
 }
 
+
+/** 特殊營業日 records: only known day ids, sane numbers (unknown / junk dropped; old saves → {}). */
+export function sanitizeSpecialState(v: unknown): Record<string, SpecialState> {
+  const out: Record<string, SpecialState> = {};
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return out;
+  const int = (x: unknown, lo: number, hi: number) => (typeof x === 'number' && Number.isFinite(x) ? Math.max(lo, Math.min(hi, Math.floor(x))) : lo);
+  for (const id of SPECIAL_IDS) {
+    const o = (v as Record<string, unknown>)[id] as Partial<SpecialState> | undefined;
+    if (!o || typeof o !== 'object') continue;
+    const date = typeof o.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(o.date) ? o.date : '';
+    out[id] = { date, best: date ? int(o.best, 0, 1e7) : 0, rewarded: !!date && o.rewarded === true, wins: int(o.wins, 0, 1e6) };
+  }
+  return out;
+}
 
 /** Arc progress: stages cleared, pre-shift scenes already shown, and the shift count when the last stage was cleared. */
 export function sanitizeArcs(v: unknown): Record<string, ArcState> {

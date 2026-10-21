@@ -94,7 +94,19 @@ export const PREP_SECONDS = 60;
 export const CLOSING_MAX_SECONDS = 60;
 export const DAILY_RENT = 60;
 
-export type KarenKind = 'cutter' | 'rager' | 'streamer' | 'hog' | 'litterer' | 'charger' | 'custom' | 'fickle' | 'tryhard' | 'boss' | SigKind;
+export type KarenKind = 'cutter' | 'rager' | 'streamer' | 'hog' | 'litterer' | 'charger' | 'custom' | 'fickle' | 'tryhard' | 'boss' | GenKind | SigKind;
+/**
+ * 通用新奧客 (round 27): general karens that can turn up in any store, each with its own way of being handled
+ * (sim.ts「general karens」section). They stay out of the main story's early chapters; daily / weekly / special days,
+ * free play, co-op business days and the endless night bring them in.
+ *   lottery – blocks the till checking receipt numbers; walk him over to the 對獎機 (stay close or he wanders back)
+ *   change  – counts her change coin by coin at the till; count with her (slow) or hand over exact change (quick-time)
+ *   bagman  – stuffs free bags and goods into his bag, then heads out: can only be stopped at the door
+ *   toilet  – a group that floods the restroom; talk the leader (🚩) round and the whole group follows
+ */
+export type GenKind = 'lottery' | 'change' | 'bagman' | 'toilet';
+export const GEN_KINDS: GenKind[] = ['lottery', 'change', 'bagman', 'toilet'];
+export function isGen(k: string): k is GenKind { return (GEN_KINDS as string[]).includes(k); }
 const BASE_KAREN_INFO: Record<Exclude<KarenKind, SigKind>, { name: string; hint: string; how: string }> = {
   cutter: { name: '插隊奧客', hint: '有人插隊！其他顧客耐心快速下降', how: '靠近按互動「請排隊」' },
   rager: { name: '退貨大鬧', hint: '客訴怒氣上升中！滿了會砸店', how: '互動「安撫」（可多人同時），或次要鍵發折價券 $30' },
@@ -106,6 +118,10 @@ const BASE_KAREN_INFO: Record<Exclude<KarenKind, SigKind>, { name: string; hint:
   fickle: { name: '改單達人', hint: '飲料做好了又要改甜度冰塊，一杯接一杯', how: '再做一杯給他（第二杯就收），或互動「推薦招牌」讓他直接決定' },
   tryhard: { name: '試穿狂', hint: '霸佔試衣間試穿一大堆，衣服丟得到處都是', how: '靠近互動「限試穿 3 件」，他就會挑一件去結帳' },
   boss: { name: '奧客之王', hint: '傳說中的奧客之王駕到！他會分階段鬧事', how: '依階段處理：請排隊→安撫→制止拍攝→清掉小弟→丟出門或全店退散' },
+  lottery: { name: '發票對獎魔人', hint: '在收銀台拿出一疊發票一張一張對號碼，後面整排都結不了帳', how: '對他互動「帶他去對獎機」，然後跟在他旁邊走過去（離太遠他會跑回收銀台插隊）' },
+  change: { name: '找零計較姐', hint: '結帳時要你找零一個一個數給她看，數錯還要重來', how: '互動「陪她數零錢」（很慢），或按次要鍵「找剛好的零錢」選對組合，一次搞定直接結帳' },
+  bagman: { name: '免費袋子阿伯', hint: '一路抽購物袋、順手把商品塞進袋子裡，裝滿就往門口走', how: '他在店裡會裝傻，要等他走到門口再互動「攔下檢查袋子」，他就得把東西拿去結帳' },
+  toilet: { name: '借廁所大隊', hint: '一整團衝進廁所，馬桶塞住水一直淹出來', how: '找到舉旗的領隊 🚩 互動「廁所限消費使用」，整團就會跟他去買東西；只請團員只會走一個' },
 };
 /** Every karen's name, warning and how to handle it (store-signature karens come from sigkarens.ts). */
 export const KAREN_INFO = {

@@ -118,6 +118,32 @@ const BUILDERS: Record<string, (o: THREE.Group) => void> = {
     add(bag, box(0.3, 0.4, 0.16), 0x5f3dc4, 0, 0, 0);
     for (const x of [-0.11, 0.11]) add(bag, cyl(0.025, 0.025, 0.02, 6), 0x212529, x, -0.21, 0, 0, 0, Math.PI / 2);
   },
+  // ---- general karens (round 27) ----
+  lottery(o) { // a fan of receipts, and a rubber-banded stack of more
+    for (let i = 0; i < 5; i++) add(o, box(0.07, 0.003, 0.15), 0xffffff, -0.06 + i * 0.03, 0.02 + i * 0.004, 0.08, 0, (i - 2) * 0.22, 0);
+    add(o, box(0.08, 0.05, 0.16), 0xf8f9fa, 0.02, -0.05, 0.02);
+    add(o, box(0.085, 0.012, 0.012), 0xe03131, 0.02, -0.05, 0.02);
+  },
+  change(o) { // an open coin purse and a coin pinched in the fingers
+    add(o, sph(0.06), 0xd6336c, 0, -0.03, 0.06);
+    add(o, tor(0.045, 0.008, Math.PI), 0xfab005, 0, 0.02, 0.06, Math.PI / 2);
+    add(o, cyl(0.022, 0.022, 0.005, 10), 0xfcc419, 0.05, 0.07, 0.08, Math.PI / 2);
+  },
+  bagman(o) { // a bulging plastic shopping bag stuffed with more bags (and goods)
+    add(o, tor(0.05, 0.008, Math.PI), 0xf8f9fa, 0, -0.02, 0.05);
+    add(o, sph(0.17), 0xf1f3f5, 0, -0.24, 0.06);
+    add(o, sph(0.1), 0xffd43b, 0.06, -0.14, 0.1);
+    add(o, sph(0.09), 0x74c0fc, -0.07, -0.13, 0.08);
+  },
+  toilet(o) { // the tour leader's little flag on a telescopic pole
+    add(o, cyl(0.01, 0.01, 0.7), 0xadb5bd, 0, 0.32, 0.04);
+    add(o, box(0.2, 0.13, 0.008), 0xe03131, 0.1, 0.6, 0.04);
+    add(o, sph(0.02), 0xfab005, 0, 0.68, 0.04);
+  },
+  toiletMember(o) { // a roll of toilet paper, ready
+    add(o, cyl(0.055, 0.055, 0.1, 10), 0xffffff, 0, 0.02, 0.06, 0, 0, Math.PI / 2);
+    add(o, cyl(0.02, 0.02, 0.102, 8), 0xced4da, 0, 0.02, 0.06, 0, 0, Math.PI / 2);
+  },
 };
 
 /** A held prop for a store-signature karen, or null if this kind has none. */

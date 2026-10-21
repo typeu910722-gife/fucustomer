@@ -16,7 +16,9 @@ export type ActKind =
   | 'checkout' | 'brew' | 'deliver' | 'takeBox' | 'stock' | 'returnBox' | 'takeMop' | 'returnMop'
   | 'clean' | 'calm' | 'coupon' | 'askQueue' | 'stopFilm' | 'checkBag' | 'pickup' | 'heat' | 'grab' | 'stopLitter' | 'unplug' | 'treat' | 'repeatOrder' | 'recommend' | 'limitTry' | 'knock' | 'heckle'
   /** Store-signature karens (sigkarens.ts): main action and the alternative choice. */
-  | 'sigAct' | 'sigAlt';
+  | 'sigAct' | 'sigAlt'
+  /** General karens (round 27): 發票對獎魔人, 找零計較姐 (exactChange carries the chosen handful in `opt`), 免費袋子阿伯, 借廁所大隊. */
+  | 'escort' | 'countChange' | 'exactChange' | 'stopBag' | 'toiletRule';
 
 /** A target is either a static fixture or a dynamic entity id. */
 export type Target =
@@ -69,7 +71,9 @@ export interface CustomerSnap {
   resolved: boolean; revealed: boolean; items: number; want: Food | null; look: number; moving: boolean;
   y: number; held: boolean; flying: boolean; down: number;
   heavy: boolean; vip: boolean; stun: number; violent: boolean; // seconds left lying on the pavement after being thrown out
-  phase: number; // boss phase; for 充電霸王 the number of unplugs so far
+  phase: number; // boss phase; for 充電霸王 the number of unplugs so far; 借廁所大隊 1 = leader, 2 = follower
+  /** 跨年夜: a drunk karen (wobbles). Omitted otherwise. */
+  drunk?: boolean;
 }
 export interface Snapshot {
   t: number; // server time ms
@@ -85,7 +89,9 @@ export interface Snapshot {
   dayStats: DayStats; playerCount: number;
   chaos: number; burst: number; combo: number; power: number;
   event: { kind: 'rush' | 'outage'; left: number } | null;
-  shift: { mode: 'day' | 'shift'; id: string; title: string; chapter: number; goal: number; length: number; abilities: Ability[]; foods: Food[]; endless: boolean; boss: boolean; staminaMax: number; staminaRegen: number; speed: number } ;
+  shift: { mode: 'day' | 'shift'; id: string; title: string; chapter: number; goal: number; length: number; abilities: Ability[]; foods: Food[]; endless: boolean; boss: boolean; staminaMax: number; staminaRegen: number; speed: number;
+    /** 特殊營業日 running today ('typhoon' | 'newyear'); omitted on ordinary days. */
+    special?: string } ;
   result: ShiftResult | null;
 }
 
@@ -117,7 +123,8 @@ export type ClientMsg =
   | { type: 'start' }
   | { type: 'lobbyCfg'; map?: string; difficulty?: string; bots?: boolean }
   | { type: 'input'; x: number; z: number; yaw: number; pitch: number; seq: number }
-  | { type: 'act'; rid: string; kind: ActKind; target: Target }
+  /** opt: extra choice for some actions (exactChange: which handful of coins, 0–2, or -1 = ran out of time). */
+  | { type: 'act'; rid: string; kind: ActKind; target: Target; opt?: number }
   | { type: 'drop'; rid: string }
   | { type: 'throw'; rid: string; yaw: number; pitch: number }
   | { type: 'spin'; rid: string }
@@ -152,7 +159,7 @@ export type GameEvent =
   | { e: 'phase'; phase: Phase; day: number }
   | { e: 'hint'; text: string }
   /** report (hit only): this smack will bring the police (client plays a siren sting) — older clients ignore it. */
-  | { e: 'fx'; name: 'eject' | 'ultimate' | 'spin' | 'throw' | 'mistake' | 'impact' | 'hit' | 'shove'; x: number; z: number; combo?: number; by?: string; report?: boolean };
+  | { e: 'fx'; name: 'eject' | 'ultimate' | 'spin' | 'throw' | 'mistake' | 'impact' | 'hit' | 'shove' | 'fireworks'; x: number; z: number; combo?: number; by?: string; report?: boolean };
 
 export type ServerMsg =
   | { type: 'welcome'; playerId: string; token: string; code: string; reconnected: boolean; solo: boolean }

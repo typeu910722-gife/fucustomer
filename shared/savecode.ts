@@ -62,7 +62,7 @@ function fromB64url(s: string): string {
   const bin = atob(b + '='.repeat((4 - (b.length % 4)) % 4));
   const bytes = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+  return new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes);
 }
 /** FNV-1a 32-bit, 8 hex chars. */
 export function checksum(s: string): string {
@@ -131,6 +131,12 @@ export function exportSaveCode(store: Record<string, string | null | undefined>,
     avatar: typeof av === 'string' && av.length <= 16 ? av : null,
     solo, coop: isObj(coop) ? sanitizeSave(coop) : null,
   };
+  return encodeSavePayload(payload);
+}
+
+/** Encodes an (already sanitized) payload as a FUC1- code. Used by export and by the cloud backup, which stores a
+ *  re-encoded copy of what it validated (never the raw upload). */
+export function encodeSavePayload(payload: SavePayload): string {
   const body = toB64url(JSON.stringify(payload));
   return `${SAVE_PREFIX}${body}-${checksum(body)}`;
 }

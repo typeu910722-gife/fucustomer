@@ -2,6 +2,7 @@
 // with a capped on-screen size and near-camera fading, plus the font-ready refresh for every canvas text.
 import * as THREE from 'three';
 import { barColor, cbMode, isDangerColor } from './a11y.ts';
+import { loadUiFonts } from './fonts.ts';
 
 export const INK = '#2a1f3d', CREAM = '#fff6e5';
 export const UI_FONT = '"Huninn","PingFang TC","Microsoft JhengHei","Noto Sans TC",sans-serif';
@@ -25,8 +26,8 @@ if (!fontReady) {
     }
     for (const f of readyHooks.splice(0)) f();
   };
-  document.fonts.load(font(48), '奧客收銀台').then(finish, finish);
-  document.fonts.ready.then(() => { if (document.fonts.check(font(48), '奧')) finish(); });
+  // both font files (menu + game, see fonts.ts): canvas text never makes the browser fetch the game file by itself
+  loadUiFonts().then(finish, finish);
   setTimeout(finish, 8000); // never wait forever (offline / blocked font)
 }
 export const isFontReady = () => fontReady;

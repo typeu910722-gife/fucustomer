@@ -71,7 +71,7 @@ export interface RoomOptions {
   hostAfkMs?: number;
 }
 
-const ACT_KINDS = new Set(['checkout', 'brew', 'deliver', 'takeBox', 'stock', 'returnBox', 'takeMop', 'returnMop', 'clean', 'calm', 'coupon', 'askQueue', 'stopFilm', 'checkBag', 'pickup', 'heat', 'grab', 'stopLitter', 'unplug', 'treat', 'repeatOrder', 'recommend', 'limitTry', 'knock', 'heckle', 'sigAct', 'sigAlt']);
+const ACT_KINDS = new Set(['checkout', 'brew', 'deliver', 'takeBox', 'stock', 'returnBox', 'takeMop', 'returnMop', 'clean', 'calm', 'coupon', 'askQueue', 'stopFilm', 'checkBag', 'pickup', 'heat', 'grab', 'stopLitter', 'unplug', 'treat', 'repeatOrder', 'recommend', 'limitTry', 'knock', 'heckle', 'sigAct', 'sigAlt', 'escort', 'countChange', 'exactChange', 'stopBag', 'toiletRule']);
 const TARGET_KINDS = new Set(['register', 'coffee', 'microwave', 'crate', 'shelf', 'mop', 'customer', 'spill', 'item']);
 
 function defaultRandomId(len: number) {
@@ -365,7 +365,7 @@ export class Room {
       case 'act':
         if (!w || typeof msg.rid !== 'string' || !ACT_KINDS.has(msg.kind) || !validTarget(msg.target)) return;
         if (this.paused) return;
-        requestAct(w, playerId, msg.rid.slice(0, 40), msg.kind, msg.target);
+        requestAct(w, playerId, msg.rid.slice(0, 40), msg.kind, msg.target, typeof msg.opt === 'number' && Number.isInteger(msg.opt) ? msg.opt : undefined);
         this.flushResults();
         break;
       case 'drop':

@@ -19,6 +19,8 @@ import { needsCourt, payFine } from '../../shared/court.ts';
 import { CAST, SCENES, sceneAfter, sceneBefore } from '../../shared/story.ts';
 import { courtScreen, playScene } from './story-ui.ts';
 import { WEEKLY_ID, WEEKLY_TWISTS, applyWeekly, buildWeeklyConfig, isoWeek, weekBadge, weeklyPlan, weeklySeed, weeklyUnlocked } from '../../shared/weekly.ts';
+import { applySpecialResult, buildSpecialConfig, specialOfShift, specialShiftId, specialUnlocked } from '../../shared/specialdays.ts';
+import { SPECIAL_DAYS, SPECIAL_IDS } from '../../shared/genkarens.ts';
 import { type ArcLine, type ArcPick, arcConfig, arcSpeaker, finishArc, pickArc, takePreScene } from '../../shared/regulars.ts';
 import { setShiftRegular, setShiftStory, setStoreDecor } from './shift-ctx.ts';
 import { getCosmetic } from '../../shared/shop.ts';
@@ -37,6 +39,7 @@ import { effectiveLoadout, isSupporter, outfitOf, storeLocked, type Loadout } fr
 import { entitlementsFor } from './billing.ts';
 import { setPadBack, startPadNav } from './padnav.ts';
 import { applyA11y } from './a11y.ts';
+import { loadUiFonts } from './fonts.ts';
 
 let settings = loadSettings();
 applyA11y(settings); // 色盲友善・字級・音效字幕・減少動態效果
@@ -317,10 +320,11 @@ async function raidFriend(code: string) {
 
 function playShift(id: string) {
   const p = loadProfile();
-  const ok = id === ENDLESS_ID ? endlessUnlocked(p) : id === DAILY_ID ? dailyUnlocked(p) : id === WEEKLY_ID ? weeklyUnlocked(p) : shiftUnlocked(p, id).ok;
+  const sp = specialOfShift(id);
+  const ok = id === ENDLESS_ID ? endlessUnlocked(p) : id === DAILY_ID ? dailyUnlocked(p) : id === WEEKLY_ID ? weeklyUnlocked(p) : sp ? specialUnlocked(p) : shiftUnlocked(p, id).ok;
   if (!ok) return career();
   const date = localDate(), week = isoWeek();
-  const cfg = id === DAILY_ID ? buildDailyConfig(p, date) : id === WEEKLY_ID ? buildWeeklyConfig(p, week) : buildShiftConfig(p, id);
+  const cfg = id === DAILY_ID ? buildDailyConfig(p, date) : id === WEEKLY_ID ? buildWeeklyConfig(p, week) : sp ? buildSpecialConfig(p, sp) : buildShiftConfig(p, id);
   // same customers for everyone on the same day / week
   const seed = id === DAILY_ID ? dailySeed(date) : id === WEEKLY_ID ? weeklySeed(week) : undefined;
   // 常客奧客: one of the regulars may come back this shift (their card is shown once per stage)
@@ -360,7 +364,7 @@ function runShift(id: string, cfg: ReturnType<typeof buildShiftConfig>, seed?: n
     setShiftRegular(null);
     if (!result) { if (reason) UI.message('提示', reason, '回職涯', career); else career(); return; }
     const prof = loadProfile();
-    const reward = result.shiftId === WEEKLY_ID ? applyWeekly(prof, result) : applyResult(prof, result);
+    const reward = result.shiftId === WEEKLY_ID ? applyWeekly(prof, result) : specialOfShift(result.shiftId) ? applySpecialResult(prof, result, localDate()) : applyResult(prof, result);
     const arcOut = arc ? finishArc(prof, arc, result) : null;
     if (arc && arcOut?.advanced) {
       // the stage's ending goes on the result screen (and the free reward when the story is over)
@@ -410,6 +414,7 @@ function freePlay() {
     back: () => career(),
     records: () => career('stats'),
     pack: id => career('shop', id),
+    special: id => playShift(id),
     play: (map, fresh) => {
       const p = loadProfile(), lock = storeLocked(map, 'free', entitlementsFor(p));
       if (lock) return career('shop', lock.id);
@@ -433,7 +438,14 @@ function freePlay() {
       };
       startGame(() => (conn = localConn(playerName(), save, undefined, undefined, { map, outfit: outfitOf(look), staff, staffWage: staff ? FREEPLAY_STAFF_WAGE : undefined, onSave })), () => { endStoreLevel(); freePlay(); }, look);
     },
-  }, progs);
+  }, progs, specialRows());
+}
+
+/** 特殊營業日 rows for the free-play picker (null while still locked). */
+function specialRows(): UI.SpecialRow[] | null {
+  const p = loadProfile(), today = localDate();
+  if (!specialUnlocked(p)) return null;
+  return SPECIAL_IDS.map(id => { const d = SPECIAL_DAYS[id], st = p.special[id]; return { id: specialShiftId(id), icon: d.icon, name: d.name, desc: d.desc, done: !!st && st.date === today && st.rewarded, wins: st?.wins ?? 0 }; });
 }
 
 function badge(): UI.CareerBadge {
@@ -526,7 +538,7 @@ window.addEventListener('keydown', firstInput, { once: true });
 // Warm the 3D game code once the menu is up, so the first shift opens without waiting for the download
 // (this also lets the service worker cache it for offline play).
 {
-  const warm = () => { void loadGame().catch(() => { /* fetched again when a game starts */ }); };
+  const warm = () => { void loadGame().catch(() => { /* fetched again when a game starts */ }); void (document.fonts?.ready ?? Promise.resolve()).then(loadUiFonts); /* + the game font file, after the menu's */ };
   const w = window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => number };
   if (w.requestIdleCallback) w.requestIdleCallback(warm, { timeout: 2500 }); else window.setTimeout(warm, 1200);
 }

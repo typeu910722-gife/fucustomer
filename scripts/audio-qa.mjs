@@ -11,7 +11,7 @@ const label = process.argv[2] ?? 'after';
 const OUT = process.argv[3] ?? '/tmp/claude-0/audio25';
 const dir = join(OUT, label); mkdirSync(dir, { recursive: true });
 const R = await launch({ audioPath: process.env.AUDIO_SRC });
-const KAREN_BASE = ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger', 'custom', 'fickle', 'tryhard', 'boss'];
+const KAREN_BASE = ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger', 'custom', 'fickle', 'tryhard', 'boss', 'lottery', 'change', 'bagman', 'toilet'];
 const jobs = [];
 for (const n of sfxNames()) jobs.push({ group: 'sfx', name: n, spec: { dur: 2.6, steps: [{ t: 0, call: 'play', name: n }] } });
 for (const m of MOODS) jobs.push({ group: 'music', name: `mood${m}`, desc: MOOD_NAMES[m], spec: { dur: 10, steps: [{ t: 0, call: 'music', mood: m }] } });

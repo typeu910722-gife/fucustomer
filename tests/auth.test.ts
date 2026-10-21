@@ -141,3 +141,116 @@ test('link via browser: per-IP start limit, and the app session counts toward th
   assert.ok(reg.linkComplete(last.session, s.value.code).ok);
   assert.equal(reg.update(first.session, {}).ok, false, 'oldest device dropped when the app session is added');
 });
+
+// ---------------- 雲端備份 (cloud save) ----------------
+import { CloudSaveStore } from '../server/cloudsave.ts';
+import { CLOUD_MAX_CODE, CLOUD_UPLOADS_PER_DAY, CLOUD_RETENTION_MS, CloudOpsCounter, type CloudRecord } from '../shared/cloudsave.ts';
+import { K, checksum, parseSaveCode } from '../shared/savecode.ts';
+import { newProfile } from '../shared/career.ts';
+
+function forgedCode(level: number, extra: Record<string, unknown> = {}) {
+  // hand-made code claiming paid packs (an honest export never contains them)
+  const p = newProfile(); p.level = level; p.wallet = 100 * level; p.shop.entitlements = ['pack_supporter', 'pack_nightlife'];
+  const body = Buffer.from(JSON.stringify({ v: 1, at: 1000 + level, career: p, settings: { name: '雲端' }, flags: {}, avatar: null, solo: {}, coop: null, ...extra }), 'utf8').toString('base64url');
+  return `FUC1-${body}-${checksum(body)}`;
+}
+function cloudSetup(start = Date.UTC(2026, 9, 20, 3, 0, 0)) {
+  let t = start;
+  const reg = new LicenseRegistry(() => {}, () => t);
+  const writes: [string, CloudRecord | null][] = [];
+  const cloud = new CloudSaveStore({ ownerOf: s => reg.ownerOf(s), now: () => t, persist: (o, r) => writes.push([o, r]) });
+  return { reg, cloud, writes, tick: (ms: number) => { t += ms; }, now: () => t };
+}
+
+test('cloud save: sign-in required; upload, read back, previous version kept; delete', () => {
+  const { reg, cloud, writes, tick } = cloudSetup();
+  const a = reg.login('cloud-1', '雲端王');
+  for (const bad of [undefined, '', 'nope']) {
+    const r = cloud.put(bad, { code: forgedCode(3) }); assert.equal(r.ok, false); if (!r.ok) assert.equal(r.status, 401);
+    const g = cloud.get(bad); assert.equal(g.ok, false); if (!g.ok) assert.equal(g.status, 401);
+    const d = cloud.delete(bad); assert.equal(d.ok, false); if (!d.ok) assert.equal(d.status, 401);
+  }
+  const none = cloud.get(a.session); assert.equal(none.ok, false); if (!none.ok) assert.equal(none.status, 404);
+  const up1 = cloud.put(a.session, { code: forgedCode(5) });
+  assert.ok(up1.ok); if (!up1.ok) return;
+  assert.equal(up1.value.summary.level, 5); assert.equal(up1.value.used, 1); assert.equal(up1.value.max, CLOUD_UPLOADS_PER_DAY);
+  tick(61_000);
+  const up2 = cloud.put(a.session, { code: forgedCode(9) }); assert.ok(up2.ok);
+  const g = cloud.get(a.session); assert.ok(g.ok); if (!g.ok) return;
+  assert.equal(g.value.latest.summary.level, 9); assert.equal(g.value.prev?.summary.level, 5, 'one previous version');
+  assert.ok(g.value.latest.at > g.value.prev!.at);
+  assert.equal(g.value.quota.used, 2);
+  tick(61_000);
+  assert.ok(cloud.put(a.session, { code: forgedCode(12) }).ok);
+  const g3 = cloud.get(a.session); assert.ok(g3.ok); if (g3.ok) { assert.equal(g3.value.latest.summary.level, 12); assert.equal(g3.value.prev?.summary.level, 9, 'only one previous version'); }
+  // another account cannot see it
+  const b = reg.login('cloud-2');
+  assert.equal(cloud.get(b.session).ok, false);
+  // a signed-out session loses access; the other device of the same account still has it
+  const a2 = reg.login('cloud-1');
+  reg.logout(a.session);
+  assert.equal(cloud.get(a.session).ok, false);
+  assert.ok(cloud.get(a2.session).ok);
+  const d = cloud.delete(a2.session); assert.ok(d.ok); if (d.ok) assert.equal(d.value.deleted, true);
+  assert.equal(cloud.get(a2.session).ok, false, 'gone after delete');
+  assert.deepEqual(writes.at(-1)?.[1], null, 'persisted as deleted');
+  assert.equal(writes.at(-1)?.[0].length, 64, 'keyed by the licence owner hash, not the e-mail or Google id');
+  const d2 = cloud.delete(a2.session); assert.ok(d2.ok); if (d2.ok) assert.equal(d2.value.deleted, false);
+});
+
+test('cloud save: stored copy is re-encoded and never carries paid entitlements, the account or a server URL', () => {
+  const { reg, cloud } = cloudSetup();
+  const a = reg.login('cloud-3');
+  const raw = forgedCode(7, { settings: { name: 'x', serverUrl: 'wss://evil.example/ws' }, [K.account]: { session: 'SECRET' } });
+  assert.ok(cloud.put(a.session, { code: raw }).ok);
+  const g = cloud.get(a.session); assert.ok(g.ok); if (!g.ok) return;
+  assert.notEqual(g.value.latest.code, raw, 'not the uploaded text');
+  const back = parseSaveCode(g.value.latest.code); assert.ok(back.ok); if (!back.ok) return;
+  assert.deepEqual(back.payload.career.shop.entitlements, []);
+  const decoded = Buffer.from(g.value.latest.code.split('-')[1], 'base64url').toString('utf8');
+  assert.ok(!decoded.includes('pack_supporter') && !decoded.includes('evil.example') && !decoded.includes('SECRET'));
+});
+
+test('cloud save: bad codes, size cap, per-account interval + daily limit, server-wide budget and slot cap', () => {
+  const { reg, cloud, tick } = cloudSetup();
+  const a = reg.login('cloud-4');
+  for (const body of [{}, { code: 42 }, { code: 'hello' }, { code: forgedCode(2).slice(0, -3) + 'abc' }]) {
+    const r = cloud.put(a.session, body); assert.equal(r.ok, false); if (!r.ok) assert.equal(r.status, 400);
+  }
+  const huge = forgedCode(2, { flags: { seenKarens: [], seenMaps: [], pad: 'x'.repeat(CLOUD_MAX_CODE) } });
+  const big = cloud.put(a.session, { code: huge }); assert.equal(big.ok, false); if (!big.ok) assert.equal(big.status, 413);
+  assert.ok(cloud.put(a.session, { code: forgedCode(2) }).ok);
+  const fast = cloud.put(a.session, { code: forgedCode(3) });
+  assert.equal(fast.ok, false); if (!fast.ok) { assert.equal(fast.status, 429); assert.match(fast.error, /秒後再試/); }
+  for (let i = 1; i < CLOUD_UPLOADS_PER_DAY; i++) { tick(61_000); assert.ok(cloud.put(a.session, { code: forgedCode(3) }).ok, `upload ${i + 1}`); }
+  tick(61_000);
+  const over = cloud.put(a.session, { code: forgedCode(3) });
+  assert.equal(over.ok, false); if (!over.ok) { assert.equal(over.status, 429); assert.match(over.error, /明天/); }
+  tick(24 * 3600_000);
+  assert.ok(cloud.put(a.session, { code: forgedCode(4) }).ok, 'new UTC day, new quota');
+
+  // server-wide daily budget → 503, the game keeps its local save
+  let t = Date.UTC(2026, 9, 21);
+  const reg2 = new LicenseRegistry(() => {}, () => t);
+  const c2 = new CloudSaveStore({ ownerOf: s => reg2.ownerOf(s), now: () => t, ops: new CloudOpsCounter(3), maxSlots: 1 });
+  const x = reg2.login('x'), y = reg2.login('y');
+  assert.ok(c2.put(x.session, { code: forgedCode(2) }).ok);
+  const full = c2.put(y.session, { code: forgedCode(2) }); assert.equal(full.ok, false); if (!full.ok) assert.equal(full.status, 503, 'slot cap');
+  assert.ok(c2.get(x.session).ok);
+  const busy = c2.get(x.session); assert.equal(busy.ok, false); if (!busy.ok) { assert.equal(busy.status, 503); assert.match(busy.error, /額度/); }
+  t += 24 * 3600_000;
+  assert.ok(c2.get(x.session).ok, 'budget resets at 00:00 UTC');
+});
+
+test('cloud save: slots without uploads for a year are pruned', () => {
+  const { reg, cloud, tick, writes } = cloudSetup();
+  const a = reg.login('old'), b = reg.login('new');
+  assert.ok(cloud.put(a.session, { code: forgedCode(2) }).ok);
+  tick(CLOUD_RETENTION_MS - 3600_000);
+  assert.ok(cloud.put(b.session, { code: forgedCode(2) }).ok);
+  tick(2 * 3600_000 + 24 * 3600_000);
+  assert.ok(cloud.put(b.session, { code: forgedCode(3) }).ok);
+  assert.equal(cloud.get(a.session).ok, false, 'old slot pruned');
+  assert.ok(writes.some(([, r]) => r === null));
+  assert.ok(cloud.get(b.session).ok);
+});

@@ -1,7 +1,7 @@
 // 「全台奧客圖鑑」: 記者小林's write-up for every karen kind (unlocked once you have handled that kind at least once),
 // plus the short after-story lines shown in game after a store-signature karen is dealt with.
 // Pure data + helpers; the handled counts live in the career profile (CareerProfile.dex).
-import type { KarenKind } from './constants.ts';
+import { GEN_KINDS, type GenKind, type KarenKind } from './constants.ts';
 import { SIG_KINDS, type SigKind } from './sigkarens.ts';
 
 export type DexSpeaker = 'boss' | 'fen' | 'lin';
@@ -19,7 +19,7 @@ export interface DexEntry {
 }
 
 /** Every karen kind in display order: the classic ones, then one per store. */
-export const DEX_ORDER: KarenKind[] = ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger', 'custom', 'fickle', 'tryhard', 'boss', ...SIG_KINDS];
+export const DEX_ORDER: KarenKind[] = ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger', 'custom', 'fickle', 'tryhard', 'boss', ...SIG_KINDS, ...GEN_KINDS];
 
 export const DEX: Record<KarenKind, DexEntry> = {
   cutter: { icon: '🚶', where: '各種店', note: '常見於收銀台前三公尺。口頭禪「我只買一瓶水」，但手上永遠是一整籃。被請去排隊時會突然對手機很有興趣。' },
@@ -49,6 +49,10 @@ export const DEX: Record<KarenKind, DexEntry> = {
   coins: { icon: '🪙', where: '郵局', note: '存了三年的一元硬幣，選在月初最忙的時候一次寄出。數零錢時會在旁邊幫忙「一、二……啊數到哪了」。' },
   rx: { icon: '💊', where: '藥局', note: '自稱「我自己就是半個醫生」，資歷是看過三集醫療劇。處方箋在他眼中只是一張紙。' },
   upgrader: { icon: '🏨', where: '飯店', note: '住標準房、要總統套房、自稱「我是你們的 VIP」。會員卡是另一家飯店的。' },
+  lottery: { icon: '🧾', where: '各種店・單月 25 號後特別多', note: '錢包裡的發票比鈔票多，一張一張對到最後兩碼才肯讓位。記者問他中過什麼，他說「中過兩百，那天我請全家吃雞排」。' },
+  change: { icon: '🪙', where: '各種店', note: '找零一定要攤在櫃台上一枚一枚數，數到一半會說「等一下，重來」。一次找剛好的店員，她會默默記住你的臉。' },
+  bagman: { icon: '🛍', where: '各種店', note: '「袋子不是免費的嗎？」一次抽二十個，順便把架上的東西也裝進去。在店裡永遠在「看看而已」，只有走到門口才會心虛。' },
+  toilet: { icon: '🚽', where: '各種店・遊覽車停靠站', note: '領隊舉著小旗子：「這間有廁所！」三十秒後整團排到門口。馬桶的極限是四個人，他們是第五個。' },
 };
 
 /** After-story lines once a signature karen has been dealt with: 2–3 success lines and one for failure. */
@@ -190,11 +194,47 @@ export const AFTERMATH: Record<SigKind, { ok: DexLine[]; fail: DexLine }> = {
   },
 };
 
+/** After-story lines for the general karens (round 27), same shape as AFTERMATH. */
+export const GEN_AFTERMATH: Record<GenKind, { ok: DexLine[]; fail: DexLine }> = {
+  lottery: {
+    ok: [
+      { who: 'fen', text: '他在對獎機前站了二十分鐘，最後中了兩百，開心到請我們喝飲料。……用那兩百。' },
+      { who: 'lin', text: '小林筆記：發票對獎魔人的錢包裡，發票按月份用迴紋針夾好。比我的報稅資料還整齊。' },
+      { who: 'boss', text: '對獎機是我花錢裝的！……他中獎有抽成嗎？沒有？那至少讓他買瓶水。' },
+    ],
+    fail: { who: 'boss', text: '從收銀機兌獎？兩百塊是公司的錢！……下次對獎機前面貼一張「店員陪同服務」。' },
+  },
+  change: {
+    ok: [
+      { who: 'fen', text: '一次找剛好，她說要給我們五顆星。……她手機上是一顆星的評論草稿，剛剛刪掉了。' },
+      { who: 'lin', text: '小林筆記：找零計較姐離開前把每一枚硬幣都翻成正面放進錢包。' },
+      { who: 'boss', text: '找零就是要準！少一塊是客訴，多一塊是我的血。' },
+    ],
+    fail: { who: 'fen', text: '她數到第三次還是說不對……後來發現是她自己口袋多放了一枚五十。' },
+  },
+  bagman: {
+    ok: [
+      { who: 'fen', text: '阿伯的袋子裡有八個購物袋、兩包泡麵和一支我們的原子筆。原子筆我收回來了。' },
+      { who: 'boss', text: '袋子一個一塊！……好啦今天算他便宜，商品照原價。' },
+      { who: 'lin', text: '小林筆記：被攔下時阿伯說「我是要拿去結帳啊」，手已經在推門了。' },
+    ],
+    fail: { who: 'boss', text: '他拎著我們的袋子裝我們的東西走了？……明天門口裝一個會叫的門。' },
+  },
+  toilet: {
+    ok: [
+      { who: 'fen', text: '一整團每人買一瓶水，今天的業績突然好看了。廁所……還是要通一下。' },
+      { who: 'lin', text: '小林筆記：領隊收起小旗子說「下一站有免費廁所」，團員一起嘆氣。' },
+      { who: 'boss', text: '廁所限消費使用！這句話我要做成霓虹燈。' },
+    ],
+    fail: { who: 'fen', text: '水淹到貨架前面了。拖把在西邊……對，兩支都要拿。' },
+  },
+};
+
 function hash(n: number) { let h = (n | 0) ^ 0x5bd1e995; h = Math.imul(h ^ (h >>> 15), 0x2c1b3c6d); h = Math.imul(h ^ (h >>> 12), 0x297a2d39); return (h ^ (h >>> 15)) >>> 0; }
 
-/** The after-story line for this karen (seed = his id, so every client picks the same one), or null for core karens. */
+/** The after-story line for this karen (seed = his id, so every client picks the same one), or null for the classic karens. */
 export function aftermathLine(kind: string, ok: boolean, seed = 0): DexLine | null {
-  const a = (AFTERMATH as Record<string, { ok: DexLine[]; fail: DexLine }>)[kind];
+  const a = (AFTERMATH as Record<string, { ok: DexLine[]; fail: DexLine }>)[kind] ?? (GEN_AFTERMATH as Record<string, { ok: DexLine[]; fail: DexLine }>)[kind];
   if (!a) return null;
   return ok ? a.ok[hash(seed) % a.ok.length] : a.fail;
 }

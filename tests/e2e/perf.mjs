@@ -10,6 +10,7 @@ const BASE = process.env.GAME_URL ?? 'http://localhost:8787/';
 const URL = BASE + (BASE.includes('?') ? '&' : '?') + 'devshop=1';
 const BUDGET = {
   menuJsKB: Number(process.env.PERF_MENU_JS_KB ?? 180), // compressed bytes of JS the menu needs (was ~360 KB before code splitting)
+  menuFontKB: Number(process.env.PERF_MENU_FONT_KB ?? 175), // preloaded font file(s) (one 298 KB file before the round-27 split; ≈ 140 KB after)
   drawCalls: 75, // low quality, 844x390, busy convenience store (≈ 45–55 measured)
   triangles: 120000,
   geometryGrowth: 40, // renderer geometries after ~3 in-game hours of customers coming and going
@@ -39,6 +40,10 @@ const heavyInMenu = statics.filter(u => /\/(three|game)-[\w-]+\.js$/.test(u));
 check(statics.length > 0, 'no entry script found in index.html');
 check(menuJs <= BUDGET.menuJsKB, `menu JS ${menuJs.toFixed(0)} KB > ${BUDGET.menuJsKB} KB`);
 check(heavyInMenu.length === 0, `menu statically loads ${heavyInMenu.join(', ')}`);
+const fontUrls = [...html.matchAll(/<link rel="preload" href="([^"]+\.woff2[^"]*)"/g)].map(m => new globalThis.URL(m[1], BASE).href.replace(/\?.*$/, ''));
+const menuFont = fontUrls.reduce((a, u) => a + (sizes.get(u) ?? 0), 0) / 1024;
+check(fontUrls.length > 0 && menuFont > 0, `no preloaded font found / loaded (${fontUrls.join(', ')})`);
+check(menuFont <= BUDGET.menuFontKB, `menu font ${menuFont.toFixed(0)} KB > ${BUDGET.menuFontKB} KB`);
 
 // ---------- 2. draw calls / triangles (low quality, busy store) ----------
 await page.evaluate(() => { localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'low', name: '阿明', fpsCap: 0, adaptive: false })); localStorage.setItem('fucustomer.flags.v1', JSON.stringify({ tutorialDone: true, seenKarens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger'] })); });
@@ -78,6 +83,6 @@ check(m1.geos - m0.geos <= BUDGET.geometryGrowth, `geometries grew ${m0.geos} �
 check(heapGrowMB <= BUDGET.heapGrowMB, `JS heap grew ${heapGrowMB.toFixed(1)} MB`);
 check(errors.length === 0, `page errors: ${errors.join(' | ')}`);
 
-console.log(JSON.stringify({ menuJsKB: +menuJs.toFixed(1), statics: statics.map(u => u.split('/').pop()), draw, leak: { served, geos: [m0.geos, m1.geos], textures: [m0.textures, m1.textures], heapGrowMB: +heapGrowMB.toFixed(2) }, budget: BUDGET, fails }, null, 1));
+console.log(JSON.stringify({ menuJsKB: +menuJs.toFixed(1), menuFontKB: +menuFont.toFixed(1), statics: statics.map(u => u.split('/').pop()), draw, leak: { served, geos: [m0.geos, m1.geos], textures: [m0.textures, m1.textures], heapGrowMB: +heapGrowMB.toFixed(2) }, budget: BUDGET, fails }, null, 1));
 if (fails.length) process.exitCode = 1;
 await browser.close();

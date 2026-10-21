@@ -177,6 +177,8 @@ export class LicenseRegistry {
     for (const r of this.byOwner.values()) if (r.sessions.includes(h)) return r;
     return null;
   }
+  /** The licence owner key for a signed-in session (cloud save slots are keyed by it), or null. */
+  ownerOf(session: unknown): string | null { return this.bySession(session)?.owner ?? null; }
   update(session: unknown, b: Record<string, unknown>): R<LicenseCard> {
     const r = this.bySession(session); if (!r) return { ok: false, status: 401, error: '請重新登入' };
     if ('name' in b) r.name = str(b.name, 16, r.name) || r.name;

@@ -119,6 +119,7 @@ JS 本身每格只有十幾毫秒（4× 降速後）。這輪真正確定的改�
 | 預算 | 門檻 | 目前 |
 |---|---|---|
 | 主選單靜態 JS（入口 + modulepreload，gzip 傳輸量） | ≤ 180 KB，且不得包含 `three-*.js`／`game-*.js` | 約 135 KB |
+| 主選單預載字型（`<link rel=preload>` 的 woff2 傳輸量；第 27 輪加入） | ≤ 175 KB | 約 140 KB |
 | 低畫質 844×390 便利商店平均 draw call | ≤ 75 | 約 50 |
 | 平均三角形 | ≤ 12 萬 | 約 4 萬 |
 | 約 40 位客人進出後 geometry 增加 | ≤ 40 | 0 以下 |
@@ -127,7 +128,7 @@ JS 本身每格只有十幾毫秒（4× 降速後）。這輪真正確定的改�
 ## 還沒做、需要真機的
 
 - 在真的低階 Android（例如 2–3 GB RAM、Mali-G52 等級）與 Steam Deck 上量 FPS、溫度與耗電，確認動態解析度的實際表現。
-- 字型 295 KB 是首次載入最大的單一檔案；可以再拆成「選單用字」與「遊戲內用字」兩個子集（`unicode-range`）。
+- 字型拆分（第 27 輪做了，見下）在真的 Android WebView／iOS（Capacitor）上還沒實機確認；Electron（file://）已確認。
 - 三角形最多的是加油站的靜態合併 mesh（約 3 萬），若真機上加油站特別慢，再考慮只在低畫質減少遠處道具的段數。
 
 ## 這輪的測試（對自己的伺服器 :8805，建置在 /tmp）
@@ -137,3 +138,45 @@ JS 本身每格只有十幾毫秒（4× 降速後）。這輪真正確定的改�
 - 機器負載很高時（load 20–35），`solo-smoke` 與 `maps` 會在 `page.screenshot` 30 秒逾時失敗——改善前的版本在同樣負載下也一樣失敗；
   負載降下來後 `solo-smoke` 原樣通過，`maps` 是把截圖逾時放寬到 180 秒（測試邏輯不變）後通過。
 - `perf.mjs` 對改善前的版本會失敗（主選單 JS 約 350 KB、heap +11.6 MB），對改善後的版本通過。
+
+# 第 27 輪：字型拆成「選單用」與「遊戲用」兩個檔
+
+字型 `huninn.woff2`（粉圓子集，298 KB）原本是首次載入最大的單一檔案，主選單要等它才會用正確字型顯示
+（`font-display: swap`，等待期間先用系統字型）。
+
+## 做法
+
+- `scripts/font-subset.py`（不用帶參數，照舊直接跑）現在產生兩個檔：
+  - `client/public/fonts/huninn-menu.woff2`：主選單、證照卡、設定、查好友證照、邀請畫面、第一次上班歡迎框、
+    標題語錄（`QUOTES` 隨機）與店內公告（`NOTICES` 輪播）全部、等級名稱、稱號、下一關標題、每日／每週挑戰文字會用到的字，加上 ASCII 與常用標點。
+    哪些來源算「選單」寫在 `scripts/font-menu-text.ts` 的 `MENU_SOURCES`（整個檔案或檔案裡的頂層函式，例如 `ui.ts` 的 `mainMenu`、`settingsMenu`），
+    再加上直接 import 的資料（`QUOTES`、`RANKS`、`CHAPTERS`、`MAPS`、`DAILY_MODS`、`WEEKLY_TWISTS`）。
+  - `client/public/fonts/huninn-game.woff2`：其餘所有字（劇情、奧客、HUD、商城、各店…）。
+- 兩個 `@font-face` 同一個 family（`Huninn`）、`unicode-range` 互不重疊，由腳本產生在 `client/index.html` 的
+  `font-subset:begin/end` 標記之間（範圍把「兩邊都沒用到的空隙」合併，每個約 345 段）。瀏覽器只會下載畫面上有用到的字所屬的檔。
+- 只 `preload` 選單檔。網址帶內容雜湊（`?v=…`），字型一改網址就變；service worker 安裝時把兩個字型檔一起預先快取，
+  之後用「快取優先」（同一個檔的舊版本會被換掉），離線也能顯示遊戲內文字。
+- 主選單閒置預載 3D 遊戲時（`requestIdleCallback`），等選單字型好了（`document.fonts.ready`）再順便載入遊戲字型
+  （`client/src/fonts.ts` 的 `loadUiFonts()`），所以進遊戲時通常已經有了，不會先閃系統字型。
+- 3D 標籤是畫在 canvas 上的，canvas 不會自己觸發 `unicode-range` 下載；`labels.ts` 改成等兩個字型檔都載完（或失敗、或 8 秒逾時）才把標籤重畫。
+- 腳本找不到 node／tsx 時會印警告並改用粗略的選單字表；字型仍然涵蓋所有字（只是選單可能也會用到遊戲檔），不會讓重建失敗。
+  `MENU_SOURCES` 裡寫的函式名稱找不到（改名了）也會警告，`tests/font.test.ts` 會失敗提醒。
+
+## 量測（Playwright Chromium，對自己的伺服器 :8809，清空快取冷啟動，到主選單出現 + `document.fonts.ready`）
+
+| 項目 | 改善前 | 改善後 |
+|---|---|---|
+| 主選單需要的字型（實測傳輸量） | **297.7 KB**（`huninn.woff2` 304,795 bytes） | **140.3 KB**（`huninn-menu.woff2` 143,663 bytes，-53%） |
+| 遊戲字型 | （同一個檔） | 約 170 KB，選單閒置後才下載，不在主選單的關鍵路徑上 |
+| 兩個字型合計 | 297.7 KB | 約 310 KB（多約 4%：兩個檔各有一份字型表頭／字距表，另外同時有別人加了幾個新字） |
+| `index.html`（gzip） | 14.5 KB | 18.2 KB（`unicode-range` 清單約 7.2 KB，gzip 後約 3.3 KB；另含同期其他改動） |
+
+- 用「首次載入 1.6 Mbps」換算，選單字型大約從 1.5 秒縮到 0.7 秒（**這是用位元組換算，不是實測時間**）。
+- `tests/e2e/font-split.mjs`：把選單的閒置預載關掉後，走過新玩家主選單、有進度的主選單（下一關、每日、每週、稱號、週章）、
+  連點標題語錄、設定、查好友證照、邀請畫面，畫面上每個字都在選單檔的 `unicode-range` 裡，而且**完全沒有下載遊戲字型檔**；
+  正常載入時閒置預載後兩個檔都載入、service worker 快取裡有兩個檔、主線畫面的字都能用 Huninn 顯示。
+- `tests/font.test.ts`：所有用到的字都在兩檔聯集裡；選單來源的字都在選單檔；兩個 `unicode-range` 不重疊且和字表一致；
+  `?v=` 雜湊和檔案內容一致；只 preload 選單檔；選單檔 ≤ 175 KB。
+- 截圖（改善前／後的主選單、有進度的主選單、設定、手機尺寸）：`/tmp/claude-0/shots27/`，字型顯示相同、沒有缺字方塊。
+- 桌面版（Electron，`file://`）：用暫存複製的 desktop 跑 smoke，兩個字型檔都 `loaded`，主選單文字 `document.fonts.check` 為真。
+  Android／iOS（Capacitor）沒有實機測：字型網址是相對路徑，`?v=` 查詢字串在 Capacitor 的本機檔案伺服器會被忽略，理論上沒問題。

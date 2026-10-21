@@ -10,6 +10,7 @@ import { BOSS_HOW, BOSS_PHASES, EMPTY_SHELF_GRACE } from '../../shared/constants
 import { NEAR_EMPTY, ShelfWatch } from './shelfwatch.ts';
 import { NEED_LABEL, SIG_KARENS, SigNeed, isSig, sigWaitReason } from '../../shared/sigkarens.ts';
 import { DEX_SPEAKER, aftermathLine } from '../../shared/karendex.ts';
+import { COINS, bagmanAtDoor, changeDue, changeOptions } from '../../shared/genkarens.ts';
 import { Tutorial, TutorialView } from './tutorial.ts';
 import type { ActKind, ClientMsg, CustomerSnap, GameEvent, LobbyState, ServerMsg, Snapshot, Target } from '../../shared/protocol.ts';
 import { audio } from './audio.ts';
@@ -18,6 +19,7 @@ import { Minimap } from './minimap.ts';
 import type { GameConnection, NetStatus } from './net.ts';
 import { StoreView, setNamedRegular } from './render.ts';
 import { Settings, loadFlags, saveCoopSave, saveFlags, saveLastSession, saveSettings, saveSoloSave } from './storage.ts';
+import { maybeAutoBackup } from './cloudsave.ts';
 import * as UI from './ui.ts';
 import { desktop } from './platform.ts';
 import { inputMode, keyOf, padStyle, rumble, setRumble } from './pad.ts';
@@ -38,7 +40,8 @@ interface Candidate {
 }
 
 const $ = (id: string) => document.getElementById(id)!;
-const fmtClock = (m: number) => `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(Math.floor(m % 60)).padStart(2, '0')}`;
+// (the 跨年夜 clock runs past midnight: 24:10 shows as 00:10)
+const fmtClock = (m: number) => `${String(Math.floor(m / 60) % 24).padStart(2, '0')}:${String(Math.floor(m % 60)).padStart(2, '0')}`;
 const fmtSec = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
 let ridCounter = 0;
 const newRid = () => `${Date.now().toString(36)}${(ridCounter++).toString(36)}${Math.random().toString(36).slice(2, 6)}`;
@@ -248,6 +251,7 @@ export class Game {
       case 'save':
         if ('onSave' in this.conn && (this.conn as { onSave?: unknown }).onSave) { /* own store: saved by its owner */ }
         else if (this.conn.solo) saveSoloSave(m.save, CURRENT_MAP.id); else saveCoopSave(m.save);
+        maybeAutoBackup(); // 雲端備份 (opt-in, signed in, at most every 10 minutes)
         break;
       case 'error':
         if (m.code === 'not_ready') this.toast(m.message, 'bad');
@@ -427,10 +431,47 @@ export class Game {
     audio.play('heave', c?.x ?? px, c?.z ?? pz, k);
   }
 
+  // ---------------- 找零計較姐: the exact-change quick-time prompt ----------------
+  private qte: { id: number; look: number; until: number; total: number; el: HTMLElement } | null = null;
+  /** Opens the prompt: three handfuls of coins, pick the one that adds up to her change (keys 1–3, click / tap). */
+  openChangePrompt(id: number) {
+    const c = this.snap?.customers.find(x => x.id === id);
+    if (!c || this.qte) return;
+    ensureQteStyle();
+    const opts = changeOptions(c.look), total = 5;
+    const el = document.createElement('div'); el.id = 'qte';
+    el.innerHTML = `<div class="qte-title">🪙 應找 <b>$${changeDue(c.look)}</b>：哪一把零錢剛剛好？</div>
+      <div class="qte-opts">${opts.map((o, i) => `<button class="qte-opt" data-qte="${i}"><kbd>${i + 1}</kbd>${o.counts.map((k, j) => (k ? `<span class="coin c${COINS[j]}">${COINS[j]}</span>×${k}` : '')).filter(Boolean).join(' ')}</button>`).join('')}</div>
+      <div class="qte-bar"><i></i></div><div class="qte-help">按 1／2／3 或點一下・選錯她會從頭數（−8 秒）</div>`;
+    ($('hud') ?? document.body).appendChild(el);
+    el.querySelectorAll<HTMLButtonElement>('[data-qte]').forEach(b => { b.onclick = ev => { ev.stopPropagation(); this.answerChange(Number(b.dataset.qte)); }; });
+    this.qte = { id, look: c.look, until: performance.now() + total * 1000, total, el };
+  }
+  private answerChange(opt: number) {
+    const q = this.qte; if (!q) return;
+    this.send({ type: 'act', rid: newRid(), kind: 'exactChange', target: { t: 'customer', id: q.id }, opt });
+    this.closeChangePrompt();
+  }
+  private closeChangePrompt() { this.qte?.el.remove(); this.qte = null; }
+  private changePromptFrame(s: Snapshot) {
+    const q = this.qte!;
+    const c = s.customers.find(x => x.id === q.id);
+    if (!c || c.resolved || c.state !== 'atRegister') { this.closeChangePrompt(); return; }
+    for (let i = 1; i <= 3; i++) if (this.input.consume(`q${i}` as 'q1')) { this.answerChange(i - 1); return; }
+    const left = (q.until - performance.now()) / 1000;
+    if (left <= 0) { this.answerChange(-1); return; }
+    const bar = q.el.querySelector<HTMLElement>('.qte-bar i'); if (bar) bar.style.width = `${Math.max(0, left / q.total) * 100}%`;
+  }
+
   private onFx(e: Extract<GameEvent, { e: 'fx' }>) {
     const mine = !!e.by && e.by === this.myName();
     const reduce = !!this.settings.reduceMotion;
     switch (e.name) {
+      case 'fireworks':
+        // 跨年夜 midnight: fireworks in the sky outside the front windows
+        this.view.fireworks(reduce);
+        this.stamp('🎉 新年快樂！', 'big');
+        break;
       case 'eject': {
         const k = this.juice('eject', e.x, e.z, mine);
         const combo = e.combo ?? 0;
@@ -783,6 +824,23 @@ export class Game {
           : { label: `向${name}推薦招牌`, primary: 'recommend', target: t, point };
       }
       if (c.kind === 'tryhard') return c.state === 'tryon' ? { label: `請${name}限試穿 3 件`, primary: 'limitTry', target: t, point } : { label: name, reason: '正走向試衣間', target: t, point };
+      if (c.kind === 'lottery') {
+        if (c.state === 'atRegister') return { label: `帶${name}去對獎機`, primary: 'escort', target: t, point };
+        if (c.state === 'toKiosk') return { label: name, reason: '跟在他旁邊（3 公尺內）一起走到對獎機', target: t, point };
+        return { label: name, reason: '他還在挑，到收銀台才會掏出發票', target: t, point };
+      }
+      if (c.kind === 'change') return c.state === 'atRegister'
+        ? { label: `陪${name}數零錢${c.phase ? `（又數錯 ${c.phase} 次）` : ''}`, primary: 'countChange', alt: 'exactChange', altLabel: '找剛好的零錢（快）', target: t, point }
+        : { label: name, reason: '她還在挑，到收銀台才會開始數零錢', target: t, point };
+      if (c.kind === 'bagman') {
+        if (bagmanAtDoor(c)) return { label: `在門口攔下${name}檢查袋子`, primary: 'stopBag', target: t, point };
+        return { label: `🛍 ${name}`, reason: c.state === 'toExit' ? '還沒到門口！先去門口等他' : '他裝作在逛，等他提著袋子走到門口再攔', target: t, point };
+      }
+      if (c.kind === 'toilet') {
+        const leader = c.phase === 1;
+        if (c.state !== 'toToilet' && c.state !== 'toilet') return { label: name, reason: '正衝向廁所', target: t, point };
+        return { label: leader ? `🚩 對領隊說「廁所限消費使用」` : `請這位團員先消費（只走他一個）`, primary: 'toiletRule', target: t, point };
+      }
       if (isSig(c.kind)) return sigCandidate(c, hands, money, t, point);
       if (c.kind === 'charger') {
         const treat = hands.includes('coffee') ? `請他喝${FOOD_INFO.coffee.name}` : undefined;
@@ -920,7 +978,8 @@ export class Game {
         } else if (this.target?.reason && now - this.lastActAt > 650) { this.lastActAt = now; }
       }
       if (this.input.consume('alt')) {
-        if (this.target?.alt && this.target.altLabel) this.send({ type: 'act', rid: newRid(), kind: this.target.alt, target: this.target.target });
+        if (this.target?.alt === 'exactChange' && this.target.target.t === 'customer') this.openChangePrompt(this.target.target.id);
+        else if (this.target?.alt && this.target.altLabel) this.send({ type: 'act', rid: newRid(), kind: this.target.alt, target: this.target.target });
         else if (me.held) this.send({ type: 'drop', rid: newRid() });
       }
       if (this.input.consume('drop') && (me.held || me.held2 || me.grabbing != null || me.busy || me.raider)) this.send({ type: 'drop', rid: newRid() });
@@ -939,6 +998,7 @@ export class Game {
       if (this.input.consume('ping')) this.doPing();
       if (this.input.consume('skip')) { if (this.tut) this.skipTutorial(); else if (!this.conn.solo) this.openOverlay('quick'); }
       if (this.input.consume('ready') && (s.phase === 'prep' || s.phase === 'summary')) this.send({ type: 'ready', ready: !me.ready });
+      if (this.qte) this.changePromptFrame(s);
       for (let i = 1; i <= QUICK_MESSAGES.length; i++) if (this.input.consume(`q${i}` as 'q1')) this.sendQuick(i - 1);
     } else {
       this.input.takeLook();
@@ -1073,7 +1133,8 @@ export class Game {
       $('t-interact').classList.toggle('long', tl.length > 4);
     }
     // karen alert
-    const karens = s.customers.filter(c => c.kind !== 'normal' && !c.resolved && c.revealed && c.state !== 'leaving');
+    // (a 借廁所大隊 counts once: its followers are part of the leader's karen)
+    const karens = s.customers.filter(c => c.kind !== 'normal' && !c.resolved && c.revealed && c.state !== 'leaving' && !(c.kind === 'toilet' && c.phase === 2));
     const al = $('alert');
     const boss = karens.find(k => k.kind === 'boss');
     if (boss) {
@@ -1210,6 +1271,23 @@ export class Game {
   }
 }
 
+/** Styles of the exact-change prompt (injected once; kept here so the page shell stays untouched). */
+function ensureQteStyle() {
+  if (document.getElementById('qte-style')) return;
+  const st = document.createElement('style'); st.id = 'qte-style';
+  st.textContent = `#qte { position: absolute; left: 0; right: 0; margin: 0 auto; bottom: 22%; width: min(560px, 92vw); background: var(--cream, #fff6e5); color: var(--ink, #2a1f3d);
+    border: 4px solid var(--ink, #2a1f3d); box-shadow: 0 7px 0 var(--ink, #2a1f3d); border-radius: 20px; padding: 10px 14px; z-index: 9; text-align: center; animation: pop .25s both; pointer-events: auto; }
+  #qte .qte-title { font-weight: 900; font-size: 18px; } #qte .qte-title b { color: #e8590c; font-size: 22px; }
+  #qte .qte-opts { display: flex; gap: 8px; margin: 8px 0 6px; flex-wrap: wrap; justify-content: center; }
+  #qte .qte-opt { flex: 1 1 150px; min-height: 48px; border: 3px solid var(--ink, #2a1f3d); border-radius: 14px; background: #fff; font: inherit; font-weight: 800; cursor: pointer; padding: 6px; line-height: 1.6; }
+  #qte .qte-opt:hover { background: #fff3bf; } #qte kbd { background: var(--ink, #2a1f3d); color: #fff; border-radius: 6px; padding: 0 6px; margin-right: 6px; }
+  #qte .coin { display: inline-block; min-width: 26px; height: 26px; border-radius: 50%; background: #fcc419; border: 2px solid #b08900; font-size: 11px; line-height: 22px; margin: 0 1px; }
+  #qte .coin.c50 { background: #ffd43b; min-width: 30px; height: 30px; line-height: 26px; } #qte .coin.c1 { background: #dee2e6; border-color: #868e96; }
+  #qte .qte-bar { height: 8px; border-radius: 4px; background: #e9ecef; overflow: hidden; border: 2px solid var(--ink, #2a1f3d); } #qte .qte-bar i { display: block; height: 100%; background: #f59f00; width: 100%; }
+  #qte .qte-help { font-size: 12px; margin-top: 4px; opacity: .8; }`;
+  document.head.appendChild(st);
+}
+
 /** Interaction prompt for a store-signature karen, built from its data (sigkarens.ts). */
 function sigCandidate(c: CustomerSnap, hands: (string | null)[], money: number, t: Target, point: Candidate['point']): Candidate {
   const d = SIG_KARENS[c.kind as keyof typeof SIG_KARENS];
@@ -1242,6 +1320,7 @@ function shortLabel(k: ActKind, target?: Target, s?: Snapshot | null) {
     knock: '打翻', heckle: '嗆人', checkout: '結帳', brew: FOOD_INFO.coffee.verb, heat: FOOD_INFO.meal.verb, deliver: '交付', takeBox: '拿貨', stock: '上架', returnBox: '放回',
     takeMop: '拿拖把', returnMop: '放回', clean: '清理', calm: '安撫', coupon: '折價券', askQueue: '請排隊', stopFilm: '制止', checkBag: '請結帳', pickup: '撿起',
     stopLitter: '請撿垃圾', unplug: '拔插頭', treat: '請喝', repeatOrder: '複誦點單', recommend: '推薦招牌', limitTry: '限試穿', grab: '抓起', sigAct: '處理', sigAlt: '另一招',
+    escort: '帶去對獎', countChange: '陪她數', exactChange: '找剛好', stopBag: '攔下', toiletRule: '限消費',
   };
   const t = m[k] ?? '互動';
   return t.length > 8 ? t.slice(0, 7) + '…' : t;
