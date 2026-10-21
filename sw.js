@@ -26,7 +26,7 @@ self.addEventListener('install', e => {
 self.addEventListener('activate', e => { e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim())); });
 self.addEventListener('fetch', e => {
   const url = new URL(e.request.url);
-  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.endsWith('/ws') || url.pathname.endsWith('/health')) return;
+  if (e.request.method !== 'GET' || url.origin !== location.origin || url.pathname.endsWith('/ws') || url.pathname.endsWith('/health') || url.pathname.includes('/api/')) return;
   // UI font files: cache-first by their ?v= content hash; a rebuilt font replaces the older copy of the same file
   if (url.pathname.includes('/fonts/') && url.searchParams.has('v')) {
     e.respondWith(caches.match(e.request).then(hit => hit || fetch(e.request).then(res => {
