@@ -139,10 +139,16 @@ const frames = ms => pg.waitForTimeout(ms);
   });
   if (pick.idx < 0) fail('no option adds up: ' + JSON.stringify(pick)); else ok(`owed $${pick.due}, options ${pick.sums.join('/')}`);
   const rev0 = await pg.evaluate(() => window.__game.conn.room.world.dayStats.revenue);
+  // read her the tick she is settled and hold the store there (as for the 阿伯 below): on a busy machine she had already
+  // walked out and been removed before the next read, which read nothing although she had paid
+  await pg.evaluate(id => {
+    const r = window.__game.conn.room, up = r.update; window.__chg = null;
+    r.update = function (dt) { up.call(this, dt); const c = this.world.customers.find(c => c.id === id); if (c?.resolved && !window.__chg) { window.__chg = { resolved: true, state: c.state, rev: this.world.dayStats.revenue }; window.__hold = true; this.update = up; } };
+  }, id);
   await pg.keyboard.press(`Digit${pick.idx + 1}`);
-  await pg.waitForFunction(id => { const c = window.__game.conn.room.world.customers.find(c => c.id === id); return !c || c.resolved; }, id, { timeout: 4000 }).catch(() => {});
-  const after = await cust(id);
-  const rev1 = await pg.evaluate(() => window.__game.conn.room.world.dayStats.revenue);
+  const after = await pg.waitForFunction(() => window.__chg, null, { timeout: 4000 }).then(h => h.jsonValue(), () => cust(id));
+  const rev1 = after?.rev ?? await pg.evaluate(() => window.__game.conn.room.world.dayStats.revenue);
+  await pg.evaluate(() => { window.__hold = false; });
   if (!after?.resolved || after.state !== 'leaving' || rev1 <= rev0) fail('exact change did not settle + pay ' + JSON.stringify(after) + ` ${rev0}→${rev1}`); else ok(`exact change: handled and paid on the spot (+$${rev1 - rev0})`);
   if (await pg.locator('#qte').count()) fail('prompt still open');
 }
