@@ -11,6 +11,7 @@
 
 ## 升級循環
 - 2026-10-27 使用者說「繼續」：恢復升級循環，從 docs/MILESTONE.md 的「下禮拜待辦」開始（第 30 輪起）。
+- 2026-10-27 第 32 輪後使用者說「先暫停」：循環暫停。下次說「繼續」就從第 33 輪開始（預定內容：新特殊營業日「演唱會散場夜」，見 docs/MILESTONE.md）。
 - 每一輪做完：跑測試（typecheck、npm test、test:net、build、test:e2e、electron）→ 更新 docs/TEST-LOG.md → commit + push → 更新試玩頁 → 用中文簡短回報 → 20 分鐘後開始下一輪，直到使用者說「暫停」。使用者的新回饋優先。
 
 ## 其他
