@@ -24,7 +24,7 @@ const B = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, VIEW: 8, START: 
 const XBOX_ID = 'Xbox 360 Controller (XInput STANDARD GAMEPAD)';
 const PS_ID = 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)';
 
-async function open(phone) {
+async function open(phone, textScale = 1) {
   const ctx = await browser.newContext(phone ? { viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true, deviceScaleFactor: 1 } : { viewport: { width: 1280, height: 720 } });
   if (!phone) await ctx.addInitScript(id => {
     const mk = () => ({ pressed: false, touched: false, value: 0 });
@@ -36,13 +36,13 @@ async function open(phone) {
   pg.on('pageerror', e => errors.push(`${tag}: ${e}`));
   pg.on('console', m => { if (m.type() === 'error' && !/favicon|ERR_|Failed to load resource|accounts\.google|GSI|WebSocket/.test(m.text())) errors.push(`${tag}: ${m.text()}`); });
   await pg.goto(URL);
-  await pg.evaluate(() => {
+  await pg.evaluate(textScale => {
     localStorage.clear();
     const stars = {}; for (const c of [1, 2]) for (let i = 1; i <= 5; i++) stars[`${c}-${i}`] = 2;
-    localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'low', name: '阿明', captions: true }));
+    localStorage.setItem('fucustomer.settings.v1', JSON.stringify({ quality: 'low', name: '阿明', captions: true, textScale }));
     localStorage.setItem('fucustomer.flags.v1', JSON.stringify({ tutorialDone: true, seenKarens: ['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger', 'lottery', 'change', 'bagman', 'toilet'], seenMaps: ['convenience'] }));
     localStorage.setItem('fucustomer.career.v1', JSON.stringify({ version: 1, level: 8, wallet: 500, stars, clears: { ...stars }, stats: { shifts: 10, wins: 10 }, story: ['ch1-intro', 'ch1-outro', 'ch2-intro', 'ch2-outro', 'ch3-intro'] }));
-  });
+  }, textScale);
   await pg.reload();
   await pg.waitForSelector('#m-career');
   await pg.click('#m-career');
@@ -387,6 +387,49 @@ function helpers(pg) {
     check(JSON.stringify(p.keys) === JSON.stringify([T.toilet]) && btn === T.toilet && fits, `touch: toilet chip [${p.keys}] = button "${btn}" (fits: ${fits})`);
     await pg.screenshot({ path: `${OUT}/r28b-phone-toilet.png` });
     await h.hold(false);
+  }
+  await ctx.close();
+}
+
+// ======================= (C) phone 844x390 at 字級 130 %: the 找零 card stays out of the left thumb's area =======================
+// (round 30: at 130 % the card grew down into the joystick area; bounding boxes only — emulated touch, not a real phone)
+{
+  const { ctx, pg } = await open(true, 1.3);
+  const h = helpers(pg);
+  await h.frames(10, 1200);
+  const W = 844, H = 390, THUMB = { x: 0, y: H * 0.55, w: W * 0.42, h: H * 0.45 };
+  const hit = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  const id = await h.spawn('change');
+  const st = await h.fastForward(id, "c.state === 'atRegister'");
+  await h.stand(st.x, st.z + 1.2, id, 0);
+  await h.seen(id, "c.state === 'atRegister'", 'the 找零計較姐 at the till (130 %)');
+  await h.waitPrompt(/陪找零計較姐數零錢/);
+  await h.hold(false);
+  await pg.tap('#t-alt');
+  const opened = await pg.waitForSelector('#qte', { timeout: 3000 }).then(() => true, () => false);
+  if (!opened) fail('130 %: tap 找剛好 did not open the prompt');
+  else {
+    await pg.evaluate(() => { const q = window.__game.qte; if (q) q.until = performance.now() + 60000; });
+    await h.frames(3, 300);
+    const m = await pg.evaluate(() => {
+      const box = e => { const r = e.getBoundingClientRect(); return { x: r.x, y: r.y, w: r.width, h: r.height }; };
+      return {
+        card: box(document.getElementById('qte')), opts: [...document.querySelectorAll('#qte .qte-opt')].map(box),
+        btns: [...document.querySelectorAll('#touch .tbtn')].filter(b => !b.classList.contains('hidden') && b.offsetParent !== null).map(b => ({ id: b.id, ...box(b) })),
+        scale: getComputedStyle(document.documentElement).getPropertyValue('--ui-scale').trim(),
+        topmost: [...document.querySelectorAll('#qte .qte-opt')].every(b => { const r = b.getBoundingClientRect(); return b.contains(document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)); }),
+      };
+    });
+    const c = m.card, inView = [c, ...m.opts].every(o => o.x >= 0 && o.y >= 0 && o.x + o.w <= W && o.y + o.h <= H);
+    const clash = m.btns.filter(b => hit(c, b)).map(b => b.id), big = m.opts.every(o => o.w >= 48 && o.h >= 48);
+    check(m.scale === '1.3' && inView && !hit(c, THUMB) && !clash.length && big && m.topmost,
+      `130 %: 找零 card ${Math.round(c.x)},${Math.round(c.y)} ${Math.round(c.w)}x${Math.round(c.h)} (bottom ${Math.round(c.y + c.h)} ≤ thumb top ${THUMB.y}), on screen ${inView}, buttons [${clash}], handfuls ${m.opts.map(o => `${Math.round(o.w)}x${Math.round(o.h)}`).join(', ')}, tappable ${m.topmost}`);
+    await h.shot('r28b-phone-130-qte');
+    const pick = await h.rightPick();
+    await pg.locator('#qte .qte-opt').nth(pick.idx).tap();
+    await pg.waitForFunction(id => { const c = window.__game.conn.room.world.customers.find(c => c.id === id); return !c || c.resolved; }, id, { timeout: 4000 }).catch(() => {});
+    const res = await h.cust(id);
+    check(res?.resolved && !(await pg.locator('#qte').count()), '130 %: answered by tap, settled');
   }
   await ctx.close();
 }

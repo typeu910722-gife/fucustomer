@@ -40,6 +40,12 @@ await pg.keyboard.press('Enter');
 await pg.waitForFunction(() => window.__game.snap.phase === 'open', null, { timeout: 15000 });
 // keep every toast (the on-screen ones fade)
 await pg.evaluate(() => { const g = window.__game, orig = g.onEvent.bind(g); window.__toastLog = []; g.onEvent = e => { if (e.e === 'toast') window.__toastLog.push(e.text); orig(e); }; });
+// the solo store at wall-clock speed, holdable (window.__hold) like round28b, so a slow machine can't let a karen walk on
+// while the test waits for the page to show the prompt
+await pg.evaluate(() => {
+  const c = window.__game.conn; clearInterval(c.timer); c.last = performance.now();
+  c.timer = setInterval(() => { const t = performance.now(); let dt = (t - c.last) / 1000; c.last = t; if (window.__hold) return; while (dt > 0.0001) { const s = Math.min(0.05, dt); c.room.update(s); dt -= s; } }, 50);
+});
 
 /** Clears the store and spawns one karen of `kind` (featured, right away); returns its id (the leader for a group). */
 const spawn = kind => pg.evaluate(kind => {
@@ -52,13 +58,18 @@ const spawn = kind => pg.evaluate(kind => {
   w.karenTimer = 1e9;
   return c ? c.id : null;
 }, kind);
-/** Runs the simulation (in-page) until `pred(customer, world)` holds; returns the customer's state. */
-const fastForward = (id, pred, maxS = 60) => pg.evaluate(([id, pred, maxS]) => {
-  const r = window.__game.conn.room, w = r.world, f = new Function('c', 'w', 'return ' + pred);
-  for (let i = 0; i < maxS * 20; i++) { const c = w.customers.find(x => x.id === id); if (!c || f(c, w)) break; w.phaseLeft = 999; w.chaos = 0; r.update(0.05); }
+/**
+ * Runs the simulation (in-page) until `pred(customer, world)` holds; returns the customer's state. With `freeze` it stops
+ * on a tick that sent the page a snapshot (single player sends one every other tick) and holds the store there
+ * (round28b's fastForward), so the page can show exactly that state while the test waits for the prompt.
+ */
+const fastForward = (id, pred, maxS = 60, freeze = false) => pg.evaluate(([id, pred, maxS, freeze]) => {
+  const r = window.__game.conn.room, w = r.world, f = new Function('c', 'w', 'return ' + pred), every = Math.round(20 / 12);
+  for (let i = 0; i < maxS * 20; i++) { const c = w.customers.find(x => x.id === id); if (!c || (f(c, w) && (!freeze || (i > 0 && r.tickCount % every === 0)))) break; w.phaseLeft = 999; w.chaos = 0; r.update(0.05); }
+  if (freeze) window.__hold = true;
   const c = w.customers.find(x => x.id === id);
   return c ? { state: c.state, resolved: c.resolved, x: c.x, z: c.z, life: c.life } : null;
-}, [id, pred, maxS]);
+}, [id, pred, maxS, freeze]);
 /** Puts the worker at (x, z) looking at the customer (both in the world and the client, like round23). */
 const stand = (x, z, id, pitch = -0.12) => pg.evaluate(([x, z, id, pitch]) => {
   const g = window.__game, w = g.conn.room.world, p = [...w.players.values()][0], c = w.customers.find(c => c.id === id);
@@ -113,7 +124,8 @@ const frames = ms => pg.waitForTimeout(ms);
   const pr = await waitPrompt(/陪找零計較姐數零錢/);
   if (!/陪找零計較姐數零錢/.test(pr)) fail('prompt: ' + pr); else ok('prompt: ' + pr);
   await pg.keyboard.press('KeyF');
-  await pg.waitForSelector('#qte', { timeout: 3000 }).then(() => ok('exact-change prompt opened')).catch(() => fail('F did not open the prompt'));
+  // (wall clock: a busy machine has taken 3–4 s to deliver the key and the next snapshot)
+  await pg.waitForSelector('#qte', { timeout: 6000 }).then(() => ok('exact-change prompt opened')).catch(() => fail('F did not open the prompt'));
   // the prompt gives 5 s; software-GL screenshots are slow, so stretch the deadline for the test (the timeout path is unit-tested)
   const secs = await pg.evaluate(() => { const q = window.__game.qte; if (!q) return -99; const left = (q.until - performance.now()) / 1000; q.until = performance.now() + 60000; return left; });
   if (!(secs <= 5 && secs > -99)) fail('prompt time limit ' + secs); else ok(`prompt has a time limit (≤ 5 s; ${secs.toFixed(1)} s left when read)`);
@@ -145,16 +157,28 @@ const frames = ms => pg.waitForTimeout(ms);
   if (!/門口/.test(inside)) fail('inside the store the prompt should say to wait at the door: ' + inside); else ok('inside: ' + inside);
   await pg.screenshot({ path: `${OUT}/r27a-bagman-inside.png` });
   await pg.evaluate(id => { const c = window.__game.conn.room.world.customers.find(c => c.id === id); c.life = 0.1; }, id);
-  const st = await fastForward(id, "c.state === 'toExit' && c.z > 12.8 && Math.abs(c.x - 12) < 3.2", 40);
+  // (he only dawdles a few seconds at the door: the store is held there while the page catches up, the prompt is read and
+  // E is taken — a busy machine used to let him walk out before E landed)
+  const st = await fastForward(id, "c.state === 'toExit' && c.z > 12.8 && Math.abs(c.x - 12) < 3.2", 40, true);
   if (st?.state !== 'toExit') fail('bagman never headed out ' + JSON.stringify(st));
   await stand(st.x - 0.4, st.z - 1.3, id, -0.05);
   const atDoor = await waitPrompt(/在門口攔下/);
   if (!/在門口攔下免費袋子阿伯/.test(atDoor)) fail('door prompt: ' + atDoor); else ok('at the door: ' + atDoor);
-  // (he only dawdles a few seconds at the door: act first, screenshot after)
-  await pg.keyboard.press('KeyE');
+  // E while the store is still held: the act is taken at once (the worker starts checking the bag), and only then
+  // does the store run on — on a slow machine the page's next frame could come after he had already walked out
+  await pg.keyboard.down('KeyE');
+  await pg.waitForFunction(id => { const w = window.__game.conn.room.world; return !![...w.players.values()][0].busy || w.customers.find(c => c.id === id)?.resolved; }, id, { timeout: 4000 }).catch(() => {});
+  await pg.keyboard.up('KeyE');
+  // read him the moment he gives in (a watch on the store's own tick) and hold the store there: the test set his time in
+  // the store to 0.1 s, so once stopped he is gone within a few ticks — a slow screenshot in between used to read nothing
+  await pg.evaluate(id => {
+    const r = window.__game.conn.room, up = r.update; window.__bag = null;
+    r.update = function (dt) { up.call(this, dt); const c = this.world.customers.find(c => c.id === id); if (c?.resolved && !window.__bag) { window.__bag = { resolved: true, state: c.state, items: c.items.length }; window.__hold = true; this.update = up; } };
+    window.__hold = false;
+  }, id);
+  const after = await pg.waitForFunction(() => window.__bag, null, { timeout: 4000 }).then(h => h.jsonValue(), () => cust(id));
   await pg.screenshot({ path: `${OUT}/r27a-bagman-door.png` });
-  await pg.waitForFunction(id => window.__game.conn.room.world.customers.find(c => c.id === id)?.resolved, id, { timeout: 4000 }).catch(() => {});
-  const after = await cust(id);
+  await pg.evaluate(() => { window.__hold = false; });
   if (!after?.resolved || !after.items) fail('bagman not stopped ' + JSON.stringify(after)); else ok(`stopped at the door: ${after.items} item(s) go to the till`);
 }
 
@@ -220,6 +244,9 @@ await pg.evaluate(() => window.__game.exit());
 await backToFree();
 // 跨年夜: jump to just before midnight, run the countdown, watch the fireworks
 await runSpecial('newyear');
+// The page learns the shift is open from a snapshot, but #h-clock is rewritten on the next HUD frame, so reading it at
+// once could still give 「準備 0:00」 (the round-29 flake): wait for the HUD to show the open-shift clock, then check it.
+await pg.waitForFunction(() => /🕒/.test(document.getElementById('h-clock')?.textContent ?? ''), null, { timeout: 15000 }).catch(() => {});
 const clockStart = await pg.evaluate(() => document.getElementById('h-clock')?.textContent ?? '');
 if (!/21:0/.test(clockStart)) fail('跨年夜 clock should start at 21:00: ' + clockStart); else ok('clock: ' + clockStart);
 await pg.evaluate(() => {

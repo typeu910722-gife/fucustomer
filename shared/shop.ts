@@ -65,6 +65,10 @@ export const COSMETICS: Cosmetic[] = [
   C({ id: 'sign_live', name: '「LIVE」直播燈牌', icon: '🔴', slot: 'sign', reward: 'kai', color: 0xff4d6d, color2: 0xffffff, desc: '直播主阿凱送的燈牌。開店就是開台' }),
   C({ id: 'uni_qc', name: '品管合格背心', icon: '✅', slot: 'uniform', reward: 'zhang', color: 0x2b8a3e, desc: '張伯在工廠穿了四十年的背心' }),
   C({ id: 'mascot_plug', name: '插頭公仔', icon: '🔌', slot: 'mascot', reward: 'vicky', color: 0xf8f9fa, color2: 0x495057, desc: 'Vicky 送的。每個奧客都有一個還沒找到插座的故事' }),
+  C({ id: 'hat_lotto', name: '中獎紅包帽', icon: '🧧', slot: 'hat', reward: 'lotto', color: 0xe03131, color2: 0xfcc419, desc: '對獎阿公用三十年的發票紅包袋縫的。中兩百的運，分你一半' }),
+  C({ id: 'tag_coin', name: '一元硬幣名牌', icon: '🪙', slot: 'tag', reward: 'meiling', color: 0xadb5bd, color2: 0xfab005, desc: '找零姐用小美第一天找的一塊錢做的。一塊都沒錯' }),
+  C({ id: 'mascot_dragon', name: '塑膠袋神龍公仔', icon: '🐉', slot: 'mascot', reward: 'bags', color: 0x40c057, color2: 0xfab005, desc: '袋子伯「奧客退散」展的迷你版。全身都是你們店的袋子' }),
+  C({ id: 'uni_love', name: '情侶款圍裙', icon: '💞', slot: 'uniform', reward: 'couple', color: 0xf06595, color2: 0xffffff, desc: '網紅情侶拍第一支影片時穿的。分過手，也和好過' }),
   // ---- 店面等級 rewards (free, granted when any of your stores reaches the level; see shared/progression.ts) ----
   C({ id: 'sign_local', name: '「在地推薦」燈牌', icon: '🪧', slot: 'sign', reward: 'store:3', color: 0x51cf66, color2: 0xebfbee, desc: '店面 Lv3 獎勵。里長親自掛上去的（他堅持）' }),
   C({ id: 'mat_carpet', name: '排隊名店紅地毯', icon: '🟥', slot: 'mat', reward: 'store:6', color: 0xa61e4d, color2: 0xfab005, desc: '店面 Lv6 獎勵。每位客人進門都像走星光大道' }),

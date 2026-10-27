@@ -3,7 +3,7 @@
 //     code before this round), (2) the generators never produce the excluded combos, (3) the new rules apply.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { CHAPTERS, DAILY_TUNE, DAILY_TUNE_R22, ROUND6_DATE, buildDailyConfig, dailyPlan, newProfile, type CareerProfile } from '../shared/career.ts';
+import { CHAPTERS, DAILY_STORE_DATE, DAILY_TUNE, DAILY_TUNE_R22, ROUND6_DATE, STORE_RULES, buildDailyConfig, dailyPlan, newProfile, type CareerProfile } from '../shared/career.ts';
 import {
   ROUND6_WEEK, SPECIAL_EXCLUDE, TWIST_TUNE, TWIST_TUNE_R22, WEEKLY_STORE, buildWeeklyConfig, isoWeek, weeklyPlan,
 } from '../shared/weekly.ts';
@@ -80,4 +80,26 @@ test('round 6: new weekly / daily rules apply from the cut-off on', () => {
   assert.deepEqual(dc.karens, ['streamer']); assert.equal(dc.firstKaren, DAILY_TUNE.streamers.firstKaren);
   // 跨年夜: rush and drunk-spill timing
   assert.deepEqual([NEWYEAR.rushEvery, NEWYEAR.firstSpill, NEWYEAR.spillEvery], [2.0, 12, 22]);
+});
+
+test('round 30: daily challenges use the store rules from DAILY_STORE_DATE on; earlier dates unchanged', () => {
+  assert.equal(DAILY_STORE_DATE, '2026-10-28');
+  const ps = players();
+  // 2026-10-22 … 2026-10-27 (includes a 手搖飲店 day, 2026-10-23) replay exactly as before (hash from the code before round 30)
+  assert.equal(fnv(days('2026-10-22', '2026-10-27').map(d => JSON.stringify(ps.map(p => [dailyPlan(p, d), buildDailyConfig(p, d)]))).join('\n')), 'a18430ed');
+  assert.equal(dailyPlan(ps[0], '2026-10-23').map, 'boba');
+  assert.notEqual(buildDailyConfig(ps[0], '2026-10-23').register2, true);
+  // from the cut-off on: every 手搖飲店 day has both tills and at most half made-to-order drinks; target ×0.9
+  let boba = 0;
+  for (const d of days(DAILY_STORE_DATE, '2028-12-31')) {
+    if (dailyPlan(ps[0], d).map !== 'boba') continue;
+    boba++;
+    for (const p of ps) {
+      const cfg = buildDailyConfig(p, d);
+      assert.equal(cfg.register2, true, d);
+      assert.ok(cfg.foodChance <= STORE_RULES.boba.foodChance!, d);
+    }
+  }
+  assert.ok(boba > 10, String(boba));
+  assert.equal(WEEKLY_STORE, STORE_RULES);
 });

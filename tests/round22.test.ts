@@ -23,7 +23,7 @@ function buildIds(c: number) { return [1, 2, 3, 4, 5, 6].map(i => `${c}-${i}`); 
 
 // ---------------- 常客奧客 arcs ----------------
 test('arc data: four regulars, four stages each, rewards are real story cosmetics with achievements', () => {
-  assert.ok(ARCS.length >= 3 && ARCS.length <= 5);
+  assert.ok(ARCS.length >= 3 && ARCS.length <= 8);
   for (const a of ARCS) {
     assert.equal(a.stages.length, 4);
     const c = getCosmetic(a.reward.cosmetic)!;

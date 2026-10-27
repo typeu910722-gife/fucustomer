@@ -24,6 +24,7 @@ import * as UI from './ui.ts';
 import { desktop } from './platform.ts';
 import { inputMode, keyOf, padStyle, rumble, setRumble } from './pad.ts';
 import { BTN, actionLabel, controlsLine, promptDevice, promptKey, qteGlyph, qteHelp, setControlsContext } from './padmap.ts';
+import { keepFocus } from './padnav.ts';
 import { EmoteWheel } from './emote-wheel.ts';
 import { hudq } from './hudq.ts';
 import { JuiceKind, RateLimit, TimeWarp, juiceProfile, stampText, throwStrength } from './juice.ts';
@@ -454,6 +455,7 @@ export class Game {
       <div class="qte-bar" role="progressbar" aria-label="剩餘時間" aria-valuemin="0" aria-valuemax="${total}" aria-valuenow="${total}"><i></i></div>
       <div class="qte-foot"><span class="qte-time" aria-hidden="true">⏱ ${total.toFixed(1)} 秒</span><span class="qte-help"></span></div>`;
     ($('hud') ?? document.body).appendChild(el);
+    hudq.layout(); // (phone: placed clear of the joystick corner and the buttons right away, not on the next frame)
     el.querySelectorAll<HTMLButtonElement>('[data-qte]').forEach(b => {
       // pointerdown as well as click: on a phone the tap must not wait for a click that a moving thumb can cancel
       const pick = (ev: Event) => { ev.preventDefault(); ev.stopPropagation(); this.answerChange(Number(b.dataset.qte)); };
@@ -675,6 +677,9 @@ export class Game {
   private showHint(text: string) {
     const el = $('hintbar'); el.textContent = '💡 ' + text; el.classList.remove('hidden');
     this.hintUntil = performance.now() + 7000;
+    // (hints come from events handled after the HUD render: the stack is fitted again now, or the karen alert below the
+    // hint bar runs past the column until the next render)
+    hudq.layout();
   }
   private flash(red: boolean) {
     if (this.settings.reduceMotion) return;
@@ -755,8 +760,7 @@ export class Game {
     this.shopKey = key;
     const body = document.getElementById('shop-body'); if (!body) return;
     const scroll = body.parentElement!.scrollTop;
-    body.innerHTML = UI.shopHtml(s, allow);
-    this.wireShopButtons(body);
+    keepFocus(body, () => { body.innerHTML = UI.shopHtml(s, allow); this.wireShopButtons(body); });
     body.parentElement!.scrollTop = scroll;
   }
 
@@ -767,12 +771,14 @@ export class Game {
     this.summaryKey = key;
     const body = document.getElementById('sum-body'); if (!body) return;
     const scroll = body.scrollTop;
-    body.innerHTML = UI.summaryHtml(s, this.selfId);
-    const shop = document.getElementById('sum-shop')!;
-    shop.innerHTML = UI.shopHtml(s, true);
-    this.wireShopButtons(shop);
-    const me = s.players.find(p => p.id === this.selfId);
-    $('sum-ready').addEventListener('click', () => this.send({ type: 'ready', ready: !me?.ready }));
+    keepFocus(body, () => {
+      body.innerHTML = UI.summaryHtml(s, this.selfId);
+      const shop = document.getElementById('sum-shop')!;
+      shop.innerHTML = UI.shopHtml(s, true);
+      this.wireShopButtons(shop);
+      const me = s.players.find(p => p.id === this.selfId);
+      $('sum-ready').addEventListener('click', () => this.send({ type: 'ready', ready: !me?.ready }));
+    });
     body.scrollTop = scroll;
   }
 
@@ -1373,7 +1379,10 @@ function ensureQteStyle() {
   body.reduce-motion #escortcue { animation: none !important; }
   body.touch #escortcue { top: 36%; font-size: 16px; }
   /* 字級 > 100 %: vw inside the zoomed HUD grows with the zoom, so the phone card keeps its real width (clear of the buttons) */
-  body.touch.big-text #qte { width: calc(44vw / var(--ui-scale, 1)); }`;
+  body.touch.big-text #qte { width: calc(44vw / var(--ui-scale, 1)); }
+  /* phone at 字級 115 % / 130 %: the card grows half as much as the rest of the HUD (like the message column), so even a
+     handful of four coin kinds fits above the left thumb's joystick area (hudq.ts places it) */
+  body.touch.big-text #qte { --qte-fit: calc((1 + (var(--ui-scale, 1) - 1) * .5) / var(--ui-scale, 1)); zoom: var(--qte-fit); width: calc(44vw / var(--ui-scale, 1) / var(--qte-fit)); }`;
   document.head.appendChild(st);
 }
 

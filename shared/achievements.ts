@@ -3,7 +3,7 @@
 import { CHAPTERS, ENDLESS_ID, type CareerProfile, type ShiftResult } from './career.ts';
 import { dexCount } from './karendex.ts';
 import { SIG_KINDS } from './sigkarens.ts';
-import { arcDone } from './regulars.ts';
+import { ARCS, arcDone } from './regulars.ts';
 import { bestStreakAll, branchCount, maxStoreLevel } from './progression.ts';
 
 export interface Achievement { id: string; name: string; desc: string; check: (p: CareerProfile, r?: ShiftResult) => boolean }
@@ -41,6 +41,11 @@ export const ACHIEVEMENTS: Achievement[] = [
   { id: 'ARC_KAI', name: '轉型成功', desc: '完成「直播主阿凱」的故事', check: p => arcDone(p, 'kai') },
   { id: 'ARC_ZHANG', name: '品管合格', desc: '完成「退貨張伯」的故事', check: p => arcDone(p, 'zhang') },
   { id: 'ARC_VICKY', name: '找到插座', desc: '完成「插座姐 Vicky」的故事', check: p => arcDone(p, 'vicky') },
+  { id: 'ARC_LOTTO', name: '中了兩百', desc: '完成「對獎阿公」的故事', check: p => arcDone(p, 'lotto') },
+  { id: 'ARC_MEILING', name: '一塊都沒錯', desc: '完成「找零姐美玲」的故事', check: p => arcDone(p, 'meiling') },
+  { id: 'ARC_BAGS', name: '回收藝術家', desc: '完成「袋子伯阿土」的故事', check: p => arcDone(p, 'bags') },
+  { id: 'ARC_COUPLE', name: '百年好合', desc: '完成「網紅情侶」的故事', check: p => arcDone(p, 'couple') },
+  { id: 'ARC_ALL', name: '常客全員到齊', desc: `${ARCS.length} 位常客奧客的故事全部看完`, check: p => ARCS.every(a => arcDone(p, a.id)) },
   // 每週挑戰 (weekly.ts)
   { id: 'WEEKLY_BADGE', name: '本週全制霸', desc: '一週內完成每週挑戰的 3 個目標，拿到週章', check: p => p.weekly.badges.length >= 1 },
   { id: 'WEEKLY_BADGE_4', name: '月月不缺席', desc: '收集 4 枚每週挑戰週章', check: p => p.weekly.badges.length >= 4 },

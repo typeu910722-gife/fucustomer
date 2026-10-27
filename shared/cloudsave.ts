@@ -33,6 +33,21 @@ export interface CloudView {
 }
 export type CloudResult<T> = { ok: true; value: T } | { ok: false; status: number; error: string };
 
+// ---------------- client-side shape checks ----------------
+// A 200 answer is not always ours: a captive portal / proxy can answer with an HTML page, a broken deploy with `{}`.
+// The game checks the shape before it uses the data (round 30 monkey sweep: a 200 HTML page after 上傳到雲端 threw
+// "Cannot read properties of undefined (reading 'level')" and left the buttons disabled).
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+const isNum = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const isSummary = (v: unknown) => isObj(v) && isNum(v.level);
+const isEntry = (v: unknown) => isObj(v) && typeof v.code === 'string' && isNum(v.at) && isSummary(v.summary);
+/** PUT answer: { at, size, summary, used, max }. */
+export function isUploadAnswer(v: unknown): boolean { return isObj(v) && isNum(v.at) && isSummary(v.summary) && isNum(v.used) && isNum(v.max); }
+/** GET answer (CloudView): latest entry, prev entry or null. */
+export function isCloudView(v: unknown): boolean { return isObj(v) && isEntry(v.latest) && (v.prev == null || isEntry(v.prev)); }
+/** DELETE answer: { deleted }. */
+export function isDeleteAnswer(v: unknown): boolean { return isObj(v) && typeof v.deleted === 'boolean'; }
+
 export const utcDay = (t: number) => new Date(t).toISOString().slice(0, 10);
 const nextUtcMidnight = (t: number) => { const d = new Date(t); return Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate() + 1); };
 

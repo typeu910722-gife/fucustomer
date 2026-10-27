@@ -184,11 +184,14 @@ for (const ts of [1, 1.3]) {
   // 搗亂報告 → switch to another career tab → reply lands: stays on that tab, losses applied, message waits for the store tab
   await toStore();
   const money0 = (await prof()).store.save.money;
-  // The career screen can redraw itself right after opening (see docs/MILESTONE.md backlog); click once it has settled
-  // so the click lands on the live button.
-  await sleep(800);
+  // No settling wait: the click goes in right after the tab opens, and the screen must still be the same DOM once the
+  // click has been handled (round 30: checked that nothing redraws the career screen after it opens).
+  await pg.evaluate(() => { window.__careerScreen = document.getElementById('screen'); });
   await pg.click('#st-reports');
-  await pg.waitForFunction(() => /查詢中/.test(document.getElementById('st-msg')?.textContent ?? ''), null, { timeout: 3000 }).catch(() => {});
+  const asked = await pg.waitForFunction(() => /查詢中/.test(document.getElementById('st-msg')?.textContent ?? ''), null, { timeout: 3000 }).then(() => true, () => false);
+  const same = await pg.evaluate(() => window.__careerScreen === document.getElementById('screen'));
+  if (!asked || !same) fail(`搗亂報告 clicked right after opening the tab: 查詢中 shown=${asked}, same screen DOM=${same}`);
+  else ok('自己的店: the career screen is not redrawn after opening (搗亂報告 clicked at once, no wait)');
   await pg.click('[data-tab="skills"]');
   await sleep(DELAY + 1200);
   const tab = await pg.evaluate(() => document.querySelector('.tab.on')?.dataset.tab);

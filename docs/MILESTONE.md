@@ -48,7 +48,7 @@
 2. 真人試玩後的回饋修正（最優先，有回饋就先做）。
 3. `docs/QA-MONKEY.md` 未修項目整理、亂按測試再跑一輪。
 4. 內容：更多特殊營業日、常客故事線、主線第 11 章？（待使用者決定方向）
-5. 上架準備接續（Google Play 補完 `docs/wip/`、Steam 等 App ID）。
+5. 上架準備接續（Google Play 補完 `docs/wip/`、Steam 等 App ID）。上架 Steam 前要先跑 `node store/src/steam-art.mjs` 補常客故事等新成就的圖示，再跑 `npx tsx steam/achievements.ts` 更新成就清單（目前清單停在 22 個）。
 6. 網頁版金流（綠界測試環境），需要使用者先註冊。
 
 ## 重要文件索引

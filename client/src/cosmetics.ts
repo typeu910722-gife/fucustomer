@@ -34,6 +34,7 @@ export function wearOutfit(q: Quality, H: THREE.Object3D, torso: THREE.Object3D,
     put(g, B(0.09, 0.016, 0.01), t2, 0, 0.005, 0.016);
     if (tag.id === 'tag_star' || tag.id === 'tag_gold') put(g, CONE(0.025, 0.012, 5), t2, -0.05, 0.02, 0.016, Math.PI / 2);
     if (tag.id === 'tag_heart') for (const s of [-1, 1]) put(g, SPH(0.014, 6, 4), t2, -0.05 + s * 0.009, 0.02, 0.016);
+    if (tag.id === 'tag_coin') put(g, CYL(0.024, 0.024, 0.01, 12), t2, -0.05, 0.012, 0.016, Math.PI / 2); // the 1-dollar coin
   }
   const hat = getCosmetic(o.hat);
   if (!hat) return false;
@@ -48,6 +49,13 @@ function apronPattern(q: Quality, torso: THREE.Object3D, id: string, c2: number,
   if (id === 'uni_stripe') for (const y of [-0.19, -0.09, 0.01, 0.11]) put(g, B(aw, 0.04, 0.008), m2, 0, y, z);
   else if (id === 'uni_check') { for (let i = 0; i < 4; i++) for (let j = 0; j < 5; j++) if ((i + j) % 2 === 0) put(g, B(aw / 4, 0.09, 0.008), m2, (i - 1.5) * aw / 4, -0.2 + j * 0.095, z); }
   else if (id === 'uni_dots') { for (const [x, y] of [[-0.1, -0.16], [0.08, -0.12], [-0.03, -0.03], [0.11, 0.03], [-0.11, 0.07], [0.03, 0.14]]) put(g, CYL(0.022, 0.022, 0.008, 8), m2, x * w, y, z, Math.PI / 2); }
+  else if (id === 'uni_love') {
+    // three little hearts (two bumps and a point each)
+    for (const [x, y] of [[-0.08, -0.12], [0.08, -0.12], [0, 0.05]]) {
+      for (const sx of [-1, 1]) put(g, SPH(0.03, 6, 4), m2, x * w + sx * 0.022, y + 0.012, z, 0, 0, 0, 1, 1, 0.3);
+      put(g, CONE(0.04, 0.05, 4), m2, x * w, y - 0.02, z, Math.PI, 0, 0, 1, 1, 0.3);
+    }
+  }
   else if (id === 'uni_neon') { put(g, B(aw, 0.018, 0.008), basic(c2), 0, -0.17, z); put(g, B(aw, 0.012, 0.008), basic(0xf06595), 0, -0.13, z); put(g, B(0.016, 0.36, 0.008), basic(c2), aw * 0.38, 0, z); }
 }
 
@@ -89,6 +97,13 @@ function buildHat(q: Quality, H: THREE.Object3D, id: string, c1: number, c2: num
         put(H, CONE(0.045, 0.1, 4), m1, Math.sin(a) * R * 0.78, R * 0.9 + 0.1 + Math.cos(a) * 0.02, -0.03 + Math.cos(a) * R * 0.76);
       }
       put(H, SPH(0.032, 6, 4), basic(c2), 0, R * 0.92, R * 0.78 - 0.02);
+      break;
+    case 'hat_lotto':
+      // a red-envelope paper cap folded from 30 years of receipt envelopes, gold trim and a 中 stamp
+      put(H, CYL(R * 0.86, R * 0.92, 0.16, 8, true), m1, 0, R * 0.86, -0.03, -0.2);
+      put(H, CYL(R * 0.93, R * 0.93, 0.03, 8), m2, 0, R * 0.8, -0.02, -0.2);
+      put(H, CONE(R * 0.86, 0.14, 8), m1, 0, R * 0.86 + 0.15, -0.06, -0.2);
+      put(H, RB(0.09, 0.09, 0.012, 0.01), basic(c2), 0, R * 0.9, R * 0.84 - 0.02, -0.2);
       break;
     case 'hat_gold':
       put(H, CYL(R * 1.08, R * 1.08, 0.025, 16), m1, 0, R * 0.8, -0.02, -0.15);
@@ -187,6 +202,13 @@ export function buildMascot(q: Quality, id: string, c1: number, c2: number): THR
     put(g, RB(0.2, 0.2, 0.14, 0.04), m1, 0, 0.15, 0);
     for (const s of [-1, 1]) { put(g, B(0.025, 0.09, 0.025), mat(0xced4da, q), s * 0.05, 0.29, 0); put(g, SPH(0.016, 5, 4), ink, s * 0.045, 0.17, 0.072); }
     put(g, TOR(0.025, 0.008, 4, 8, Math.PI), ink, 0, 0.125, 0.072, 0, 0, Math.PI);
+  } else if (id === 'mascot_dragon') {
+    // 袋子伯's plastic-bag dragon: a wavy body of puffed bags, a head with gold eyes and a little paper flame
+    for (let i = 0; i < 4; i++) put(g, SPH(0.075 - i * 0.008, 8, 6), i % 2 ? m2 : m1, -0.15 + i * 0.075, 0.08 + (i % 2) * 0.05, 0, 0, 0, 0, 1, 0.9, 1);
+    put(g, SPH(0.085, 9, 7), m1, 0.16, 0.2, 0.02);
+    put(g, RB(0.09, 0.05, 0.08, 0.02), m1, 0.23, 0.18, 0.04);
+    for (const s of [-1, 1]) { put(g, SPH(0.016, 5, 4), basic(c2), 0.19, 0.24, 0.02 + s * 0.05); put(g, CONE(0.02, 0.07, 4), m2, 0.13, 0.3, s * 0.04, 0, 0, 0.4); }
+    put(g, CONE(0.03, 0.08, 5), basic(0xff6b6b), -0.24, 0.1, 0, 0, 0, Math.PI / 2);
   } else if (id === 'mascot_trophy') {
     // a gold cup on a wooden base (店面 Lv8 reward)
     put(g, B(0.2, 0.06, 0.16), m2, 0, 0.03, 0);

@@ -1,5 +1,5 @@
 // Unified input: keyboard + mouse (pointer lock), gamepad, and multi-touch virtual controls.
-import { GAME_BINDINGS, isDown, qteKeepsBinding, qtePadPick, radialDeadzone, stickLook } from './padmap.ts';
+import { GAME_BINDINGS, isDown, menuSwallowsBinding, qteKeepsBinding, qtePadPick, radialDeadzone, stickLook } from './padmap.ts';
 import { currentPad, inputMode, padActive, setMode } from './pad.ts';
 
 export type Action = 'interact' | 'alt' | 'drop' | 'ping' | 'menu' | 'quick' | 'shop' | 'ready' | 'tab' | 'grab' | 'spin' | 'ultimate' | 'hit'
@@ -183,6 +183,7 @@ export class Input {
       }
       for (const [i, a] of GAME_BINDINGS) {
         if (this.qteActive && !qteKeepsBinding(i)) continue;
+        if (!this.enabled && menuSwallowsBinding(i)) continue;
         if (a === 'run') { if (live(i)) run = true; continue; }
         if (live(i) && !this.padPrev[i]) this.pressed.add(a);
       }

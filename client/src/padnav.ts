@@ -74,6 +74,39 @@ function adjust(el: HTMLElement, dir: Dir): boolean {
   return false;
 }
 
+/** A selector that finds the same control again after its container is redrawn: its id, else its data-* attributes. */
+function focusKey(el: HTMLElement): string | null {
+  if (el.id) return `#${CSS.escape(el.id)}`;
+  const data = Object.entries(el.dataset).filter(([k]) => k !== 'armed' && k !== 'label');
+  return data.length ? el.tagName.toLowerCase() + data.map(([k, v]) => `[data-${k.replace(/[A-Z]/g, c => '-' + c.toLowerCase())}="${CSS.escape(v ?? '')}"]`).join('') : null;
+}
+/**
+ * Redraws `root` (innerHTML inside `render`) without throwing away the controller / keyboard focus: the focused control
+ * is found again by id / data-* and refocused (with the pad's focus ring if it had one); when it is gone or disabled
+ * now, the control at the same position in the list takes the focus. The in-shift shop is redrawn whenever money or
+ * stock changes — several times a second while the store is open — and every redraw used to drop the focus, so the
+ * next D-pad press jumped back to the 關閉 button.
+ */
+export function keepFocus(root: HTMLElement, render: () => void) {
+  const a = document.activeElement as HTMLElement | null;
+  // (a button the pad just pressed may have disabled itself — 買一箱 does until the store answers — which drops the
+  // browser focus to <body>; its focus ring still says where the player was)
+  const ringEl = document.querySelector<HTMLElement>('.padfocus');
+  const had = a && a !== root && root.contains(a) ? a : ringEl && root.contains(ringEl) && (!a || a === document.body) ? ringEl : null;
+  if (!had) { render(); return; }
+  const ring = had.classList.contains('padfocus');
+  const key = focusKey(had);
+  const idx = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(e => e === had || visible(e)).indexOf(had);
+  render();
+  if (root.contains(had) && document.activeElement === had) return; // (not redrawn after all)
+  let el = key ? root.querySelector<HTMLElement>(key) : null;
+  if (el && !visible(el)) el = null;
+  if (!el && idx >= 0) { const list = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter(visible); el = list[Math.min(idx, list.length - 1)] ?? null; }
+  if (!el) return;
+  try { el.focus({ preventScroll: true }); } catch { el.focus(); }
+  if (ring) { document.querySelectorAll('.padfocus').forEach(e => e.classList.remove('padfocus')); el.classList.add('padfocus'); }
+}
+
 /** The screen's back / close button: one marked data-back, else one that looks like it (id / text, see padmap). */
 function backButton(list: HTMLElement[]): HTMLElement | null {
   return list.find(e => e.dataset.back !== undefined) ?? list.find(e => e.tagName === 'BUTTON' && looksLikeBack(e.id, e.textContent ?? '')) ?? null;

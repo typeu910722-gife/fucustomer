@@ -275,11 +275,12 @@ function arcsHtml(p: CareerProfile) {
     const st = arcState(p, a.id), n = a.stages.length, done = st.stage >= n;
     const cos = getCosmetic(a.reward.cosmetic);
     const met = st.seen > 0 || st.stage > 0;
-    const next = done ? `🎁 已獲得 ${cos ? `${cos.icon} ${esc(cos.name)}` : ''}` : met ? `下一回：「${esc(a.stages[st.stage].title)}」（第 ${a.stages[st.stage].minChapter} 章後）` : `第 ${a.stages[0].minChapter} 章後可能出現`;
+    const next = done ? `🎁 已獲得 ${cos ? `${cos.icon} ${esc(cos.name)}` : ''}` : met ? `下一回：「${esc(a.stages[st.stage].title)}」（第 ${a.stages[st.stage].minChapter} 章後${a.where ? `・${esc(a.where)}` : ''}）` : `第 ${a.stages[0].minChapter} 章後可能出現${a.where ? `・${esc(a.where)}` : ''}`;
     return `<div class="arc-card ${done ? 'done' : ''}" data-arc="${a.id}"><b>${met ? a.icon : '❔'} ${met ? esc(a.name) : '？？？'}</b> <span class="arc-pips">${'●'.repeat(st.stage)}${'○'.repeat(n - st.stage)}</span>
       <div class="muted">${met ? esc(a.blurb) : '還沒遇過的常客。'}</div><div class="muted">${next}</div></div>`;
   }).join('');
-  return `<div class="chapter daily arcs"><div class="chhead"><b>📖 常客奧客</b><span class="muted">他們會在不同的班次、不同的店再出現</span></div>
+  const fin = ARCS.filter(a => arcState(p, a.id).stage >= a.stages.length).length;
+  return `<div class="chapter daily arcs"><div class="chhead"><b>📖 常客奧客</b><span class="muted">他們會在不同的班次、不同的店再出現</span><span class="tag">完結 ${fin}/${ARCS.length}</span></div>
     <div class="muted story">處理好他們、而且成功下班，故事就會往下走；故事走完可以免費拿到一件外觀。</div><div class="arc-list">${cards}</div></div>`;
 }
 

@@ -173,6 +173,12 @@ export function qtePadPick(prev: readonly boolean[], cur: readonly boolean[]): n
 }
 /** While the prompt is open the pad only answers it: every other binding is swallowed except Menu (pause still works). */
 export function qteKeepsBinding(button: number): boolean { return button === BTN.MENU; }
+/**
+ * While a menu / overlay has the pad (in-shift shop, pause, day-end summary…), the D-pad moves the focus ring there
+ * (padnav.ts) and must not also fire its in-shift action: ↓ is 採購, so pressing ↓ to reach the next row of the shop
+ * used to close the shop instead.
+ */
+export function menuSwallowsBinding(button: number): boolean { return button === BTN.UP || button === BTN.DOWN || button === BTN.LEFT || button === BTN.RIGHT; }
 
 /** Which device's labels a prompt should show: a pad wins (also on a tablet), then touch buttons, else keys. */
 export type PromptDevice = 'kb' | 'pad' | 'touch';

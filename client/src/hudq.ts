@@ -34,6 +34,8 @@ const PHONE_ONLY = ['tutskip', 'aftermath', 'feed'];
 /** Where each phone-only piece goes in #hq (before this id). */
 const PHONE_BEFORE: Record<string, string> = { tutskip: 'alert', aftermath: 'toasts', feed: '' };
 const GAP = 4;
+/** The left thumb's joystick area on a phone: the lower 45 % of the left touch zone (#touch .zone.left, 42 % wide). */
+const THUMB_TOP = 0.55, THUMB_ZONE_W = 0.42;
 /** Cards that never found room are dropped after this long. */
 const MAX_WAIT = 60000;
 
@@ -185,6 +187,21 @@ class HudQueue {
       }
       document.documentElement.style.setProperty('--hq-low-cx', `${(lowL + lowR) / 2 / z}px`);
       document.documentElement.style.setProperty('--hq-low-w', `${(lowR - lowL) / z}px`);
+      // the exact-change card (#qte, game.ts): its CSS puts it at the top middle, but at 字級 130 % it grew down into the
+      // left thumb's joystick area (the lower 45 % of the left touch zone). It keeps clear of the nearest button on the
+      // right and, when it reaches that low, moves up (over the shift bar, for its few seconds) instead.
+      const q = $('qte');
+      if (q) {
+        // (the card has its own zoom at 字級 > 100 %: page px are turned into its CSS px by the ratio of the two widths)
+        q.style.top = ''; q.style.width = '';
+        let r = q.getBoundingClientRect();
+        const cs = getComputedStyle(q), px = (p: string) => parseFloat(cs.getPropertyValue(p)) || 0;
+        const extra = cs.boxSizing === 'border-box' ? 0 : px('padding-left') + px('padding-right') + px('border-left-width') + px('border-right-width');
+        const k = r.width > 0 ? (px('width') + extra) / r.width : 1 / z;
+        if (r.right > right) { q.style.width = `${Math.max(0, right - r.left) * k - extra}px`; r = q.getBoundingClientRect(); }
+        const floor = H * THUMB_TOP - GAP;
+        if (r.left < W * THUMB_ZONE_W && r.bottom > floor) q.style.top = `${parseFloat(cs.top) - (Math.min(r.bottom - floor, r.top - GAP)) * k}px`;
+      }
       const pRect = pr && pr.textContent?.trim() ? pr.getBoundingClientRect() : null;
       // the stack ends above the prompt (or the room kept for a two-line one); if it reaches down beside the joystick
       // corner (bottom-left: 24 % wide, 40 % high) it steps right of it
@@ -216,15 +233,18 @@ class HudQueue {
     const limit = hq.clientHeight - (parseFloat(getComputedStyle(hq).paddingBottom) || 0) + 0.5;
     const card = items.find(el => (el.id === 'introcard' || el.id === 'arccard') && !el.classList.contains('open'));
     // first try: the card folded; if that pushes the karen alert out, the card goes down to its title line and we fit again
-    if (!this.fit(items, limit, null) && this.touch && card && !card.classList.contains('hq-off')) this.fit(items, limit, card);
+    if (this.fit(items, limit, null) || !this.touch || !card || card.classList.contains('hq-off')) return;
+    // still no room for the alert (字級 130 %: the column is ~120 px): the hint bar above it waits too
+    if (!this.fit(items, limit, card)) this.fit(items, limit, card, $('hintbar'));
   }
 
-  /** One fitting pass; false when the karen alert had to be hidden. */
-  private fit(items: HTMLElement[], limit: number, tight: HTMLElement | null) {
+  /** One fitting pass (`wait`: a piece that sits this one out); false when the karen alert had to be hidden. */
+  private fit(items: HTMLElement[], limit: number, tight: HTMLElement | null, wait: HTMLElement | null = null) {
     for (const el of items) el.classList.remove('hq-off', 'tight');
     tight?.classList.add('tight');
     let toastsFull = false, alertOn = true;
     for (const el of items) {
+      if (el === wait) { el.classList.add('hq-off'); continue; }
       const toast = el.parentElement?.id === 'toasts';
       if (toast && toastsFull) { el.classList.add('hq-off'); continue; }
       if (el.offsetHeight < 1) continue;

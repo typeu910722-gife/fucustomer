@@ -490,6 +490,21 @@ export const DAILY_TUNE_R22: Readonly<DailyTune> = {
   lowstock: { stock: 0.5, goal: 1 },
   tips: { tips: 1.6, goal: 1.12 },
 };
+/**
+ * Store rules shared by the weekly (weeks from ROUND6_WEEK on) and the daily challenge (dates from DAILY_STORE_DATE on):
+ * `goal` = extra target multiplier, `register2` = the second till is open even before chapter 4, `foodChance` = cap on
+ * made-to-order orders (docs/BALANCE.md「第六輪」).
+ */
+export interface StoreRule { goal?: number; register2?: boolean; foodChance?: number }
+export const STORE_RULES: Record<string, StoreRule> = {
+  // 手搖飲店: drinks are made at x 10–16 but handed over round the east end of the long counter (pickup x 18.6), so
+  // every drink is a walk along the bar and back; with one till
+  // (chapters 1–3) a slow player lost every boba week (新手 0–25%). Both tills open, target ×0.9, and at most half the
+  // customers want a made-to-order drink even in a 寒流來襲 week.
+  boba: { register2: true, goal: 0.9, foodChance: 0.5 },
+};
+/** From this date on the daily challenge also uses STORE_RULES (round 30); earlier dates replay exactly as before. */
+export const DAILY_STORE_DATE = '2026-10-28';
 /** Daily modifiers from ROUND6_DATE on (calibrated with `scripts/balance.ts --scan daily`). */
 export const DAILY_TUNE: DailyTune = {
   outages: { firstEvent: 20, eventEvery: 24, goal: 0.95 },
@@ -532,7 +547,10 @@ export function buildDailyConfig(p: CareerProfile, date: string): ShiftConfig {
   // the store's own karen joins in (unless today is a one-karen-type day)
   if (!plan.mods.includes('streamers') && !plan.mods.includes('chargers')) cfg.karens = [...new Set([...cfg.karens, ...(mapDef.karens ?? [])])];
   if (!cfg.karens.length) { cfg.karens = ['cutter']; cfg.maxKarens = Math.max(1, cfg.maxKarens); }
-  cfg.goal = Math.round(goal * (mapDef.goalScale ?? 1) / 5) * 5;
+  const rule = date >= DAILY_STORE_DATE ? STORE_RULES[plan.map] : undefined;
+  if (rule?.register2) cfg.register2 = true;
+  if (rule?.foodChance !== undefined) cfg.foodChance = Math.min(cfg.foodChance, rule.foodChance);
+  cfg.goal = Math.round(goal * (mapDef.goalScale ?? 1) * (rule?.goal ?? 1) / 5) * 5;
   cfg.hints = [`今日修飾：${plan.mods.map(m => DAILY_MODS[m].name).join('＋')}。每天第一次達標可領獎勵。`, ...plan.mods.filter((m): m is SpecialId => (SPECIAL_IDS as string[]).includes(m)).map(m => SPECIAL_DAYS[m].rules)];
   cfg.daily = { date, mods: plan.mods, scene: plan.scene };
   return cfg;

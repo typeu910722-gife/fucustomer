@@ -133,7 +133,21 @@ const measure = pg => pg.evaluate(() => {
   }
   for (const p of prot) for (const o of over) { const x = hit(p, o); if (x) bad.push(`${p.id}×${o.id} ${x}`); }
   const off = [...over, ...(pb ? [{ id: 'prompt', ...pb }] : [])].filter(b => b.l < -2 || b.t < -2 || b.r > W + 2 || b.b > H + 2).map(b => `${b.id}[${[b.l, b.t, b.r, b.b].map(Math.round)}]`);
-  return { bad, off, promptOn, on: over.map(o => o.id), cards: ['introcard', 'arccard'].filter(id => shown(document.getElementById(id))) };
+  // the top of the queue: the card that is up (title line) and the karen alert (first line) must be readable — in #hq,
+  // not pushed out (.hq-off), and their first line inside #hq's box
+  const hqBox = document.getElementById('hq').getBoundingClientRect();
+  const lineIn = el => { const r = el?.getBoundingClientRect(); return !!r && r.height > 4 && r.top >= hqBox.top - 1 && r.bottom <= hqBox.bottom + 1 && shown(el); };
+  const upCard = ['introcard', 'arccard'].map(id => document.getElementById(id)).find(el => el && !el.classList.contains('hidden') && el.innerHTML.trim());
+  const al = document.getElementById('alert');
+  const alertUp = !!al && !al.classList.contains('hidden') && !!al.textContent.trim();
+  const firstLine = el => { const rg = document.createRange(); rg.selectNodeContents(el); const rs = [...rg.getClientRects()].filter(r => r.height > 4); return rs.length ? rs[0] : null; };
+  const top = {
+    card: upCard ? upCard.id : null,
+    cardOk: upCard ? !upCard.classList.contains('hq-off') && lineIn(upCard.querySelector('h3, .ac-title') ?? upCard) : true,
+    alert: alertUp,
+    alertOk: alertUp ? !al.classList.contains('hq-off') && shown(al) && (() => { const r = firstLine(al); return !!r && r.top >= hqBox.top - 1 && r.bottom <= hqBox.bottom + 1; })() : true,
+  };
+  return { bad, off, promptOn, on: over.map(o => o.id), cards: ['introcard', 'arccard'].filter(id => shown(document.getElementById(id))), top };
 });
 
 async function run(phone, textScale) {
@@ -142,6 +156,7 @@ async function run(phone, textScale) {
   check(k.karens.length >= 5, `${tag}: burst spawned ${k.karens.length} karens (${k.karens.join(', ')})`);
   const bad = new Map(), off = new Map();
   let samples = 0, promptSamples = 0, twoCards = 0, seen = new Set(), cardsSeen = new Set();
+  const topMiss = [], topBoth = { n: 0 };
   const t0 = Date.now();
   for (let i = 0; i < 40; i++) {
     if (i === 12 || i === 24) await burst(pg, i / 12);
@@ -152,6 +167,8 @@ async function run(phone, textScale) {
     for (const id of m.on) seen.add(id.replace(/>.*$/, '').replace(/\[.*$/, ''));
     for (const c of m.cards) cardsSeen.add(c);
     if (m.cards.length > 1) twoCards++;
+    if (m.top.card && m.top.alert) topBoth.n++;
+    if (!m.top.cardOk || !m.top.alertOk) topMiss.push(`#${i}: ${m.top.card ?? '-'}${m.top.cardOk ? '' : ' title hidden'}${m.top.alertOk ? '' : ' alert hidden'}`);
     if (i === 3 || i === 14) { await pg.evaluate(() => { window.__hold = true; }); await pg.screenshot({ path: `${OUT}/r29a-${phone ? 'phone' : 'desktop'}-${textScale * 100}-${i === 3 ? 'a' : 'b'}.png`, timeout: 120000 }); await pg.evaluate(() => { window.__hold = false; }); }
     const wait = 250 - ((Date.now() - t0) % 250);
     await pg.waitForTimeout(wait);
@@ -161,6 +178,9 @@ async function run(phone, textScale) {
   check(!bad.size, `${tag}: no overlay covered a touch button or the prompt (> 2 px) in any sample`, [...bad.values()].join(' | '));
   check(!off.size, `${tag}: nothing left the screen`, [...off.values()].join(' | '));
   check(!twoCards, `${tag}: never two cards at once (${twoCards} samples had both)`);
+  // round 30: at 130 % the column is tight, but the card that is up (its title) and the karen alert (its first line)
+  // are always readable during the burst (the toasts are what waits)
+  if (phone) check(!topMiss.length && topBoth.n >= 5, `${tag}: card title + karen alert first line readable in every sample (both up in ${topBoth.n}/${samples})`, topMiss.slice(0, 6).join(' | '));
   if (phone) {
     // the 新奧客 card is short on a phone and opens on tap
     await pg.evaluate(() => {

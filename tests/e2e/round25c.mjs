@@ -129,9 +129,10 @@ for (const mode of ['desktop', 'phone']) {
   const { simOpen, arrived } = await pg.evaluate(() => ({ simOpen: window.__game.conn.room.world.openTime, arrived: window.__tp }));
   check(arrived != null && simOpen - arrived < 1.5, `store opened ${(simOpen - (arrived ?? 0)).toFixed(1)} in-game s after reaching the till (no button, no countdown)`);
   await pg.waitForFunction(() => window.__game.snap.customers.some(c => c.state === 'atRegister'), null, { timeout: 15000 }).catch(() => {});
-  for (let i = 0; i < 6 && !(await pg.evaluate(() => window.__game.snap.dayStats.served)); i++) {
+  // A player who sees no reaction presses again right away; a 4 s wait per miss made this check depend on luck.
+  for (let i = 0; i < 16 && !(await pg.evaluate(() => window.__game.snap.dayStats.served)); i++) {
     await act(pg, 'checkout', null, phone);
-    await pg.waitForFunction(() => window.__game.snap.dayStats.served >= 1, null, { timeout: 4000 }).catch(() => {});
+    await pg.waitForFunction(() => window.__game.snap.dayStats.served >= 1, null, { timeout: 1200 }).catch(() => {});
   }
   const served = await simT(pg) - simOpen;
   check(await pg.evaluate(() => window.__game.snap.dayStats.served >= 1) && served <= MAX_FIRST_SERVE_S, `first checkout ${served.toFixed(1)} in-game s after opening (≤ ${MAX_FIRST_SERVE_S})`);

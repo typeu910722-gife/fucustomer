@@ -3,7 +3,7 @@
 // week, and clearing all three earns that week's badge on the 高級社畜證照. Pure data + functions (unit-tested).
 import {
   CHAPTERS, type CareerProfile, type Food, type Reward, type ShiftConfig, type ShiftEvent, type ShiftResult,
-  WEEK_RE, addExp, buildShiftConfig, chapterUnlocked, dailyUnlocked, starsFor,
+  STORE_RULES, type StoreRule, WEEK_RE, addExp, buildShiftConfig, chapterUnlocked, dailyUnlocked, starsFor,
 } from './career.ts';
 import { addHandled } from './karendex.ts';
 import { GEN_KINDS, type GenKind } from './constants.ts';
@@ -143,18 +143,9 @@ export const TWIST_TUNE: Record<TwistId, TwistTune> = {
   coldfront: { foodChance: 0.8, goal: 1.1 },
 };
 
-/**
- * Store rules for the weeks from ROUND6_WEEK on: `goal` = extra target multiplier, `register2` = the second till is
- * open even before chapter 4 (docs/BALANCE.md「第六輪」).
- */
-export interface WeeklyStoreRule { goal?: number; register2?: boolean; foodChance?: number }
-export const WEEKLY_STORE: Record<string, WeeklyStoreRule> = {
-  // 手搖飲店: drinks are made at x 10–16 but handed over round the east end of the long counter (pickup x 18.6), so
-  // every drink is a walk along the bar and back; with one till
-  // (chapters 1–3) a slow player lost every boba week (新手 0–25%). Both tills open, target ×0.9, and at most half the
-  // customers want a made-to-order drink even in a 寒流來襲 week.
-  boba: { register2: true, goal: 0.9, foodChance: 0.5 },
-};
+/** Store rules for the weeks from ROUND6_WEEK on (shared with the daily challenge; see STORE_RULES in career.ts). */
+export type WeeklyStoreRule = StoreRule;
+export const WEEKLY_STORE: Record<string, WeeklyStoreRule> = STORE_RULES;
 
 /** The twist applied to a shift config (exported so tests can check each one). `tune` = which week's numbers. */
 export function applyTwist(cfg: ShiftConfig, twist: TwistId, tune: Readonly<Record<TwistId, Readonly<TwistTune>>> = TWIST_TUNE_R22): number {

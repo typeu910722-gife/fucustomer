@@ -13,6 +13,13 @@
 //   backup     — 存檔備份 screens (no real cloud: not signed in; save-code import with junk)
 //   multi      — two browser contexts: create + join a room, lobby controls, shift with emote wheel / team panel /
 //                kick / host transfer
+//   (round 30b)
+//   special    — 特殊營業日 (颱風夜 / 跨年夜) from 自由營業 at a seeded 字級 (100–130 %) / colour-blind mode
+//   karens     — the four general karens (and old ones) spawned through the in-page room (test hook); the exact-change
+//                prompt opened with F / touch 次要 / the game's method and answered with 1–3, click, tap, Esc or not at all
+//   pad        — a FAKE gamepad (navigator.getGamepads replaced, as in round21.mjs): menus, a shift, View wheel, by pad
+//   cloud      — 存檔備份 with a fake (junk-session) sign-in; /api/cloudsave answers 401 / offline / 500 / slow / ok /
+//                broken / 404 / 429 / a 200 HTML page at random (page.route) — no real login or cloud is touched
 // Detectors: page errors, console errors, unhandled rejections, NaN/undefined/Infinity in HUD or menu text, frozen
 // render loop (no rAF for > 10 s; the shared test machine can drop to ~1 fps) or game loop (Game.last / snapshot time not moving for > 10–12 s while not paused), blank
 // screen, soft-lock (an overlay with no usable control where Esc does nothing), controls that can't be reached or
@@ -35,13 +42,15 @@ import { openStore } from '../../shared/ownstore.ts';
 import { openBranch, newProg } from '../../shared/progression.ts';
 import { defaultSave } from '../../shared/sim.ts';
 import { sanitizeSettings } from '../../client/src/storage.ts';
+import { GEN_KINDS } from '../../shared/constants.ts';
+import { exportSaveCode, summarizeStore } from '../../shared/savecode.ts';
 const require = createRequire(import.meta.url);
 let pw; try { pw = require('playwright'); } catch { pw = require('/opt/node-tools/node_modules/playwright'); }
 
 const URL = process.env.GAME_URL ?? 'http://localhost:8787/';
 const OUT = process.env.OUT ?? '.';
 const MINUTES = Number(process.env.MONKEY_MINUTES ?? 10);
-const ALL = ['menu', 'settings', 'shop', 'freeplay', 'story', 'challenge', 'ownstore', 'backup', 'multi'];
+const ALL = ['menu', 'settings', 'shop', 'freeplay', 'story', 'challenge', 'ownstore', 'backup', 'multi', 'special', 'karens', 'pad', 'cloud'];
 const SCENARIOS = (process.env.MONKEY_SCENARIOS ?? ALL.join(',')).split(',').map(s => s.trim()).filter(s => ALL.includes(s));
 const VIEWPORTS = (process.env.MONKEY_VIEWPORTS ?? '1280x720,844x390').split(',').map(v => { const [w, h] = v.split('x').map(Number); return { w, h }; });
 let seed0 = Number(process.env.MONKEY_SEED ?? (Date.now() % 100000));
@@ -78,8 +87,12 @@ function lateProfile(withStore) {
   return sanitizeProfile(p);
 }
 const BASE_SETTINGS = { quality: 'low', renderScale: 0.5, fpsCap: 30, name: '猴子', captions: true };
-function storageFor(kind, rng) {
-  const ls = { 'fucustomer.settings.v1': JSON.stringify(BASE_SETTINGS) };
+/** Round 30: in-shift accessibility — 字級 130 % and the colour-blind palettes, chosen by seed. */
+function a11ySettings(rng) {
+  return { ...BASE_SETTINGS, textScale: rng.pick([1, 1.3, 1.3, 1.15]), colorblind: rng.pick(['off', 'rg', 'by']) };
+}
+function storageFor(kind, rng, settings = BASE_SETTINGS) {
+  const ls = { 'fucustomer.settings.v1': JSON.stringify(settings) };
   if (kind === 'fresh') return ls;
   ls['fucustomer.flags.v1'] = JSON.stringify({ tutorialDone: rng.chance(0.7), seenKarens: [], seenMaps: ['convenience'] });
   const prof = kind === 'mid' ? midProfile() : lateProfile(kind === 'store');
@@ -90,7 +103,7 @@ function storageFor(kind, rng) {
 // ---------------- findings ----------------
 const findings = [];
 /** Logged for a human to look at, but not a failure of the run. */
-const INFO_KINDS = new Set(['hud-overlap-transient']);
+const INFO_KINDS = new Set(['hud-overlap-transient', 'pad-b-noop']);
 const seen = new Map();
 function report(ctx, kind, detail, extra = {}) {
   const sig = `${kind}|${String(detail).replace(/\d+/g, '#').slice(0, 160)}`;
@@ -100,6 +113,9 @@ function report(ctx, kind, detail, extra = {}) {
   else if (n <= 3) console.log(`  (again) ${kind} [${ctx.scenario} seed=${ctx.seed} step=${ctx.step}]`);
   const last = findings.find(x => `${x.kind}|${x.detail.replace(/\d+/g, '#').slice(0, 160)}` === sig); if (last) last.count = n;
 }
+
+/** A scenario-level line in both the finding context and the trace file. */
+function note(run, t) { run.log.push(t); run.trace.push(`${Date.now() - run.t0}ms ${t}`); if (run.log.length > 40) run.log.shift(); }
 
 // ---------------- in-page helpers ----------------
 const INIT = () => {
@@ -205,7 +221,31 @@ const HUDLAY = () => {
 
 // ---------------- one page under test ----------------
 const IGNORE_CONSOLE = /favicon|ERR_|Failed to load resource|accounts\.google|GSI|net::|WebSocket connection|the server responded with a status of/;
-async function openPage(browser, vp, run, storage, name = 'A') {
+/** Round 30: a FAKE standard-mapping gamepad (navigator.getGamepads replaced, the tests/e2e/round21.mjs technique). */
+const PAD_INIT = id => {
+  const mk = () => ({ pressed: false, touched: false, value: 0 });
+  window.__pad = { id, index: 0, connected: true, mapping: 'standard', timestamp: 0, buttons: Array.from({ length: 17 }, mk), axes: [0, 0, 0, 0],
+    vibrationActuator: { type: 'dual-rumble', playEffect: () => Promise.resolve('complete') } };
+  navigator.getGamepads = () => [window.__pad, null, null, null];
+};
+const PAD_IDS = ['Xbox 360 Controller (XInput STANDARD GAMEPAD)', 'DualSense Wireless Controller (STANDARD GAMEPAD Vendor: 054c Product: 0ce6)'];
+const PB = { A: 0, B: 1, X: 2, Y: 3, LB: 4, RB: 5, LT: 6, RT: 7, VIEW: 8, START: 9, UP: 12, DOWN: 13, LEFT: 14, RIGHT: 15 };
+/** Waits at least `ms` AND `n` animation frames (the game polls the pad once per frame; 1–5 fps here). */
+const frames = (pg, n, ms) => pg.evaluate(([n, ms]) => new Promise(r => { const t0 = performance.now(); let k = 0; const f = () => { if (++k >= n && performance.now() - t0 >= ms) r(); else requestAnimationFrame(f); }; requestAnimationFrame(f); setTimeout(r, Math.max(ms, 6000)); }), [n, ms]).catch(() => {});
+async function padPress(pg, i, ms = 150) {
+  await pg.evaluate(i => { const b = window.__pad.buttons[i]; b.pressed = true; b.value = 1; window.__pad.timestamp++; }, i).catch(() => {});
+  await frames(pg, 2, ms);
+  await pg.evaluate(i => { const b = window.__pad.buttons[i]; b.pressed = false; b.value = 0; window.__pad.timestamp++; }, i).catch(() => {});
+  await frames(pg, 2, 100);
+}
+async function padStick(pg, axes, ms) {
+  await pg.evaluate(a => { window.__pad.axes = a; window.__pad.timestamp++; }, axes).catch(() => {});
+  await frames(pg, 3, ms);
+  await pg.evaluate(() => { window.__pad.axes = [0, 0, 0, 0]; window.__pad.timestamp++; }).catch(() => {});
+  await frames(pg, 2, 80);
+}
+
+async function openPage(browser, vp, run, storage, name = 'A', opts = {}) {
   const phone = vp.h < 500;
   const ctx = await browser.newContext({ viewport: { width: vp.w, height: vp.h }, ...(phone ? { hasTouch: true, isMobile: true } : {}) });
   // nothing leaves the machine (Google sign-in, LINE share, fonts from a CDN…)
@@ -213,12 +253,14 @@ async function openPage(browser, vp, run, storage, name = 'A') {
   await ctx.route('**/*', r => { try { const h = new globalThis.URL(r.request().url()).host; return h === local || r.request().url().startsWith('data:') ? r.continue() : r.abort(); } catch { return r.abort(); } });
   let pg = null;
   ctx.on('page', p => { if (pg && p !== pg) void p.close().catch(() => {}); });
+  if (opts.routes) await opts.routes(ctx);
+  if (opts.pad) await ctx.addInitScript(PAD_INIT, opts.pad);
   await ctx.addInitScript(INIT);
-  await ctx.addInitScript(`window.__mkF = { PROBE: ${PROBE}, CANDS: ${CANDS}, REACH: ${REACH}, HUDLAY: ${HUDLAY} };`);
+  await ctx.addInitScript(`window.__mkF = { PROBE: ${PROBE}, CANDS: ${CANDS}, REACH: ${REACH}, HUDLAY: ${HUDLAY}, QTEBOX: ${QTEBOX} };`);
   await ctx.addInitScript(ls => { if (!sessionStorage.getItem('__mkInit')) { sessionStorage.setItem('__mkInit', '1'); localStorage.clear(); for (const [k, v] of Object.entries(ls)) localStorage.setItem(k, v); } }, storage);
   pg = await ctx.newPage();
   run.shoot = name => pg.screenshot({ path: `${OUT}/shot-${run.vp}-${name}.png`, timeout: 20000 }).catch(() => {});
-  const P = { ctx, pg, name, phone, w: { rafAt: Date.now(), raf: -1, lastAt: Date.now(), last: -1, snapAt: Date.now(), snapT: null, blankAt: 0, noCtlAt: 0, hud: new Map(), escTried: 0 } };
+  const P = { ctx, pg, name, phone, pad: !!opts.pad, w: { rafAt: Date.now(), raf: -1, lastAt: Date.now(), last: -1, snapAt: Date.now(), snapT: null, blankAt: 0, noCtlAt: 0, hud: new Map(), escTried: 0 } };
   pg.on('pageerror', e => report(run, 'pageerror', `${name}: ${String(e?.stack ?? e).split('\n').slice(0, 4).join(' | ')}`));
   pg.on('console', m => { if (m.type() === 'error' && !IGNORE_CONSOLE.test(m.text())) report(run, 'console-error', `${name}: ${m.text()}`); });
   pg.on('crash', () => report(run, 'page-crash', name));
@@ -236,7 +278,10 @@ async function act(P, run, rng, bias = {}) {
   const s = P.state ?? await pg.evaluate(PROBE).catch(() => null);
   P.state = null;
   if (!s) return;
-  const log = t => { const l = `${P.name}#${run.step} ${t}`; run.log.push(l); run.trace.push(`${Date.now() - run.t0}ms ${l}`); if (run.log.length > 40) run.log.shift(); };
+  const log = t => note(run, `${P.name}#${run.step} ${t}`);
+  // scenario-specific actions (debug spawns, the exact-change prompt…) get first say
+  if (bias.extra && await bias.extra(P, run, rng, s, log)) return;
+  if (P.pad && rng.chance(bias.pad ?? 0)) { await padAct(P, run, rng, s, log); return; }
   // solo shifts: sometimes fast-forward the in-page simulation to the end of the day / shift (test hook)
   if (s.inGame && s.solo && s.overlay === 'none' && rng.chance(bias.warp ?? 0.02)) {
     log('warp to end of phase');
@@ -322,10 +367,52 @@ async function act(P, run, rng, bias = {}) {
   }
 }
 
+/** One random controller input: menus (D-pad / A / B / LB / RB / stick) or a shift (sticks, buttons, View wheel). */
+async function padAct(P, run, rng, s, log) {
+  const { pg } = P;
+  if (rng.chance(0.05)) { const id = rng.pick(PAD_IDS); await pg.evaluate(id => { window.__pad.id = id; }, id).catch(() => {}); }
+  const inShift = s.inGame && s.uiEmpty && s.overlay === 'none';
+  if (inShift) {
+    const r = rng.next();
+    if (r < 0.3) { const a = [rng.next() * 2 - 1, rng.next() * 2 - 1, 0, 0]; const ms = rng.int(200, 1500); log(`pad L-stick ${a.slice(0, 2).map(v => v.toFixed(1))} ${ms}ms`); await padStick(pg, a, ms); return; }
+    if (r < 0.42) { const a = [0, 0, rng.next() * 2 - 1, rng.next() * 2 - 1]; log('pad R-stick'); await padStick(pg, a, rng.int(150, 700)); return; }
+    if (r < 0.5) { // emote wheel: hold View, point, let go (or B to cancel)
+      log('pad View wheel');
+      await pg.evaluate(i => { const b = window.__pad.buttons[i]; b.pressed = true; b.value = 1; }, PB.VIEW).catch(() => {});
+      await frames(pg, 2, 200);
+      await padStick(pg, [rng.next() * 2 - 1, rng.next() * 2 - 1, 0, 0], 300);
+      if (rng.chance(0.3)) await padPress(pg, PB.B);
+      await pg.evaluate(i => { const b = window.__pad.buttons[i]; b.pressed = false; b.value = 0; }, PB.VIEW).catch(() => {});
+      await frames(pg, 2, 100);
+      return;
+    }
+    const b = rng.pick(['A', 'A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'UP', 'DOWN', 'LEFT', 'RIGHT', 'START']);
+    const ms = b === 'A' && rng.chance(0.3) ? rng.int(600, 2500) : rng.int(80, 200);
+    log(`pad ${b} ${ms}ms`); await padPress(pg, PB[b], ms); return;
+  }
+  const b = rng.pick(['UP', 'DOWN', 'LEFT', 'RIGHT', 'UP', 'DOWN', 'A', 'A', 'B', 'LB', 'RB', 'START', 'stick']);
+  if (b === 'stick') { log('pad menu stick'); await padStick(pg, [rng.pick([-1, 0, 1]), rng.pick([-1, 0, 1]), 0, 0], 250); return; }
+  log(`pad ${b}`);
+  const before = s.uiHead;
+  await padPress(pg, PB[b]);
+  if (/UP|DOWN|LEFT|RIGHT/.test(b) && !s.uiEmpty && s.n > 0) {
+    // the D-pad on a menu with controls must leave a visible focus ring somewhere the pad can press
+    const FOC = () => { const a = document.activeElement; return { f: !!document.querySelector('.padfocus') || (!!a && a !== document.body), head: (document.querySelector('#ui .card h2')?.textContent ?? '').trim().slice(0, 40) }; };
+    let f = await pg.evaluate(FOC).catch(() => null);
+    if (f && !f.f) { await frames(pg, 2, 400); f = await pg.evaluate(FOC).catch(() => null); } // (a screen still changing over)
+    if (f && !f.f && f.head === before) report(run, 'pad-no-focus', `${P.name}: D-pad on "${s.uiHead}" left no focused control`);
+  }
+  if (b === 'B') {
+    const after = await pg.evaluate(() => (document.querySelector('#ui .card h2')?.textContent ?? '').trim().slice(0, 40)).catch(() => before);
+    P.bSame = after === before && before ? (P.bSame ?? 0) + 1 : 0;
+    if (P.bSame >= 4) { report(run, 'pad-b-noop', `${P.name}: B pressed 4× on "${before}" without leaving it`); P.bSame = 0; }
+  }
+}
+
 /** Health checks after each action. */
 async function check(P, run) {
   const { pg, w } = P;
-  const s = await pg.evaluate(full => { const f = window.__mkF; const s = f.PROBE(); s.n = s.uiEmpty ? 0 : f.CANDS().filter(c => !c.hud).length; if (s.inGame && s.uiEmpty && s.hudOn) s.lay = f.HUDLAY(); if (full && !s.uiEmpty) s.reach = f.REACH(); return s; }, run.step % 4 === 0).catch(e => { if (!/Execution context was destroyed|navigation/.test(String(e))) report(run, 'probe-failed', `${P.name}: ${String(e).slice(0, 200)}`); return null; });
+  const s = await pg.evaluate(full => { const f = window.__mkF; const s = f.PROBE(); s.n = s.uiEmpty ? 0 : f.CANDS().filter(c => !c.hud).length; if (s.inGame && s.uiEmpty && s.hudOn) { s.lay = f.HUDLAY(); s.qte = f.QTEBOX(); } if (full && !s.uiEmpty) s.reach = f.REACH(); return s; }, run.step % 4 === 0).catch(e => { if (!/Execution context was destroyed|navigation/.test(String(e))) report(run, 'probe-failed', `${P.name}: ${String(e).slice(0, 200)}`); return null; });
   if (!s) return null;
   P.state = s;
   const now = Date.now();
@@ -370,6 +457,7 @@ async function check(P, run) {
       const parts = k.replace(/^(overlap|off-screen) /, '').split('×');
       report(run, k.startsWith('overlap') && parts.some(x => TRANSIENT.test(x)) ? 'hud-overlap-transient' : 'hud-layout', `${P.name}: ${k}`);
     }
+    for (const q of s.qte ?? []) report(run, 'qte-layout', `${P.name}: ${q}`);
     for (const k of [...w.hud.keys()]) if (!cur.has(k)) w.hud.delete(k);
     for (const k of cur) if (!w.hud.has(k)) w.hud.set(k, now);
   }
@@ -397,7 +485,7 @@ async function storageCheck(P, run) {
   }
   if (ls['fucustomer.settings.v1']) {
     let raw; try { raw = JSON.parse(ls['fucustomer.settings.v1']); } catch { report(run, 'storage', 'settings is not JSON'); }
-    if (raw && Object.keys(raw).length > Object.keys(BASE_SETTINGS).length) {
+    if (raw && Object.keys(raw).length > 10) { // (written by the game's settings screen, not our seed)
       const d = diff(raw, JSON.parse(JSON.stringify(sanitizeSettings(raw, P.phone, false)))).filter(x => !/^\.reduceMotion/.test(x));
       if (d.length) report(run, 'storage-sanitize', `settings change on reload: ${d.slice(0, 4).join('; ')}`);
     }
@@ -430,6 +518,82 @@ async function walk(P, run, rng, steps, until, bias = {}) {
   }
 }
 
+// ---------------- round 30: general karens / exact-change prompt ----------------
+/** Spawns one karen of `kind` now through the in-page solo room (test hook), optionally runs her to the till. */
+const SPAWN = ([kind, toTill]) => {
+  const r = window.__game?.conn?.room, w = r?.world;
+  if (!w || w.phase !== 'open') return null;
+  const keep = w.cfg;
+  w.cfg = { ...keep, karens: [kind], maxKarens: 9 }; w.karenTimer = 0; w.lastKaren = '';
+  r.update(0.05);
+  const ramp = w.cfg; w.cfg = { ...keep, spawnEvery: ramp.spawnEvery, maxKarens: Math.max(keep.maxKarens, Math.min(ramp.maxKarens, 5)), karenEvery: ramp.karenEvery };
+  const c = [...w.customers].reverse().find(c => c.kind === kind && c.leader == null && !c.resolved);
+  if (!c) return null;
+  if (toTill) for (let i = 0; i < 600 && c.state !== 'atRegister' && !c.resolved && w.phase === 'open'; i++) r.update(0.05);
+  return { id: c.id, state: c.state };
+};
+/** Walks the local player up to a customer (in front of them, looking at them). */
+const STAND = id => {
+  const g = window.__game, w = g?.conn?.room?.world; if (!w) return false;
+  const c = w.customers.find(c => c.id === id), p = [...w.players.values()][0]; if (!c || !p) return false;
+  p.x = c.x; p.z = c.z + 1.2; g.pos = { x: p.x, z: p.z }; g.yaw = Math.atan2(c.x - p.x, c.z - p.z); g.pitch = -0.1;
+  return true;
+};
+async function karenExtra(P, run, rng, s, log) {
+  const { pg } = P;
+  if (!(s.inGame && s.solo)) return false;
+  const qte = await pg.evaluate(() => { const q = document.getElementById('qte'); return q ? q.querySelectorAll('.qte-opt').length : -1; }).catch(() => -1);
+  if (qte >= 0 && rng.chance(0.6)) { // the exact-change prompt is open: answer it some way (or not)
+    const how = rng.pick(P.pad ? ['pad', 'pad', 'key', 'click', 'esc', 'wait'] : P.phone ? ['tap', 'tap', 'key', 'esc', 'wait', 'pause-tap'] : ['key', 'key', 'click', 'esc', 'wait', 'other-key']);
+    const i = rng.int(0, Math.max(0, qte - 1));
+    log(`qte ${how} ${i}`);
+    if (how === 'key') await pg.keyboard.press(`Digit${i + 1}`);
+    else if (how === 'other-key') await pg.keyboard.press(rng.pick(['Digit4', 'KeyE', 'KeyF', 'Space', 'KeyQ']));
+    else if (how === 'click') await pg.locator(`#qte .qte-opt >> nth=${i}`).click({ timeout: 1500 }).catch(() => {});
+    else if (how === 'tap') await pg.locator(`#qte .qte-opt >> nth=${i}`).tap({ timeout: 1500 }).catch(() => {});
+    else if (how === 'pause-tap') { await pg.locator('#t-menu').tap({ timeout: 1500 }).catch(() => {}); }
+    else if (how === 'pad') await padPress(pg, [PB.LEFT, PB.UP, PB.RIGHT][i]);
+    else if (how === 'esc') await pg.keyboard.press('Escape');
+    else await pg.waitForTimeout(rng.int(500, 3000));
+    return true;
+  }
+  if (s.overlay !== 'none' || !s.uiEmpty || s.phase !== 'open') return false;
+  if (rng.chance(0.07)) {
+    const kind = rng.chance(0.3) ? 'change' : rng.chance(0.7) ? rng.pick(GEN_KINDS) : rng.pick(['cutter', 'rager', 'streamer', 'hog', 'litterer', 'charger', 'wiper']);
+    const toTill = kind === 'change' ? rng.chance(0.9) : kind === 'lottery' ? rng.chance(0.6) : false;
+    const c = await pg.evaluate(SPAWN, [kind, toTill]).catch(e => { report(run, 'spawn-error', String(e).slice(0, 200)); return null; });
+    log(`spawn ${kind}${toTill ? ' →till' : ''} ${c ? c.state : 'none'}`);
+    if (c && rng.chance(0.6)) { await pg.evaluate(STAND, c.id).catch(() => {}); log(`stand by ${c.id}`); }
+    if (c && kind === 'change' && c.state === 'atRegister' && rng.chance(0.9)) {
+      // open the exact-change prompt the way a player would (F / X / 次要) or straight through the game's method
+      const how = P.pad ? rng.pick(['pad', 'method']) : P.phone ? rng.pick(['tap', 'method']) : rng.pick(['key', 'method']);
+      log(`open qte ${how}`);
+      await frames(pg, 3, 300);
+      if (how === 'key') await pg.keyboard.press('KeyF');
+      else if (how === 'pad') await padPress(pg, PB.X);
+      else if (how === 'tap') await pg.locator('#t-alt').tap({ timeout: 1500 }).catch(() => {});
+      else await pg.evaluate(id => window.__game.openChangePrompt(id), c.id).catch(e => report(run, 'qte-open-error', String(e).slice(0, 200)));
+    }
+    return true;
+  }
+  return false;
+}
+/** In-shift HUD check at the settings in use: the exact-change prompt must sit inside the screen and clear of the touch buttons. */
+const QTEBOX = () => {
+  const q = document.getElementById('qte'); if (!q) return null;
+  // still popping in (the 0.25 s scale-up can take seconds of wall time at 1–5 fps): not laid out yet
+  if (q.getAnimations({ subtree: true }).some(a => a.playState === 'running')) return null;
+  const r = q.getBoundingClientRect(), out = [];
+  if (r.width < 8 || r.height < 8) return null;
+  if (r.left < -1 || r.top < -1 || r.right > innerWidth + 1 || r.bottom > innerHeight + 1) out.push(`qte off-screen [${Math.round(r.left)},${Math.round(r.top)},${Math.round(r.right)},${Math.round(r.bottom)}] in ${innerWidth}x${innerHeight}`);
+  for (const b of q.querySelectorAll('.qte-opt')) {
+    const br = b.getBoundingClientRect(); if (br.bottom > innerHeight + 1 || br.top < -1) out.push('qte option off-screen');
+    const h = document.elementFromPoint((br.left + br.right) / 2, (br.top + br.bottom) / 2);
+    if (h && !b.contains(h)) out.push(`qte option covered by ${h.id ? '#' + h.id : h.tagName.toLowerCase() + '.' + h.className}`);
+  }
+  return out;
+};
+
 const SCN = {
   async menu(browser, vp, run, rng, until) {
     const P = await openPage(browser, vp, run, storageFor(rng.pick(['fresh', 'mid', 'late', 'store']), rng));
@@ -442,10 +606,10 @@ const SCN = {
     await click(pg, '#m-settings'); await pg.waitForSelector('#s-cb');
     // every option, systematically, then a layout probe at the extremes
     const opts = await pg.evaluate(() => [...document.querySelectorAll('#ui select')].map(s => ({ id: s.id, vals: [...s.options].map(o => o.value) })));
-    for (const o of opts) for (const v of o.vals) { run.step++; run.log.push(`select #${o.id}=${v}`); await pg.selectOption('#' + o.id, v); await check(P, run); }
+    for (const o of opts) for (const v of o.vals) { run.step++; note(run, `select #${o.id}=${v}`); await pg.selectOption('#' + o.id, v); await check(P, run); }
     for (const id of await pg.evaluate(() => [...document.querySelectorAll('#ui input[type=checkbox]')].map(c => c.id).filter(Boolean))) {
       if (id === 's-full') continue;
-      for (let k = 0; k < 2; k++) { run.step++; run.log.push(`toggle #${id}`); await pg.locator('#' + id).click({ timeout: 2000 }).catch(e => report(run, 'unreachable-control', `#${id}: ${String(e.message).split('\n')[0]}`)); await check(P, run); }
+      for (let k = 0; k < 2; k++) { run.step++; note(run, `toggle #${id}`); await pg.locator('#' + id).click({ timeout: 2000 }).catch(e => report(run, 'unreachable-control', `#${id}: ${String(e.message).split('\n')[0]}`)); await check(P, run); }
     }
     await pg.selectOption('#s-text', '1.3'); await pg.selectOption('#s-cb', rng.pick(['rg', 'by']));
     for (const u of await pg.evaluate(REACH)) report(run, 'unreachable-control', `settings at 130%: ${u}`);
@@ -468,7 +632,7 @@ const SCN = {
     await pg.waitForSelector('[data-map]', { timeout: 10000 });
     if (rng.chance(0.4)) { const h = await pg.$$('[data-hire]'); if (h.length) await rng.pick(h).click().catch(() => {}); }
     const maps = await pg.$$eval('[data-map]', b => b.map(x => x.dataset.map));
-    const m = rng.pick(maps); run.log.push(`free play ${m}`);
+    const m = rng.pick(maps); note(run, `free play ${m}`);
     await click(pg, `[data-map="${m}"]`);
     await pg.waitForFunction(() => window.__game?.started, null, { timeout: 40000 }).catch(() => report(run, 'start-timeout', `free play ${m} did not start`));
     await walk(P, run, rng, 400, until, { avoid: /p-leave|p-end|mp-back|c-back/, prefer: /sum-ready|buy|up-|p-resume|msg-ok/, warp: 0.025 });
@@ -478,12 +642,12 @@ const SCN = {
     const kind = rng.pick(['fresh', 'mid', 'late']);
     const P = await openPage(browser, vp, run, storageFor(kind, rng));
     const { pg } = P;
-    if (kind === 'fresh') { run.log.push('1-1'); await click(pg, '#m-first'); }
+    if (kind === 'fresh') { note(run, '1-1'); await click(pg, '#m-first'); }
     else {
       await toCareer(pg);
       const ids = await pg.$$eval('[data-play]:not([disabled])', b => b.map(x => x.dataset.play));
       const id = kind === 'mid' ? (ids.includes('1-2') && rng.chance(0.5) ? '1-2' : rng.pick(ids)) : rng.pick(ids);
-      run.log.push(`shift ${id}`); await click(pg, `[data-play="${id}"]`);
+      note(run, `shift ${id}`); await click(pg, `[data-play="${id}"]`);
     }
     await walk(P, run, rng, 400, until, { avoid: /p-leave|c-back|m-mp/, prefer: /sc-skip|sc-next|msg-ok|p-resume|r-next|r-retry|court|data-play/, warp: 0.02 });
     await storageCheck(P, run); await P.ctx.close();
@@ -491,7 +655,7 @@ const SCN = {
   async challenge(browser, vp, run, rng, until) {
     const P = await openPage(browser, vp, run, storageFor('late', rng));
     const { pg } = P;
-    const which = rng.pick(['daily', 'weekly', 'special']); run.log.push(which);
+    const which = rng.pick(['daily', 'weekly', 'special']); note(run, which);
     if (which === 'daily') await click(pg, '#m-daily');
     else if (which === 'weekly') await click(pg, '#m-weekly');
     else { await toCareer(pg); await tab(pg, 'free'); const sp = await pg.$$eval('[data-special]', b => b.map(x => x.dataset.special)); if (sp.length) await click(pg, `[data-special="${rng.pick(sp)}"]`); else report(run, 'missing', 'no 特殊營業日 rows for a late profile'); }
@@ -529,7 +693,7 @@ const SCN = {
       if (!code) return;
       const s = await B.pg.evaluate(PROBE).catch(() => null);
       if (!s || s.inGame || !(await B.pg.$('#m-mp'))) return;
-      run.log.push(`B joins ${code}`);
+      note(run, `B joins ${code}`);
       await click(B.pg, '#m-mp'); await B.pg.fill('#m-code', code); await click(B.pg, '#m-join');
       await B.pg.waitForSelector('#l-leave, #hud:not(.hidden)', { timeout: 20000 }).catch(() => {});
     };
@@ -546,12 +710,86 @@ const SCN = {
         const a = await A.pg.evaluate(PROBE).catch(() => null), b = await B.pg.evaluate(PROBE).catch(() => null);
         if (a && !a.inGame && await A.pg.$('#m-mp') && !(await A.pg.$('#l-code'))) {
           if (b && (b.inGame || await B.pg.$('#l-code'))) { [A.name, B.name] = ['B', 'A']; const t = { ...A }; Object.assign(A, B); Object.assign(B, t); }
-          else { run.log.push('A hosts again'); await create().catch(() => {}); }
+          else { note(run, 'A hosts again'); await create().catch(() => {}); }
         }
         await join().catch(() => {});
       }
     }
     await storageCheck(A, run); await A.ctx.close(); await B.ctx.close();
+  },
+  // ---- round 30 ----
+  /** 特殊營業日 (颱風夜 / 跨年夜) from 自由營業, at a seeded 字級 / colour-blind setting. */
+  async special(browser, vp, run, rng, until) {
+    const set = a11ySettings(rng);
+    const P = await openPage(browser, vp, run, storageFor('late', rng, set));
+    const { pg } = P;
+    note(run, `settings text=${set.textScale} cb=${set.colorblind}`);
+    await toCareer(pg); await tab(pg, 'free');
+    const sp = await pg.$$eval('[data-special]', b => b.map(x => x.dataset.special)).catch(() => []);
+    if (!sp.length) { report(run, 'missing', 'no 特殊營業日 rows for a late profile'); await P.ctx.close(); return; }
+    const id = rng.pick(sp); note(run, `special ${id}`);
+    await click(pg, `[data-special="${id}"]`);
+    await pg.waitForFunction(() => window.__game?.started || document.getElementById('sc-skip'), null, { timeout: 40000 }).catch(() => report(run, 'start-timeout', `special ${id} did not start`));
+    await walk(P, run, rng, 400, until, { avoid: /p-leave|c-back|p-end/, prefer: /sc-skip|msg-ok|p-resume|r-|sum-ready/, warp: 0.02, extra: karenExtra });
+    await storageCheck(P, run); await P.ctx.close();
+  },
+  /** The four general karens (debug spawns) in a free-play store, with the exact-change prompt on keyboard / touch. */
+  async karens(browser, vp, run, rng, until) {
+    const set = a11ySettings(rng);
+    const P = await openPage(browser, vp, run, storageFor('late', rng, set));
+    const { pg } = P;
+    note(run, `settings text=${set.textScale} cb=${set.colorblind}`);
+    await toCareer(pg); await tab(pg, 'free');
+    await pg.waitForSelector('[data-map]', { timeout: 10000 });
+    const maps = await pg.$$eval('[data-map]', b => b.map(x => x.dataset.map));
+    const m = rng.pick(maps); note(run, `free play ${m}`);
+    await click(pg, `[data-map="${m}"]`);
+    await pg.waitForFunction(() => window.__game?.started, null, { timeout: 40000 }).catch(() => report(run, 'start-timeout', `free play ${m} did not start`));
+    await pg.evaluate(() => window.__game?.send({ type: 'ready', ready: true })).catch(() => {});
+    await walk(P, run, rng, 400, until, { avoid: /p-leave|p-end|mp-back|c-back/, prefer: /sum-ready|p-resume|msg-ok|qte/, warp: 0.01, extra: karenExtra });
+    await storageCheck(P, run); await P.ctx.close();
+  },
+  /** Controller only (fake gamepad): menus → career → a shift, the exact-change prompt and the View emote wheel by pad. */
+  async pad(browser, vp, run, rng, until) {
+    const set = a11ySettings(rng);
+    const P = await openPage(browser, vp, run, storageFor(rng.pick(['mid', 'late']), rng, set), 'A', { pad: rng.pick(PAD_IDS) });
+    note(run, `settings text=${set.textScale} cb=${set.colorblind}`);
+    await walk(P, run, rng, 500, until, { pad: 0.9, avoid: /m-mp|p-leave|m-friend|m-google/, prefer: /m-career|tab=free|data-map|sum-ready|p-resume/, warp: 0.015, extra: karenExtra });
+    await storageCheck(P, run); await P.ctx.close();
+  },
+  /** 存檔備份 with a (fake) signed-in account: the cloud buttons against a server that says 401 / is offline / 500 / slow /
+   *  answers with a real or a broken save. Nothing reaches a real login (the session is junk; /api/ is intercepted). */
+  async cloud(browser, vp, run, rng, until) {
+    const st = storageFor(rng.pick(['mid', 'late']), rng);
+    st['fucustomer.account.v1'] = JSON.stringify({ no: 'FU-MONKEY-0001', session: 'junk-session-' + run.seed });
+    const good = exportSaveCode(storageFor('late', rng));
+    const entry = code => ({ code, at: Date.now() - rng.int(0, 9e8), size: code.length, summary: summarizeStore(storageFor('late', rng)) });
+    const modes = [];
+    const routes = ctx => ctx.route('**/api/**', async r => {
+      const url = r.request().url();
+      if (!/\/api\/cloudsave/.test(url)) return r.abort('internetdisconnected'); // (licence sync offline: keeps the fake sign-in)
+      const mode = rng.pick(['real', 'abort', '500', 'slow', 'ok', 'junk', '404', '429', 'html']);
+      modes.push(mode); note(run, `api ${r.request().method()} → ${mode}`);
+      if (mode === 'real') return r.continue();
+      if (mode === 'abort') return r.abort('internetdisconnected');
+      if (mode === 'slow') { await new Promise(res => setTimeout(res, 2500)); return r.continue().catch(() => {}); }
+      if (mode === '500') return r.fulfill({ status: 500, body: 'oops' });
+      if (mode === 'html') return r.fulfill({ status: 200, contentType: 'text/html', body: '<html>captive portal</html>' });
+      if (mode === '404') return r.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: '雲端上沒有存檔' }) });
+      if (mode === '429') return r.fulfill({ status: 429, contentType: 'application/json', body: JSON.stringify({ error: '今天上傳次數已用完' }) });
+      const m = r.request().method();
+      if (mode === 'junk') return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(m === 'GET' ? { latest: entry('FUC1-broken'), prev: null } : { what: 1 }) });
+      const body = m === 'GET' ? { latest: entry(good), prev: rng.chance(0.5) ? entry(good) : null, quota: { used: 1, max: 20, resetsAt: Date.now() + 3600e3 } }
+        : m === 'PUT' ? { at: Date.now(), size: 999, summary: summarizeStore(storageFor('mid', rng)), used: 2, max: 20 } : { deleted: rng.chance(0.5) };
+      return r.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) });
+    });
+    const P = await openPage(browser, vp, run, st, 'A', { routes });
+    const { pg } = P;
+    await click(pg, '#m-settings'); await click(pg, '#s-backup');
+    await pg.waitForSelector('#bk-up', { timeout: 8000 }).catch(() => report(run, 'missing', 'cloud buttons not shown for a signed-in profile'));
+    await walk(P, run, rng, 160, until, { avoid: /m-mp|m-career|m-first|data-play|m-google|m-signout|m-quit/, prefer: /bk-up|bk-down|bk-del|bk-auto|bk-capply|bk-cprev|bk-back|s-backup/ });
+    note(run, `modes ${modes.join(',')}`);
+    await storageCheck(P, run); await P.ctx.close();
   },
 };
 
