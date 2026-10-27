@@ -63,8 +63,13 @@ await pg.waitForFunction(() => /早班進貨/.test(document.getElementById('toas
     const g = window.__game, w = g.conn.room.world, p = [...w.players.values()][0];
     w.customers = []; w.queue = []; w.registers = [null, null]; w.spawnTimer = 999; w.items = []; // (the delivery box too: the arrow should lead to the crate)
     p.x = 12; p.z = 8; g.pos = { x: 12, z: 8 }; g.yaw = Math.PI; g.pitch = -0.1;
-    w.shelves.drinks = 2;
+    // the warning is said once per low spell (until restocked): the opening customer may already have taken the drinks
+    // shelf low and used it up before this point, so it is restocked first and the page has to see that
+    w.shelves.drinks = 8; w.backstock.drinks = Math.max(w.backstock.drinks, 12);
   });
+  await pg.waitForFunction(() => window.__game.snap.shelves.drinks >= 8, null, { timeout: 5000 });
+  await pg.waitForTimeout(300);
+  await pg.evaluate(() => { window.__game.conn.room.world.shelves.drinks = 2; });
   await pg.waitForFunction(() => /飲料貨架快空了/.test(document.getElementById('toasts')?.textContent ?? ''), null, { timeout: 5000 }).then(() => ok('low-shelf toast')).catch(() => fail('no low-shelf toast'));
   const flashing = await pg.evaluate(() => [...document.querySelectorAll('#h-stock .bar.warn')].map(b => getComputedStyle(b).animationName));
   if (!flashing.includes('shelfflash')) fail('stock bar not flashing ' + JSON.stringify(flashing)); else ok('stock bar flashes when low');

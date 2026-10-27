@@ -93,7 +93,7 @@ App ID 只要填在 `desktop/steam.config.json`（0 = 不啟用）。沒有 App 
 
 | 功能 | 做法 |
 |---|---|
-| 成就 | `shared/achievements.ts` 22 個，ID 即 Steam API 名稱；開遊戲時補報存檔裡已有的成就，暫時失敗會每 5 秒重試 |
+| 成就 | `shared/achievements.ts` 39 個，ID 即 Steam API 名稱；開遊戲時補報存檔裡已有的成就，暫時失敗會每 5 秒重試 |
 | 好友邀請 | Rich Presence `connect = +join 房間碼`、`steam_display` 文字在 `steam/rich_presence_*.vdf`；好友按「加入遊戲」→ 以 `+join 房間碼` 啟動（或已開啟時轉送）→ 自動進房 |
 | 浮層 | 有 App ID 時套用 steamworks.js 的 `electronEnableSteamOverlay()`；啟動參數 `--no-steam-overlay` 可關閉 |
 | 雲端存檔 | Steam Auto-Cloud 同步 `%APPDATA%\FUCustomer\Local Storage\leveldb`（後台設定，見 STEAM.md） |
