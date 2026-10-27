@@ -116,6 +116,24 @@ function helpers(pg) {
     if (c) g.yaw = Math.atan2(c.x - x, c.z - z);
     g.pitch = pitch;
   }, [x, z, id, pitch]);
+  /**
+   * A spot about 1 m from the karen with a clear line to her: the prompt goes to whoever is nearest along the aim, so a
+   * group member standing in that line rightly takes it (the 借廁所大隊 queue moves its members around the leader).
+   */
+  const clearSpot = id => pg.evaluate(id => {
+    const w = window.__game.conn.room.world, c = w.customers.find(c => c.id === id);
+    const offs = [[0, 1], [0.7, 0.7], [-0.7, 0.7], [1, 0], [-1, 0], [0.7, -0.7], [-0.7, -0.7], [0, -1]];
+    for (const [dx, dz] of offs) {
+      const x = c.x + dx, z = c.z + dz, d = Math.hypot(dx, dz), fx = -dx / d, fz = -dz / d;
+      const blocked = w.customers.some(o => {
+        if (o.id === id) return false;
+        const px = o.x - x, pz = o.z - z, along = px * fx + pz * fz, perp = Math.abs(px * fz - pz * fx);
+        return along > -0.2 && along < d + 0.3 && perp < 0.6;
+      });
+      if (!blocked) return { x, z };
+    }
+    return { x: c.x, z: c.z + 1 };
+  }, id);
   const prompt = () => pg.evaluate(() => {
     const p = document.getElementById('prompt');
     return { text: p?.innerText.replace(/\s+/g, ' ') ?? '', keys: [...(p?.querySelectorAll('.key') ?? [])].map(k => k.textContent) };
@@ -129,7 +147,7 @@ function helpers(pg) {
     const sums = [...document.querySelectorAll('#qte .qte-opt')].map(b => [...b.querySelectorAll('.coin')].reduce((s, c) => s + Number(c.textContent) * Number((c.nextSibling?.textContent ?? '').match(/×(\d+)/)?.[1] ?? 0), 0));
     return { due, sums, idx: sums.indexOf(due) };
   });
-  return { frames, hold, spawn, fastForward, holdSynced, seen, stand, prompt, waitPrompt, cust, shot, rightPick };
+  return { frames, hold, spawn, fastForward, holdSynced, seen, stand, clearSpot, prompt, waitPrompt, cust, shot, rightPick };
 }
 
 // ======================= (A) desktop: keyboard / Xbox / PlayStation =======================
@@ -278,7 +296,8 @@ function helpers(pg) {
     const id = await h.spawn('toilet');
     const st = await h.fastForward(id, "c.state === 'toilet'", 40);
     await pg.evaluate(() => { const w = window.__game.conn.room.world; w.spills = []; for (const c of w.customers) if (c.kind === 'toilet' && c.leader == null) c.knockTimer = 99; });
-    await h.stand(st.x, st.z + 1.0, id, 0.05);
+    const spot = await h.clearSpot(id);
+    await h.stand(spot.x, spot.z, id, 0.05);
     await h.seen(id, "c.state === 'toilet'", 'the 借廁所大隊 leader in the restroom line');
     await chips('借廁所大隊 leader', /領隊/, false);
   }
@@ -379,7 +398,8 @@ function helpers(pg) {
     const id = await h.spawn('toilet');
     const st = await h.fastForward(id, "c.state === 'toilet'", 40);
     await pg.evaluate(() => { const w = window.__game.conn.room.world; w.spills = []; for (const c of w.customers) if (c.kind === 'toilet' && c.leader == null) c.knockTimer = 99; });
-    await h.stand(st.x, st.z + 1.0, id, 0.05);
+    const spot = await h.clearSpot(id);
+    await h.stand(spot.x, spot.z, id, 0.05);
     await h.seen(id, "c.state === 'toilet'", 'the 借廁所大隊 leader in the restroom line');
     const p = await h.waitPrompt(/領隊/);
     const btn = await pg.textContent('#t-interact');
