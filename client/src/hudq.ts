@@ -167,15 +167,17 @@ class HudQueue {
     const pr = $('prompt');
     if (this.touch) {
       if (filled('phasebanner')) { const r = rect('phasebanner'); if (r && r.bottom < H / 2) top = Math.max(top, r.bottom); }
-      // a card the player opened may use the shift bar's rows too (only while it is open; its time stops meanwhile)
-      if (hq.querySelector(':scope > .open')) top = 4;
+      this.fitSides(W, z);
       left = Math.max(rect('minimap')?.right ?? 0, rect('rightinfo')?.right ?? 0) + 8;
       right = W - 8;
-      // the touch buttons own the right edge: the column stops at the nearest one beside it
+      // the touch buttons own the right edge: the column stops at the nearest one beside it (`rightHigh`: also the ones
+      // up beside the shift bar, for an opened card that moves up there)
+      let rightHigh = right;
       for (const b of document.querySelectorAll<HTMLElement>('#touch .tbtn')) {
         if (b.classList.contains('hidden')) continue;
         const r = b.getBoundingClientRect();
         if (r.width > 1 && r.left > W * 0.5 && r.bottom > top) right = Math.min(right, r.left - 8);
+        if (r.width > 1 && r.left > W * 0.5) rightHigh = Math.min(rightHigh, r.left - 8);
       }
       // the prompt: under the crosshair, its bottom just above the stamina bar, clear of the joystick corner (left 30 %)
       const st = rect('stamina');
@@ -207,6 +209,10 @@ class HudQueue {
       // corner (bottom-left: 24 % wide, 40 % high) it steps right of it
       bottom = Math.min(anchor - 52 * z, pRect && pRect.height > 1 ? pRect.top : Infinity) - GAP;
       if (bottom > H * 0.6) left = Math.max(left, W * 0.24);
+      // a card the player opened may use the shift bar's rows too (its time stops meanwhile), but only when it does not
+      // fit below them: the day, the clock and the money stay readable whenever there is room
+      const open = hq.querySelector<HTMLElement>(':scope > .open');
+      if (open && open.offsetHeight * z > bottom - top - GAP) { top = 4; right = rightHigh; }
 
     } else {
       left = Math.max(rect('minimap')?.right ?? 0, filled('feed') ? rect('feed')?.right ?? 0 : 0, rect('aftermath')?.right ?? 0) + 12;
@@ -236,6 +242,43 @@ class HudQueue {
     if (this.fit(items, limit, null) || !this.touch || !card || card.classList.contains('hq-off')) return;
     // still no room for the alert (字級 130 %: the column is ~120 px): the hint bar above it waits too
     if (!this.fit(items, limit, card)) this.fit(items, limit, card, $('hintbar'));
+  }
+
+  /**
+   * Phone: the pieces on the sides keep off each other. The top bar (day, clock, money…) is centred, so a long one ran
+   * under the minimap; it now sits between the minimap and the top-right buttons, shrinking only if it must. The stock
+   * and team panels on the left grow with the 字級 and with empty-shelf labels; they shrink to end above the 情緒爆發
+   * bar instead of running into it.
+   */
+  private fitSides(W: number, z: number) {
+    const tb = $('topbar'), mm = $('minimap');
+    if (tb && mm && !tb.classList.contains('hidden') && getComputedStyle(tb).display !== 'none') {
+      tb.style.transform = '';
+      const r = tb.getBoundingClientRect(), m = mm.getBoundingClientRect();
+      if (r.width > 1) {
+        let lo = m.width > 1 ? m.right + 8 : 8, hi = W - 8;
+        for (const b of document.querySelectorAll<HTMLElement>('#touch .tbtn')) {
+          if (b.classList.contains('hidden')) continue;
+          const br = b.getBoundingClientRect();
+          if (br.width > 1 && br.left > W * 0.5 && br.top < r.bottom) hi = Math.min(hi, br.left - 8);
+        }
+        const base = new DOMMatrix(getComputedStyle(tb).transform).a || 1;
+        const k = Math.min(1, Math.max(0.6, (hi - lo) / r.width));
+        const w = r.width * k, cx = Math.min(Math.max(r.left + r.width / 2, lo + w / 2), hi - w / 2);
+        const dx = cx - (r.left + r.width / 2);
+        if (k < 1 || Math.abs(dx) > 0.5) tb.style.transform = `translateX(-50%) translateX(${dx / z}px) scale(${base * k})`;
+      }
+    }
+    const ri = $('rightinfo'), bu = $('burst');
+    if (ri && bu) {
+      ri.style.transform = '';
+      const b = bu.getBoundingClientRect(), r = ri.getBoundingClientRect();
+      if (r.height > 1 && b.height > 1 && !bu.classList.contains('hidden')) {
+        const base = new DOMMatrix(getComputedStyle(ri).transform).a || 1;
+        const room = b.top - GAP - r.top;
+        if (r.bottom > b.top - GAP && room > 0) ri.style.transform = `scale(${Math.max(0.45, base * room / r.height)})`;
+      }
+    }
   }
 
   /** One fitting pass (`wait`: a piece that sits this one out); false when the karen alert had to be hidden. */
