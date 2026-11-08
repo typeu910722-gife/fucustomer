@@ -36,7 +36,12 @@ const SOLO_KEY = 'fucustomer.store.solo.v1';
 const COOP_KEY = 'fucustomer.store.coop.v1';
 const SESSION_KEY = 'fucustomer.session.v1';
 
-export const isTouch = typeof window !== 'undefined' && (('ontouchstart' in window) || navigator.maxTouchPoints > 0) && matchMedia('(pointer: coarse)').matches;
+/** Inside the iOS / Android app (Capacitor): always a phone or tablet, so always the touch controls. */
+const nativeMobileApp = typeof window !== 'undefined' && (() => {
+  const cap = (window as unknown as { Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string } }).Capacitor;
+  return !!cap?.isNativePlatform?.() && ['android', 'ios'].includes(cap.getPlatform?.() ?? '');
+})();
+export const isTouch = typeof window !== 'undefined' && (nativeMobileApp || ((('ontouchstart' in window) || navigator.maxTouchPoints > 0) && matchMedia('(pointer: coarse)').matches));
 
 function read<T>(key: string): T | null {
   try { const s = localStorage.getItem(key); return s ? (JSON.parse(s) as T) : null; } catch { return null; }
