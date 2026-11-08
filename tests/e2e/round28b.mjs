@@ -292,7 +292,8 @@ function helpers(pg) {
     }
     await h.hold(false);
     await pg.evaluate(id => { const c = window.__game.conn.room.world.customers.find(c => c.id === id); c.life = 0.1; }, id);
-    const st = await h.fastForward(id, "c.state === 'toExit' && c.z > 12.8 && Math.abs(c.x - 12) < 3.2", 40);
+    // (12.85, not 12.8: the page gets positions rounded to 0.01, so a stop at z = 12.8004 read 12.80 there and never passed)
+    const st = await h.fastForward(id, "c.state === 'toExit' && c.z > 12.85 && Math.abs(c.x - 12) < 3.2", 40);
     await h.stand(st.x - 0.4, st.z - 1.3, id, -0.05);
     await h.seen(id, "c.state === 'toExit' && c.z > 12.8", 'the 阿伯 at the door');
     await chips('免費袋子阿伯 at the door', /在門口攔下免費袋子阿伯/, false);
@@ -392,7 +393,8 @@ function helpers(pg) {
     await pg.screenshot({ path: `${OUT}/r28b-phone-bagman-inside.png` });
     await h.hold(false);
     await pg.evaluate(id => { const c = window.__game.conn.room.world.customers.find(c => c.id === id); c.life = 0.1; }, id);
-    const st = await h.fastForward(id, "c.state === 'toExit' && c.z > 12.8 && Math.abs(c.x - 12) < 3.2", 40);
+    // (12.85, not 12.8: the page gets positions rounded to 0.01, so a stop at z = 12.8004 read 12.80 there and never passed)
+    const st = await h.fastForward(id, "c.state === 'toExit' && c.z > 12.85 && Math.abs(c.x - 12) < 3.2", 40);
     await h.stand(st.x - 0.4, st.z - 1.3, id, -0.05);
     await h.seen(id, "c.state === 'toExit' && c.z > 12.8", 'the 阿伯 at the door');
     const d = await h.waitPrompt(/在門口攔下/);
