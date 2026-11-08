@@ -60,7 +60,7 @@ jobs:
             sleep 20
             adb exec-out screencap -p > shots/android-day1-54s.png
             adb shell pidof tw.yzproject.fucustomer
-            adb logcat -d -s chromium:E Capacitor:E AndroidRuntime:E > shots/android-errors.txt || true
+            sh -c 'echo "logcat errors (chromium, Capacitor, AndroidRuntime):"; adb logcat -d -s chromium:E Capacitor:E AndroidRuntime:E' > shots/android-errors.txt
       - uses: actions/upload-artifact@v4
         if: always()
         with:
