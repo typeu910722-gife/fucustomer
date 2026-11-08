@@ -4,8 +4,8 @@
 
 | 平台 | 工具 | 目前狀態 |
 |---|---|---|
-| Android | Capacitor 7 → `android/` | ✅ 在 Linux 雲端容器建出**除錯版 APK**（約 10 MB）；未在實機或模擬器安裝測試（容器沒有 KVM，跑不了模擬器） |
-| iOS | Capacitor 7 → `ios/` | ⚠️ 專案已產生並設定好；**必須在 macOS＋Xcode 建置**，本環境無法產出 |
+| Android | Capacitor 7 → `android/` | ✅ 在 Linux 雲端容器建出測試用 APK（約 7 MB，放在 /beta/）；GitHub 雲端的 Android 模擬器（`.github/workflows/android.yml`）安裝、開啟、自動開始第一天並截圖。**沒有在真手機上測過** |
+| iOS | Capacitor 7 → `ios/` | ✅ 用 GitHub 免費的雲端 Mac（`.github/workflows/ios.yml`）建置：iPhone 模擬器開啟、自動開始第一天並截圖；另產出**未簽章 .ipa**（用自己的 Apple ID 透過 Sideloadly 簽章安裝，免費帳號 7 天要重簽）。**沒有在真 iPhone 上測過**；上 App Store／TestFlight 需要 Apple 開發者計畫（每年 US$99） |
 | Windows（Steam） | Electron 38 → `desktop/` | ✅ 建出 Windows 免安裝 zip（0.9.0，約 117 MB，大部分是 Electron 本體）含 steamworks.js；同一份程式在 Linux 虛擬螢幕跑過自動化測試；**未在 Windows 實機開啟、未接真正的 Steam** |
 | 網頁 | Vite | ✅ 既有（PWA，可離線玩單機） |
 
@@ -15,7 +15,7 @@
 |---|---|---|---|
 | 套件 ID（Bundle ID） | `tw.yzproject.fucustomer` | `capacitor.config.json`、`desktop/package.json` | **上傳商店後永遠不能改**，請在第一次上傳前確認 |
 | App 名稱 | 奧客退散（桌面版：FUCustomer） | 同上 | |
-| 版本 | 桌面版 0.9.0；Android 2.1（versionCode 21）；iOS 2.1（build 21） | `desktop/package.json`、`android/app/build.gradle`、`ios/App/App.xcodeproj` | Android 每次上傳 versionCode 要 +1 |
+| 版本 | 桌面版 0.9.0；Android 2.2（versionCode 22）；iOS 2.2（build 22） | `desktop/package.json`、`android/app/build.gradle`、`ios/App/App.xcodeproj` | Android 每次上傳 versionCode 要 +1 |
 | 多人伺服器網址 | 未設定 | 建置時環境變數 `VITE_SERVER_URL=wss://你的網域/ws` | App 內沒有網頁伺服器，多人連線需要先架好公開伺服器（見 SERVER.md） |
 
 ## 需要你自己申請的帳號與費用
