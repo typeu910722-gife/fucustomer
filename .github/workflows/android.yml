@@ -1,0 +1,75 @@
+# Android check on a GitHub-hosted Linux machine with an Android emulator (free for public repositories).
+# Builds the app with a test-only build (VITE_QA_AUTOSTART=1, never shipped: it presses 開始第一天上班 by itself),
+# installs it on an emulated phone, takes screenshots of the menu and of day 1, and checks the app is still running.
+# The APK made here is signed with this machine's throwaway debug key, so it is NOT published; the testers' APK on
+# the site is built separately. Screenshots go to the rolling pre-release "android-check".
+name: Android check
+on:
+  push:
+    branches: [claude/trusting-planck-eb99wg]
+    paths: ['android/**', 'client/**', 'shared/**', 'package.json', 'package-lock.json', 'capacitor.config.json', '.github/workflows/android.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: android-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  android:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      VITE_SERVER_URL: wss://fucustomer-game.typeu910722.workers.dev/ws
+      VITE_QA_AUTOSTART: '1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - run: npm ci
+      - run: npm run build:client
+      - run: npx cap sync android
+      - run: cd android && ./gradlew assembleDebug --no-daemon -q
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Run on the emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          profile: pixel_6
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -no-snapshot
+          disable-animations: true
+          script: |
+            mkdir -p shots
+            adb install -r android/app/build/outputs/apk/debug/app-debug.apk
+            adb shell am start -n tw.yzproject.fucustomer/.MainActivity
+            sleep 4
+            adb exec-out screencap -p > shots/android-menu.png
+            sleep 30
+            adb exec-out screencap -p > shots/android-day1-34s.png
+            sleep 20
+            adb exec-out screencap -p > shots/android-day1-54s.png
+            adb shell pidof tw.yzproject.fucustomer
+            adb logcat -d -s chromium:E Capacitor:E AndroidRuntime:E > shots/android-errors.txt || true
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-check
+          path: shots/
+      - name: Publish the screenshots
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete android-check -y --cleanup-tag || true
+          gh release create android-check --prerelease --target "$GITHUB_SHA" --title "Android emulator check (${GITHUB_SHA::7})" \
+            --notes "Emulator screenshots of ${GITHUB_SHA} (test build, not for installing)." shots/*
