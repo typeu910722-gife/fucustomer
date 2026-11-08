@@ -15,7 +15,7 @@
 |---|---|---|---|
 | 套件 ID（Bundle ID） | `tw.yzproject.fucustomer` | `capacitor.config.json`、`desktop/package.json` | **上傳商店後永遠不能改**，請在第一次上傳前確認 |
 | App 名稱 | 奧客退散（桌面版：FUCustomer） | 同上 | |
-| 版本 | 桌面版 0.9.0；Android 0.6.0 | `desktop/package.json`、`android/app/build.gradle`（versionName） | Android 每次上傳 versionCode 要 +1 |
+| 版本 | 桌面版 0.9.0；Android 2.1（versionCode 21）；iOS 2.1（build 21） | `desktop/package.json`、`android/app/build.gradle`、`ios/App/App.xcodeproj` | Android 每次上傳 versionCode 要 +1 |
 | 多人伺服器網址 | 未設定 | 建置時環境變數 `VITE_SERVER_URL=wss://你的網域/ws` | App 內沒有網頁伺服器，多人連線需要先架好公開伺服器（見 SERVER.md） |
 
 ## 需要你自己申請的帳號與費用

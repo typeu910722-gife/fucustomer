@@ -1,0 +1,73 @@
+# iOS build on a GitHub-hosted Mac (free for public repositories; no Apple account needed).
+# 1. builds the game and the Capacitor iOS app for the iPhone Simulator, launches it there, checks it is still running
+#    after 25 s and takes screenshots;
+# 2. builds the same app for real iPhones WITHOUT a signature and packs it as FUCustomer-unsigned.ipa.
+# Both go to the rolling pre-release "ios-beta". An unsigned .ipa cannot be installed as is: a sideloading tool
+# (e.g. Sideloadly) signs it with the player's own Apple ID first (free Apple ID: re-sign every 7 days).
+name: iOS build
+on:
+  push:
+    branches: [claude/trusting-planck-eb99wg]
+    paths: ['ios/**', 'client/**', 'shared/**', 'package.json', 'package-lock.json', 'capacitor.config.json', '.github/workflows/ios.yml']
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 60
+    env:
+      VITE_SERVER_URL: wss://fucustomer-game.typeu910722.workers.dev/ws
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run build:client
+      - run: npx cap sync ios
+      - name: Build for the iPhone Simulator
+        run: |
+          xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/sim \
+            CODE_SIGNING_ALLOWED=NO build | tail -n 30
+          test -d build/sim/Build/Products/Debug-iphonesimulator/App.app
+      - name: Launch in the simulator
+        run: |
+          DEV=$(xcrun simctl list devices available | grep -m1 -E '^\s+iPhone' | grep -oE '[0-9A-F]{8}-[0-9A-F-]{27}')
+          echo "device $DEV"
+          xcrun simctl boot "$DEV"
+          xcrun simctl bootstatus "$DEV" -b
+          xcrun simctl install "$DEV" build/sim/Build/Products/Debug-iphonesimulator/App.app
+          xcrun simctl launch "$DEV" tw.yzproject.fucustomer
+          mkdir -p shots
+          sleep 12; xcrun simctl io "$DEV" screenshot shots/ios-sim-12s.png
+          sleep 13; xcrun simctl io "$DEV" screenshot shots/ios-sim-25s.png
+          xcrun simctl spawn "$DEV" launchctl list | grep -i 'tw.yzproject.fucustomer' || { echo 'the app is not running after 25 s'; exit 1; }
+      - name: Build for iPhone (unsigned) and pack the .ipa
+        run: |
+          xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Release \
+            -sdk iphoneos -destination 'generic/platform=iOS' -derivedDataPath build/dev \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" build | tail -n 30
+          mkdir -p Payload
+          cp -R build/dev/Build/Products/Release-iphoneos/App.app Payload/
+          zip -qry FUCustomer-unsigned.ipa Payload
+          ls -la FUCustomer-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ios-build
+          path: |
+            FUCustomer-unsigned.ipa
+            shots/
+      - name: Publish the rolling pre-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete ios-beta -y --cleanup-tag || true
+          gh release create ios-beta --prerelease --target "$GITHUB_SHA" --title "iOS beta (${GITHUB_SHA::7})" \
+            --notes "Unsigned iOS build of ${GITHUB_SHA} (sign it with your own Apple ID to install). Simulator screenshots attached." \
+            FUCustomer-unsigned.ipa shots/ios-sim-12s.png shots/ios-sim-25s.png
