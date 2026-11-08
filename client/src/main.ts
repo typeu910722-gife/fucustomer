@@ -546,6 +546,11 @@ if (deepJoin !== null) {
 const inviteCode = UI.parseRoomCode(deepJoin);
 if (inviteCode) inviteJoin(inviteCode);
 else menu(deepJoin !== null ? '邀請連結的房間碼不正確，請朋友再傳一次。' : undefined);
+// CI only (the iOS simulator check in .github/workflows/ios.yml): a build made with VITE_QA_AUTOSTART=1 presses
+// 開始第一天上班 by itself, so the simulator shows the 3D store. Release builds never set it.
+if ((import.meta as unknown as { env: Record<string, string | undefined> }).env.VITE_QA_AUTOSTART === '1') {
+  window.setTimeout(() => (document.getElementById('m-first') as HTMLElement | null)?.click(), 5000);
+}
 
 // browsers only allow sound after the first tap/key: unlock, then start the menu music if we're still on a menu
 const firstInput = () => { audio.unlock(); if (!current) audio.startMusic(8); };

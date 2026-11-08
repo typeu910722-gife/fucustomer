@@ -1,7 +1,8 @@
 # iOS build on a GitHub-hosted Mac (free for public repositories; no Apple account needed).
 # 1. builds the game and the Capacitor iOS app for the iPhone Simulator, launches it there, checks it is still running
 #    after 25 s and takes screenshots;
-# 2. builds the same app for real iPhones WITHOUT a signature and packs it as FUCustomer-unsigned.ipa.
+# 2. builds the same app for real iPhones WITHOUT a signature and packs it as FUCustomer-unsigned.ipa;
+# 3. a test build (VITE_QA_AUTOSTART=1, never shipped) starts day 1 by itself in the simulator for two more screenshots.
 # Both go to the rolling pre-release "ios-beta". An unsigned .ipa cannot be installed as is: a sideloading tool
 # (e.g. Sideloadly) signs it with the player's own Apple ID first (free Apple ID: re-sign every 7 days).
 name: iOS build
@@ -57,6 +58,20 @@ jobs:
           cp -R build/dev/Build/Products/Release-iphoneos/App.app Payload/
           zip -qry FUCustomer-unsigned.ipa Payload
           ls -la FUCustomer-unsigned.ipa
+      - name: Start day 1 in the simulator (test build that presses the start button by itself)
+        run: |
+          DEV=$(xcrun simctl list devices booted | grep -oE '[0-9A-F]{8}-[0-9A-F-]{27}' | head -1)
+          VITE_QA_AUTOSTART=1 npm run build:client
+          npx cap copy ios
+          xcodebuild -workspace ios/App/App.xcworkspace -scheme App -configuration Debug \
+            -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' -derivedDataPath build/sim \
+            CODE_SIGNING_ALLOWED=NO build | tail -n 5
+          xcrun simctl terminate "$DEV" tw.yzproject.fucustomer || true
+          xcrun simctl install "$DEV" build/sim/Build/Products/Debug-iphonesimulator/App.app
+          xcrun simctl launch "$DEV" tw.yzproject.fucustomer
+          sleep 25; xcrun simctl io "$DEV" screenshot shots/ios-sim-day1-25s.png
+          sleep 20; xcrun simctl io "$DEV" screenshot shots/ios-sim-day1-45s.png
+          xcrun simctl spawn "$DEV" launchctl list | grep -i 'tw.yzproject.fucustomer' || { echo 'the app stopped during day 1'; exit 1; }
       - uses: actions/upload-artifact@v4
         with:
           name: ios-build
@@ -70,4 +85,4 @@ jobs:
           gh release delete ios-beta -y --cleanup-tag || true
           gh release create ios-beta --prerelease --target "$GITHUB_SHA" --title "iOS beta (${GITHUB_SHA::7})" \
             --notes "Unsigned iOS build of ${GITHUB_SHA} (sign it with your own Apple ID to install). Simulator screenshots attached." \
-            FUCustomer-unsigned.ipa shots/ios-sim-12s.png shots/ios-sim-25s.png
+            FUCustomer-unsigned.ipa shots/*.png
