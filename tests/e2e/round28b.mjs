@@ -109,7 +109,15 @@ function helpers(pg) {
     const sc = g.snap?.customers.find(c => c.id === id);
     if (!sc || !f(sc)) return false;
     return g.snap.customers.every(c => { const p = g.view.customerWorldPos(c.id); return !p || Math.hypot(p.x - c.x, p.z - c.z) < 0.1; });
-  }, [id, pred], { timeout: 8000 }).catch(() => fail(`the page never showed ${what ?? pred}`));
+  }, [id, pred], { timeout: 8000 }).catch(async () => {
+    // what was off: the karen's state in the page's snapshot and in the store, and any figure drawn away from its spot
+    const why = await pg.evaluate(id => {
+      const g = window.__game, w = g.conn.room.world, sc = g.snap?.customers.find(c => c.id === id), wc = w.customers.find(c => c.id === id);
+      const off = (g.snap?.customers ?? []).map(c => { const p = g.view.customerWorldPos(c.id); return p ? { id: c.id, kind: c.kind, state: c.state, d: +Math.hypot(p.x - c.x, p.z - c.z).toFixed(2) } : null; }).filter(o => o && o.d >= 0.1);
+      return JSON.stringify({ hold: !!window.__hold, tick: g.conn.room.tickCount, snap: sc ? { state: sc.state, z: +sc.z.toFixed(2) } : null, world: wc ? { state: wc.state, z: +wc.z.toFixed(2) } : null, off });
+    }, id).catch(e => String(e));
+    fail(`the page never showed ${what ?? pred} ${why}`);
+  });
   const stand = (x, z, id, pitch = -0.12) => pg.evaluate(([x, z, id, pitch]) => {
     const g = window.__game, w = g.conn.room.world, p = [...w.players.values()][0], c = w.customers.find(c => c.id === id);
     p.x = x; p.z = z; g.pos = { x, z };
